@@ -67,6 +67,10 @@ impl Parser {
 
         let result = match &token.kind {
             Token::Number(n) => Ok(spanned(Expr::Literal(Literal::Number(*n)), span.clone())),
+            Token::Lparen => {
+                self.next();
+                self.parse_expr()
+            },
             token => Err(Error::new(&format!("Unexpected token `{}`", token), span.clone())),
         };
 
@@ -117,22 +121,22 @@ mod tests {
             }))
         }
 
-        let lexer = Lexer::new("10 + 3 * 5 + 20");
+        let lexer = Lexer::new("10 + 3 * (5 + 20)");
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
 
         let expected = Program {
-            expr: *new(Expr::BinOp(BinOp::Add, // 10 + 3 * 5 + 20
-                      new(Expr::BinOp(BinOp::Add, // 10 + 3 * 5
-                          new(Expr::Literal(Literal::Number(10)), 0, 0, 0, 2), // 10
-                          new(Expr::BinOp(BinOp::Mul, // 3 * 5
-                              new(Expr::Literal(Literal::Number(3)), 0, 5, 0, 6), // 3
-                              new(Expr::Literal(Literal::Number(5)), 0, 9, 0, 10)), // 5
-                              0, 5, 0, 10)),
-                          0, 0, 0, 10),
-                      new(Expr::Literal(Literal::Number(20)), 0, 13, 0, 15)), // 20
-                      0, 0, 0, 15),
+            expr: *new(Expr::BinOp(BinOp::Add,
+                      new(Expr::Literal(Literal::Number(10)), 0, 0, 0, 2),
+                      new(Expr::BinOp(BinOp::Mul,
+                          new(Expr::Literal(Literal::Number(3)), 0, 5, 0, 6),
+                          new(Expr::BinOp(BinOp::Add,
+                              new(Expr::Literal(Literal::Number(5)), 0, 10, 0, 11),
+                              new(Expr::Literal(Literal::Number(20)), 0, 14, 0, 16)),
+                              0, 10, 0, 16)),
+                          0, 5, 0, 16)),
+                      0, 0, 0, 16),
         };
 
         assert_eq!(program, expected);

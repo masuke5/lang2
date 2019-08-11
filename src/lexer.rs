@@ -90,6 +90,8 @@ impl<'a> Lexer<'a> {
             '-' => Ok(Token::Sub),
             '*' => Ok(Token::Asterisk),
             '/' => Ok(Token::Div),
+            '(' => Ok(Token::Lparen),
+            ')' => Ok(Token::Rparen),
             c => Err(self.error(&format!("Invalid character `{}`", c))),
         }
     }
@@ -133,6 +135,7 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn invalid_character() {
@@ -169,7 +172,7 @@ mod tests {
             })
         }
 
-        let lexer = Lexer::new("1 + 2\n678 * 345 - 10005/123");
+        let lexer = Lexer::new("1 + 2\n678 * (345 - 10005) /123");
         let tokens = lexer.lex().unwrap();
         let expected = vec![
             new(Token::Number(1), 0, 0, 0, 1),
@@ -177,11 +180,13 @@ mod tests {
             new(Token::Number(2), 0, 4, 0, 5),
             new(Token::Number(678), 1, 0, 1, 3),
             new(Token::Asterisk, 1, 4, 1, 5),
-            new(Token::Number(345), 1, 6, 1, 9),
-            new(Token::Sub, 1, 10, 1, 11),
-            new(Token::Number(10005), 1, 12, 1, 17),
-            new(Token::Div, 1, 17, 1, 18),
-            new(Token::Number(123), 1, 18, 1, 21),
+            new(Token::Lparen, 1, 6, 1, 7),
+            new(Token::Number(345), 1, 7, 1, 10),
+            new(Token::Sub, 1, 11, 1, 12),
+            new(Token::Number(10005), 1, 13, 1, 18),
+            new(Token::Rparen, 1, 18, 1, 19),
+            new(Token::Div, 1, 20, 1, 21),
+            new(Token::Number(123), 1, 21, 1, 24),
             new(Token::EOF, 0, 0, 0, 0),
         ];
 

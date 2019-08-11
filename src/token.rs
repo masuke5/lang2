@@ -8,6 +8,8 @@ pub enum Token {
     Asterisk,
     Div,
     EOF,
+    Lparen,
+    Rparen,
 }
 
 impl fmt::Display for Token {
@@ -19,6 +21,8 @@ impl fmt::Display for Token {
             Token::Asterisk => f.write_str("*"),
             Token::Div => f.write_str("/"),
             Token::EOF => f.write_str("EOF"),
+            Token::Lparen => f.write_str("("),
+            Token::Rparen => f.write_str(")"),
         }
     }
 }
