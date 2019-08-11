@@ -16,9 +16,7 @@ use parser::Parser;
 use ast::*;
 use executor::Executor;
 
-fn print_usage() {
-    println!("usage: lang2 <input>");
-}
+use clap::{Arg, App, ArgMatches};
 
 fn span_to_string(span: &Span) -> String {
     format!("\x1b[33m{}:{}-{}:{}\x1b[0m", span.start_line, span.start_col, span.end_line, span.end_col)
@@ -54,12 +52,22 @@ fn print_errors(errors: Vec<Error>) {
     }
 }
 
-fn execute(args: Vec<String>) -> Result<(), Vec<Error>> {
-    let lexer = Lexer::new(&args[1]);
+fn execute(matches: ArgMatches) -> Result<(), Vec<Error>> {
+    let cmd = matches.value_of("cmd").unwrap();
+
+    let lexer = Lexer::new(&cmd);
     let tokens = lexer.lex()?;
+    if matches.is_present("dump-token") {
+        dump_token(tokens);
+        exit(1);
+    }
 
     let parser = Parser::new(tokens);
     let program = parser.parse()?;
+    if matches.is_present("dump-ast") {
+        dump_ast(program);
+        exit(1);
+    }
 
     let mut executor = Executor::new();
     let result = executor.exec(program);
@@ -70,13 +78,24 @@ fn execute(args: Vec<String>) -> Result<(), Vec<Error>> {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        print_usage();
-        exit(1);
-    }
+    let matches = App::new("lang2")
+        .version("0.0")
+        .author("masuke5 <s.zerogoichi@gmail.com>")
+        .about("lang2 interpreter")
+        .arg(Arg::with_name("cmd")
+             .short("c")
+             .long("cmd")
+             .help("Runs string")
+             .takes_value(true))
+        .arg(Arg::with_name("dump-token")
+             .long("dump-token")
+             .help("Dumps tokens"))
+        .arg(Arg::with_name("dump-ast")
+             .long("dump-ast")
+             .help("Dumps AST"))
+        .get_matches();
 
-    if let Err(errors) = execute(args) {
+    if let Err(errors) = execute(matches) {
         print_errors(errors);
         exit(1);
     }
