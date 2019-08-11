@@ -104,6 +104,7 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::lexer::Lexer;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn parse() {
