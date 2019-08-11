@@ -26,7 +26,7 @@ impl<'a> Lexer<'a> {
     fn read_char(&mut self) -> char {
         match self.input.next() {
             Some('\n') => {
-                self.line = 0;
+                self.line += 1;
                 self.col = 0;
                 '\n'
             },
@@ -49,10 +49,6 @@ impl<'a> Lexer<'a> {
         loop {
             let c = self.peek();
             if !c.is_whitespace() || c == '\0' {
-                if c == '\n' {
-                    self.line = 0;
-                    self.col = 0;
-                }
                 break;
             }
 
@@ -69,8 +65,31 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn next_token(&mut self) -> Result<Spanned<Token>, Error> {
+    fn lex_number(&mut self, start_char: char) -> Token {
+        let mut n = start_char.to_digit(10).unwrap() as i64;
+        loop {
+            match self.peek() {
+                c if c.is_digit(10) => {
+                    n = n * 10 + c.to_digit(10).unwrap() as i64;
+                    self.read_char();
+                },
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        Token::Number(n)
+    }
+
+    fn next_token(&mut self) -> Result<Token, Error> {
+
         match self.read_char() {
+            c if c.is_digit(10) => Ok(self.lex_number(c)),
+            '+' => Ok(Token::Add),
+            '-' => Ok(Token::Sub),
+            '*' => Ok(Token::Asterisk),
+            '/' => Ok(Token::Div),
             c => Err(self.error(&format!("Invalid character `{}`", c))),
         }
     }
@@ -86,7 +105,12 @@ impl<'a> Lexer<'a> {
             self.start_col = self.col;
 
             match self.next_token() {
-                Ok(token) => tokens.push(token),
+                Ok(token) => tokens.push(Spanned::<Token>::new(token, Span {
+                    start_line: self.start_line,
+                    end_line: self.line,
+                    start_col: self.start_col,
+                    end_col: self.col,
+                })),
                 Err(err) => errors.push(err),
             };
         }
@@ -124,6 +148,37 @@ mod tests {
 
         for (error, expected) in errors.into_iter().zip(expected.into_iter()) {
             assert_eq!(error, expected);
+        }
+    }
+
+    #[test]
+    fn lex() {
+        fn new(kind: Token, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> Spanned<Token> {
+            Spanned::<Token>::new(kind, Span {
+                start_line,
+                start_col,
+                end_line,
+                end_col,
+            })
+        }
+
+        let lexer = Lexer::new("1 + 2\n678 * 345 - 10005/123");
+        let tokens = lexer.lex().unwrap();
+        let expected = vec![
+            new(Token::Number(1), 0, 0, 0, 1),
+            new(Token::Add, 0, 2, 0, 3),
+            new(Token::Number(2), 0, 4, 0, 5),
+            new(Token::Number(678), 1, 0, 1, 3),
+            new(Token::Asterisk, 1, 4, 1, 5),
+            new(Token::Number(345), 1, 6, 1, 9),
+            new(Token::Sub, 1, 10, 1, 11),
+            new(Token::Number(10005), 1, 12, 1, 17),
+            new(Token::Div, 1, 17, 1, 18),
+            new(Token::Number(123), 1, 18, 1, 21),
+        ];
+
+        for (token, expected) in tokens.into_iter().zip(expected.into_iter()) {
+            assert_eq!(token, expected);
         }
     }
 }

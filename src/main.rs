@@ -22,7 +22,7 @@ fn main() {
     match lexer.lex() {
         Ok(tokens) => {
             for token in tokens {
-                println!("{:?}", token);
+                println!("{} {}:{}-{}:{}", token.kind, token.span.start_line, token.span.start_col, token.span.end_line, token.span.end_col);
             }
         },
         Err(errors) => {

@@ -12,3 +12,11 @@ pub struct Spanned<T> {
     pub span: Span,
 }
 
+impl<T> Spanned<T> {
+    pub fn new(kind: T, span: Span) -> Spanned<T> {
+        Self {
+            kind,
+            span,
+        }
+    }
+}
