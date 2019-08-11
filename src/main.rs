@@ -46,16 +46,26 @@ fn dump_ast(program: Program) {
     dump_expr(program.expr, 0);
 }
 
-fn print_errors(errors: Vec<Error>) {
+fn print_errors(input: String, errors: Vec<Error>) {
+    let input: Vec<&str> = input.lines().collect();
+    // Line number string length (Example: 123 = 3, 123456 = 6)
+    let line_num_len = format!("{}", input.len()).len();
+
     for error in errors {
-        println!("{:?}", error);
+        // Print the line number
+        print!("\x1b[96m{:<width$} | \x1b[0m", error.span.start_line, width = line_num_len);
+        // Print the line
+        println!("{}", input[error.span.start_line as usize]);
+        // Print the error span
+        print!("\x1b[96m{} | \x1b[91m{}", " ".repeat(line_num_len), " ".repeat(error.span.start_col as usize));
+        print!("{} ", "~".repeat((error.span.end_col - error.span.start_col) as usize));
+        // Print the error message
+        println!("{}\x1b[0m", error.msg);
     }
 }
 
-fn execute(matches: ArgMatches) -> Result<(), Vec<Error>> {
-    let cmd = matches.value_of("cmd").unwrap();
-
-    let lexer = Lexer::new(&cmd);
+fn execute(matches: ArgMatches, input: &str) -> Result<(), Vec<Error>> {
+    let lexer = Lexer::new(input);
     let tokens = lexer.lex()?;
     if matches.is_present("dump-token") {
         dump_token(tokens);
@@ -95,8 +105,9 @@ fn main() {
              .help("Dumps AST"))
         .get_matches();
 
-    if let Err(errors) = execute(matches) {
-        print_errors(errors);
+    let cmd = matches.value_of("cmd").unwrap().to_string();
+    if let Err(errors) = execute(matches, &cmd) {
+        print_errors(cmd, errors);
         exit(1);
     }
 }

@@ -72,10 +72,10 @@ impl Parser {
                 self.parse_expr()
             },
             token => Err(Error::new(&format!("Unexpected token `{}`", token), span.clone())),
-        };
+        }?;
 
         self.next();
-        result
+        Ok(result)
     }
 
     fn parse_mul(&mut self) -> ExprResult {

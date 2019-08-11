@@ -2,8 +2,8 @@ use crate::span::Span;
 
 #[derive(Debug, PartialEq)]
 pub struct Error {
-    msg: String,
-    span: Span,
+    pub msg: String,
+    pub span: Span,
 }
 
 impl Error {
