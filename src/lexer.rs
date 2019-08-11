@@ -115,6 +115,13 @@ impl<'a> Lexer<'a> {
             };
         }
 
+        tokens.push(Spanned::<Token>::new(Token::EOF, Span {
+            start_line: 0,
+            end_line: 0,
+            start_col: 0,
+            end_col: 0,
+        }));
+
         if errors.len() > 0 {
             Err(errors)
         } else {
@@ -175,6 +182,7 @@ mod tests {
             new(Token::Number(10005), 1, 12, 1, 17),
             new(Token::Div, 1, 17, 1, 18),
             new(Token::Number(123), 1, 18, 1, 21),
+            new(Token::EOF, 0, 0, 0, 0),
         ];
 
         for (token, expected) in tokens.into_iter().zip(expected.into_iter()) {

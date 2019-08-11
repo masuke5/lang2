@@ -7,6 +7,7 @@ pub enum Token {
     Sub,
     Asterisk,
     Div,
+    EOF,
 }
 
 impl fmt::Display for Token {
@@ -17,6 +18,7 @@ impl fmt::Display for Token {
             Token::Sub => f.write_str("-"),
             Token::Asterisk => f.write_str("*"),
             Token::Div => f.write_str("/"),
+            Token::EOF => f.write_str("EOF"),
         }
     }
 }
