@@ -1,9 +1,20 @@
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Span {
     pub start_line: u32,
     pub start_col: u32,
     pub end_line: u32,
     pub end_col: u32,
+}
+
+impl Span {
+    pub fn merge(left: &Span, right: &Span) -> Span {
+        Span {
+            start_line: left.start_line,
+            start_col: left.start_col,
+            end_line: right.end_line,
+            end_col: right.end_col,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
