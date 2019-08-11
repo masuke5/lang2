@@ -4,8 +4,9 @@ mod token;
 mod lexer;
 mod ast;
 mod parser;
+mod env;
+mod executor;
 
-use std::env;
 use std::process::exit;
 use lexer::Lexer;
 use span::{Span, Spanned};
@@ -13,6 +14,7 @@ use token::Token;
 use error::Error;
 use parser::Parser;
 use ast::*;
+use executor::Executor;
 
 fn print_usage() {
     println!("usage: lang2 <input>");
@@ -52,30 +54,30 @@ fn print_errors(errors: Vec<Error>) {
     }
 }
 
+fn execute(args: Vec<String>) -> Result<(), Vec<Error>> {
+    let lexer = Lexer::new(&args[1]);
+    let tokens = lexer.lex()?;
+
+    let parser = Parser::new(tokens);
+    let program = parser.parse()?;
+
+    let mut executor = Executor::new();
+    let result = executor.exec(program);
+
+    println!("{}", result);
+
+    Ok(())
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         print_usage();
         exit(1);
     }
 
-    let lexer = Lexer::new(&args[1]);
-    let tokens = match lexer.lex() {
-        Ok(tokens) => tokens,
-        Err(errors) => {
-            print_errors(errors);
-            exit(1);
-        },
-    };
-
-    let parser = Parser::new(tokens);
-    let program = match parser.parse() {
-        Ok(program) => program,
-        Err(errors) => {
-            print_errors(errors);
-            exit(1);
-        },
-    };
-
-    dump_ast(program);
+    if let Err(errors) = execute(args) {
+        print_errors(errors);
+        exit(1);
+    }
 }
