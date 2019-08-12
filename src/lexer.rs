@@ -105,7 +105,10 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Token::Identifier(&self.raw[start_pos..self.pos])
+        match &self.raw[start_pos..self.pos] {
+            "let" => Token::Let,
+            s => Token::Identifier(s),
+        }
     }
 
     fn next_token(&mut self) -> Result<Token<'a>, Error> {
@@ -118,6 +121,8 @@ impl<'a> Lexer<'a> {
             '/' => Ok(Token::Div),
             '(' => Ok(Token::Lparen),
             ')' => Ok(Token::Rparen),
+            '=' => Ok(Token::Assign),
+            ';' => Ok(Token::Semicolon),
             c => Err(self.error(&format!("Invalid character `{}`", c))),
         }
     }
@@ -198,16 +203,19 @@ mod tests {
             })
         }
 
-        let lexer = Lexer::new("1 + 2\n678 * (345 - 10005) /123 + abc");
+        let lexer = Lexer::new("let b = 1 + 2\n678 * (345 - 10005) /123 + abc");
         let tokens = lexer.lex().unwrap();
         let expected = vec![
-            new(Token::Number(1),           0, 0, 0, 1),
-            new(Token::Add,                 0, 2, 0, 3),
-            new(Token::Number(2),           0, 4, 0, 5),
-            new(Token::Number(678),         1, 0, 1, 3),
-            new(Token::Asterisk,            1, 4, 1, 5),
-            new(Token::Lparen,              1, 6, 1, 7),
-            new(Token::Number(345),         1, 7, 1, 10),
+            new(Token::Let,                 0,  0, 0,  3),
+            new(Token::Identifier("b"),     0,  4, 0,  5),
+            new(Token::Assign,              0,  6, 0,  7),
+            new(Token::Number(1),           0,  8, 0,  9),
+            new(Token::Add,                 0, 10, 0, 11),
+            new(Token::Number(2),           0, 12, 0, 13),
+            new(Token::Number(678),         1,  0, 1,  3),
+            new(Token::Asterisk,            1,  4, 1,  5),
+            new(Token::Lparen,              1,  6, 1,  7),
+            new(Token::Number(345),         1,  7, 1, 10),
             new(Token::Sub,                 1, 11, 1, 12),
             new(Token::Number(10005),       1, 13, 1, 18),
             new(Token::Rparen,              1, 18, 1, 19),

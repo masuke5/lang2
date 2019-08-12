@@ -4,6 +4,7 @@ use std::fmt;
 pub enum Token<'a> {
     Number(i64),
     Identifier(&'a str),
+    Let,
     Add,
     Sub,
     Asterisk,
@@ -11,6 +12,8 @@ pub enum Token<'a> {
     EOF,
     Lparen,
     Rparen,
+    Assign,
+    Semicolon,
 }
 
 impl<'a> fmt::Display for Token<'a> {
@@ -18,6 +21,7 @@ impl<'a> fmt::Display for Token<'a> {
         match self {
             Token::Number(n) => write!(f, "{}", n),
             Token::Identifier(ident) => write!(f, "{}", ident),
+            Token::Let => f.write_str("let"),
             Token::Add => f.write_str("+"),
             Token::Sub => f.write_str("-"),
             Token::Asterisk => f.write_str("*"),
@@ -25,6 +29,8 @@ impl<'a> fmt::Display for Token<'a> {
             Token::EOF => f.write_str("EOF"),
             Token::Lparen => f.write_str("("),
             Token::Rparen => f.write_str(")"),
+            Token::Assign => f.write_str("="),
+            Token::Semicolon => f.write_str(";"),
         }
     }
 }
