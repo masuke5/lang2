@@ -165,25 +165,40 @@ impl<'a> Parser<'a> {
             },
         };
 
+        push_if_error!(expect!(self, Token::Semicolon), errors);
+
         let span = Span::merge(&let_span, &expr.span);
         result_from_error(
             spanned(Stmt::Bind(name, expr), span),
             errors)
     }
 
+    fn parse_expr_stmt(&mut self) -> StmtResult<'a> {
+        let mut errors = Vec::new();
+
+        let expr = match self.parse_expr() {
+            Ok(expr) => expr,
+            Err(err) => {
+                errors.push(err);
+                return Err(errors);
+            },
+        };
+
+        push_if_error!(expect!(self, Token::Semicolon), errors);
+
+        let span = expr.span.clone();
+        result_from_error(
+            spanned(Stmt::Expr(expr), span),
+            errors)
+    }
+
     fn parse_stmt(&mut self) -> StmtResult<'a> {
         let token = self.peek().clone();
 
-        let res = match token.kind {
+        match token.kind {
             Token::Let => self.parse_bind_stmt(),
-            _ => Err(vec![Self::unexpected_token(token)]),
-        };
-
-        if let Err(_) = res {
-            self.next();
+            _ => self.parse_expr_stmt(),
         }
-
-        res
     }
 
     pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
@@ -197,8 +212,6 @@ impl<'a> Parser<'a> {
                     errors.extend(new_errors.into_iter());
                 },
             };
-
-            push_if_error!(expect!(self, Token::Semicolon), errors);
         }
 
         result_from_error(Program { stmt: stmts }, errors)

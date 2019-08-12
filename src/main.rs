@@ -51,6 +51,9 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
             println!("let {} =", name);
             dump_expr(expr, depth + 1);
         },
+        Stmt::Expr(expr) => {
+            dump_expr(expr, depth);
+        },
         _ => {
             unimplemented!();
         },
