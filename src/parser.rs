@@ -28,7 +28,49 @@ macro_rules! binop {
     }
 }
 
+macro_rules! expect {
+    ($self:ident, $pat:pat => $expr:expr) => {
+        {
+            let token = $self.peek();
+            let res = match token.kind {
+                $pat => Ok($expr),
+                _ => Err(Self::unexpected_token(token)),
+            };
+            $self.next();
+            res
+        }
+    };
+    ($self:ident, $pat:pat) => (expect!($self, $pat => ()));
+}
+
+macro_rules! push_if_error {
+    ($result:expr, $error_vec:expr, $default:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(err) => {
+                $error_vec.push(err);
+                $default
+            },
+        }
+    };
+    ($result:expr, $error_vec:expr) => {
+        match $result {
+            Ok(_) => (),
+            Err(err) => $error_vec.push(err),
+        };
+    };
+}
+
+fn result_from_error<T, E>(value: T, errors: Vec<E>) -> Result<T, Vec<E>> {
+    if errors.len() > 0 {
+        Err(errors)
+    } else {
+        Ok(value)
+    }
+}
+
 type ExprResult = Result<Spanned<Expr>, Error>;
+type StmtResult<'a> = Result<Spanned<Stmt<'a>>, Vec<Error>>;
 
 pub struct Parser<'a> {
     tokens: Vec<Spanned<Token<'a>>>,
@@ -43,13 +85,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next(&mut self) -> &Spanned<Token> {
+    fn next(&mut self) -> &Spanned<Token<'a>> {
         self.pos += 1;
         &self.tokens[self.pos]
     }
 
-    fn peek(&self) -> &Spanned<Token> {
+    fn peek(&self) -> &Spanned<Token<'a>> {
         &self.tokens[self.pos]
+    }
+
+    fn unexpected_token(token: &Spanned<Token>) -> Error {
+        Error::new(&format!("Unexpected token `{}`", token.kind), token.span.clone())
     }
 
     fn consume(&mut self, token: Token) -> bool {
@@ -71,7 +117,7 @@ impl<'a> Parser<'a> {
                 self.next();
                 self.parse_expr()
             },
-            token => Err(Error::new(&format!("Unexpected token `{}`", token), span.clone())),
+            _ => Err(Self::unexpected_token(token)),
         }?;
 
         self.next();
@@ -96,11 +142,66 @@ impl<'a> Parser<'a> {
         self.parse_add()
     }
 
-    pub fn parse(mut self) -> Result<Program, Vec<Error>> {
-        match self.parse_expr() {
-            Ok(expr) => Ok(Program { expr }),
-            Err(err) => Err(vec![err]),
+    fn parse_bind_stmt(&mut self) -> StmtResult<'a> {
+        let mut errors = Vec::new();
+
+        // Eat "let"
+        let let_span = self.peek().span.clone();
+        self.next();
+
+        // Identifier 
+        let name = expect!(self, Token::Identifier(name) => name);
+        let name = push_if_error!(name, errors, "error");
+
+        // =
+        push_if_error!(expect!(self, Token::Assign), errors);
+
+        // Expression
+        let expr = match self.parse_expr() {
+            Ok(expr) => expr,
+            Err(err) => {
+                errors.push(err);
+                return Err(errors);
+            },
+        };
+
+        let span = Span::merge(&let_span, &expr.span);
+        result_from_error(
+            spanned(Stmt::Bind(name, expr), span),
+            errors)
+    }
+
+    fn parse_stmt(&mut self) -> StmtResult<'a> {
+        let token = self.peek().clone();
+
+        let res = match token.kind {
+            Token::Let => self.parse_bind_stmt(),
+            _ => Err(vec![Self::unexpected_token(token)]),
+        };
+
+        if let Err(_) = res {
+            self.next();
         }
+
+        res
+    }
+
+    pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
+        let mut errors = Vec::new();
+        let mut stmts = Vec::new();
+
+        while self.peek().kind != Token::EOF {
+            match self.parse_stmt() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(new_errors) => {
+                    errors.extend(new_errors.into_iter());
+                },
+            };
+
+            push_if_error!(expect!(self, Token::Semicolon), errors);
+        }
+
+        result_from_error(Program { stmt: stmts }, errors)
     }
 }
 
@@ -121,22 +222,27 @@ mod tests {
             }))
         }
 
-        let lexer = Lexer::new("10 + 3 * (5 + 20)");
+        let lexer = Lexer::new("let abc = 10 + 3 * (5 + 20);");
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
 
         let expected = Program {
-            expr: *new(Expr::BinOp(BinOp::Add,
-                      new(Expr::Literal(Literal::Number(10)), 0, 0, 0, 2),
-                      new(Expr::BinOp(BinOp::Mul,
-                          new(Expr::Literal(Literal::Number(3)), 0, 5, 0, 6),
-                          new(Expr::BinOp(BinOp::Add,
-                              new(Expr::Literal(Literal::Number(5)), 0, 10, 0, 11),
-                              new(Expr::Literal(Literal::Number(20)), 0, 14, 0, 16)),
-                              0, 10, 0, 16)),
-                          0, 5, 0, 16)),
-                      0, 0, 0, 16),
+            stmt: vec![
+                *new(Stmt::Bind(
+                    "abc",
+                    *new(Expr::BinOp(BinOp::Add,
+                          new(Expr::Literal(Literal::Number(10)), 0, 10, 0, 12),
+                          new(Expr::BinOp(BinOp::Mul,
+                              new(Expr::Literal(Literal::Number(3)), 0, 15, 0, 16),
+                              new(Expr::BinOp(BinOp::Add,
+                                  new(Expr::Literal(Literal::Number(5)), 0, 20, 0, 21),
+                                  new(Expr::Literal(Literal::Number(20)), 0, 24, 0, 26)),
+                                  0, 20, 0, 26)),
+                              0, 15, 0, 26)),
+                          0, 10, 0, 26)),
+                    0, 0, 0, 26),
+            ],
         };
 
         assert_eq!(program, expected);

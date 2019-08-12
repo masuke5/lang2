@@ -31,6 +31,13 @@ pub enum Expr {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Program {
-    pub expr: Spanned<Expr>,
+pub enum Stmt<'a> {
+    Bind(&'a str, Spanned<Expr>),
+    Expr(Spanned<Expr>),
+    Block(Vec<Spanned<Stmt<'a>>>),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Program<'a> {
+    pub stmt: Vec<Spanned<Stmt<'a>>>,
 }

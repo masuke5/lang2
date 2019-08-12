@@ -30,7 +30,7 @@ impl Executor {
     }
 
     pub fn exec(&mut self, program: Program) -> i64 {
-        self.run_expr(program.expr.kind).int()
+        unimplemented!();
     }
 }
 

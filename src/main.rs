@@ -42,8 +42,25 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
     }
 }
 
+fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
+    // Print indent
+    print!("{}", "  ".repeat(depth));
+
+    match stmt.kind {
+        Stmt::Bind(name, expr) => {
+            println!("let {} =", name);
+            dump_expr(expr, depth + 1);
+        },
+        _ => {
+            unimplemented!();
+        },
+    }
+}
+
 fn dump_ast(program: Program) {
-    dump_expr(program.expr, 0);
+    for stmt in program.stmt {
+        dump_stmt(stmt, 0);
+    }
 }
 
 fn print_errors(input: String, errors: Vec<Error>) {
