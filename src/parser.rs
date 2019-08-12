@@ -30,13 +30,13 @@ macro_rules! binop {
 
 type ExprResult = Result<Spanned<Expr>, Error>;
 
-pub struct Parser {
-    tokens: Vec<Spanned<Token>>,
+pub struct Parser<'a> {
+    tokens: Vec<Spanned<Token<'a>>>,
     pos: usize,
 }
 
-impl Parser {
-    pub fn new(tokens: Vec<Spanned<Token>>) -> Self {
+impl<'a> Parser<'a> {
+    pub fn new(tokens: Vec<Spanned<Token<'a>>>) -> Parser<'a> {
         Self {
             tokens,
             pos: 0,

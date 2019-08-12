@@ -4,27 +4,36 @@ use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::token::*;
 
+fn is_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
 pub struct Lexer<'a> {
+    raw: &'a str,
     input: Peekable<Chars<'a>>,
     start_line: u32,
     start_col: u32,
     line: u32,
     col: u32,
+    // For make slice for identifier
+    pos: usize,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(s: &'a str) -> Lexer<'a> {
         Self {
+            raw: s,
             input: s.chars().peekable(),
             start_line: 0,
             start_col: 0,
             line: 0,
             col: 0,
+            pos: 0,
         }
     }
 
     fn read_char(&mut self) -> char {
-        match self.input.next() {
+        let c = match self.input.next() {
             Some('\n') => {
                 self.line += 1;
                 self.col = 0;
@@ -35,7 +44,10 @@ impl<'a> Lexer<'a> {
                 ch
             },
             None => '\0',
-        }
+        };
+
+        self.pos += c.len_utf8();
+        c
     }
 
     fn peek(&mut self) -> char {
@@ -65,7 +77,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn lex_number(&mut self, start_char: char) -> Token {
+    fn lex_number(&mut self, start_char: char) -> Token<'a> {
         let mut n = start_char.to_digit(10).unwrap() as i64;
         loop {
             match self.peek() {
@@ -82,10 +94,24 @@ impl<'a> Lexer<'a> {
         Token::Number(n)
     }
 
-    fn next_token(&mut self) -> Result<Token, Error> {
+    fn lex_identifier(&mut self, c: char) -> Token<'a> {
+        let start_pos = self.pos - c.len_utf8();
 
+        loop {
+            if is_identifier_char(self.peek()) {
+                self.read_char();
+            } else {
+                break;
+            }
+        }
+
+        Token::Identifier(&self.raw[start_pos..self.pos])
+    }
+
+    fn next_token(&mut self) -> Result<Token<'a>, Error> {
         match self.read_char() {
             c if c.is_digit(10) => Ok(self.lex_number(c)),
+            c if is_identifier_char(c) => Ok(self.lex_identifier(c)),
             '+' => Ok(Token::Add),
             '-' => Ok(Token::Sub),
             '*' => Ok(Token::Asterisk),
@@ -96,7 +122,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn lex(mut self) -> Result<Vec<Spanned<Token>>, Vec<Error>> {
+    pub fn lex(mut self) -> Result<Vec<Spanned<Token<'a>>>, Vec<Error>> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
 
@@ -172,22 +198,24 @@ mod tests {
             })
         }
 
-        let lexer = Lexer::new("1 + 2\n678 * (345 - 10005) /123");
+        let lexer = Lexer::new("1 + 2\n678 * (345 - 10005) /123 + abc");
         let tokens = lexer.lex().unwrap();
         let expected = vec![
-            new(Token::Number(1), 0, 0, 0, 1),
-            new(Token::Add, 0, 2, 0, 3),
-            new(Token::Number(2), 0, 4, 0, 5),
-            new(Token::Number(678), 1, 0, 1, 3),
-            new(Token::Asterisk, 1, 4, 1, 5),
-            new(Token::Lparen, 1, 6, 1, 7),
-            new(Token::Number(345), 1, 7, 1, 10),
-            new(Token::Sub, 1, 11, 1, 12),
-            new(Token::Number(10005), 1, 13, 1, 18),
-            new(Token::Rparen, 1, 18, 1, 19),
-            new(Token::Div, 1, 20, 1, 21),
-            new(Token::Number(123), 1, 21, 1, 24),
-            new(Token::EOF, 0, 0, 0, 0),
+            new(Token::Number(1),           0, 0, 0, 1),
+            new(Token::Add,                 0, 2, 0, 3),
+            new(Token::Number(2),           0, 4, 0, 5),
+            new(Token::Number(678),         1, 0, 1, 3),
+            new(Token::Asterisk,            1, 4, 1, 5),
+            new(Token::Lparen,              1, 6, 1, 7),
+            new(Token::Number(345),         1, 7, 1, 10),
+            new(Token::Sub,                 1, 11, 1, 12),
+            new(Token::Number(10005),       1, 13, 1, 18),
+            new(Token::Rparen,              1, 18, 1, 19),
+            new(Token::Div,                 1, 20, 1, 21),
+            new(Token::Number(123),         1, 21, 1, 24),
+            new(Token::Add,                 1, 25, 1, 26),
+            new(Token::Identifier("abc"),   1, 27, 1, 30),
+            new(Token::EOF,                 0, 0, 0, 0),
         ];
 
         for (token, expected) in tokens.into_iter().zip(expected.into_iter()) {
