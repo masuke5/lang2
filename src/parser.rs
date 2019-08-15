@@ -34,7 +34,7 @@ macro_rules! expect {
             let token = $self.peek();
             let res = match token.kind {
                 $pat => Ok($expr),
-                _ => Err(Self::unexpected_token(token)),
+                _ => Err($self.unexpected_token(token)),
             };
             $self.next();
             res
@@ -43,34 +43,14 @@ macro_rules! expect {
     ($self:ident, $pat:pat) => (expect!($self, $pat => ()));
 }
 
-macro_rules! push_if_error {
-    ($result:expr, $error_vec:expr, $default:expr) => {
-        match $result {
-            Ok(value) => value,
-            Err(err) => {
-                $error_vec.push(err);
-                $default
-            },
-        }
-    };
-    ($result:expr, $error_vec:expr) => {
-        match $result {
-            Ok(_) => (),
-            Err(err) => $error_vec.push(err),
-        };
-    };
-}
-
-fn result_from_error<T, E>(value: T, errors: Vec<E>) -> Result<T, Vec<E>> {
-    if errors.len() > 0 {
-        Err(errors)
-    } else {
-        Ok(value)
+macro_rules! skip_if_err {
+    ($self:ident, $result:expr, $token:expr) => {
+        $result.or_else(|err| { $self.skip_until($token); Err(err) })
     }
 }
 
 type ExprResult = Result<Spanned<Expr>, Error>;
-type StmtResult<'a> = Result<Spanned<Stmt<'a>>, Vec<Error>>;
+type StmtResult<'a> = Result<Spanned<Stmt<'a>>, Error>;
 
 pub struct Parser<'a> {
     tokens: Vec<Spanned<Token<'a>>>,
@@ -90,12 +70,24 @@ impl<'a> Parser<'a> {
         &self.tokens[self.pos]
     }
 
+    #[inline]
     fn peek(&self) -> &Spanned<Token<'a>> {
         &self.tokens[self.pos]
     }
 
-    fn unexpected_token(token: &Spanned<Token>) -> Error {
+    #[inline]
+    fn unexpected_token(&self, token: &Spanned<Token>) -> Error {
         Error::new(&format!("Unexpected token `{}`", token.kind), token.span.clone())
+    }
+
+    fn skip_until(&mut self, token: &Token) {
+        while self.peek().kind != *token && self.peek().kind != Token::EOF {
+            self.next();
+        }
+
+        if self.peek().kind != Token::EOF {
+            self.next();
+        }
     }
 
     fn consume(&mut self, token: Token) -> bool {
@@ -115,13 +107,12 @@ impl<'a> Parser<'a> {
             Token::Number(n) => Ok(spanned(Expr::Literal(Literal::Number(*n)), span.clone())),
             Token::Lparen => {
                 self.next();
-                self.parse_expr()
+                Ok(self.parse_expr()?)
             },
-            _ => Err(Self::unexpected_token(token)),
-        }?;
-
+            _ => Err(self.unexpected_token(token)),
+        };
         self.next();
-        Ok(result)
+        result
     }
 
     fn parse_mul(&mut self) -> ExprResult {
@@ -143,53 +134,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bind_stmt(&mut self) -> StmtResult<'a> {
-        let mut errors = Vec::new();
-
         // Eat "let"
         let let_span = self.peek().span.clone();
         self.next();
 
-        // Identifier 
-        let name = expect!(self, Token::Identifier(name) => name);
-        let name = push_if_error!(name, errors, "error");
+        // Identifier
+        let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), &Token::Semicolon)?;
 
         // =
-        push_if_error!(expect!(self, Token::Assign), errors);
+        skip_if_err!(self, expect!(self, Token::Assign), &Token::Semicolon)?;
 
-        // Expression
-        let expr = match self.parse_expr() {
-            Ok(expr) => expr,
-            Err(err) => {
-                errors.push(err);
-                return Err(errors);
-            },
-        };
+        // Initial expression
+        let expr = skip_if_err!(self, self.parse_expr(), &Token::Semicolon)?;
 
-        push_if_error!(expect!(self, Token::Semicolon), errors);
+        expect!(self, Token::Semicolon)?;
 
         let span = Span::merge(&let_span, &expr.span);
-        result_from_error(
-            spanned(Stmt::Bind(name, expr), span),
-            errors)
+        Ok(spanned(Stmt::Bind(name, expr), span))
     }
 
     fn parse_expr_stmt(&mut self) -> StmtResult<'a> {
-        let mut errors = Vec::new();
+        let expr = skip_if_err!(self, self.parse_expr(), &Token::Semicolon)?;
 
-        let expr = match self.parse_expr() {
-            Ok(expr) => expr,
-            Err(err) => {
-                errors.push(err);
-                return Err(errors);
-            },
-        };
-
-        push_if_error!(expect!(self, Token::Semicolon), errors);
+        expect!(self, Token::Semicolon)?;
 
         let span = expr.span.clone();
-        result_from_error(
-            spanned(Stmt::Expr(expr), span),
-            errors)
+        Ok(spanned(Stmt::Expr(expr), span))
     }
 
     fn parse_stmt(&mut self) -> StmtResult<'a> {
@@ -202,19 +172,21 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
-        let mut errors = Vec::new();
         let mut stmts = Vec::new();
+        let mut errors = Vec::new();
 
         while self.peek().kind != Token::EOF {
             match self.parse_stmt() {
                 Ok(stmt) => stmts.push(stmt),
-                Err(new_errors) => {
-                    errors.extend(new_errors.into_iter());
-                },
+                Err(err) => errors.push(err),
             };
         }
 
-        result_from_error(Program { stmt: stmts }, errors)
+        if errors.len() > 0 {
+            Err(errors)
+        } else {
+            Ok(Program { stmt: stmts })
+        }
     }
 }
 
