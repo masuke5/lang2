@@ -25,15 +25,16 @@ pub enum Literal {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Expr {
+pub enum Expr<'a> {
     Literal(Literal),
-    BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    BinOp(BinOp, Box<Spanned<Expr<'a>>>, Box<Spanned<Expr<'a>>>),
+    Variable(&'a str),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Stmt<'a> {
-    Bind(&'a str, Spanned<Expr>),
-    Expr(Spanned<Expr>),
+    Bind(&'a str, Spanned<Expr<'a>>),
+    Expr(Spanned<Expr<'a>>),
     Block(Vec<Spanned<Stmt<'a>>>),
 }
 

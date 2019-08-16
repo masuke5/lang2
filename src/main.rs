@@ -34,6 +34,7 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
 
     match expr.kind {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
+        Expr::Variable(name) => println!("{} {}", name, span_to_string(&expr.span)),
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
             dump_expr(*lhs, depth + 1);

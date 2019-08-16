@@ -49,7 +49,7 @@ macro_rules! skip_if_err {
     }
 }
 
-type ExprResult = Result<Spanned<Expr>, Error>;
+type ExprResult<'a> = Result<Spanned<Expr<'a>>, Error>;
 type StmtResult<'a> = Result<Spanned<Stmt<'a>>, Error>;
 
 pub struct Parser<'a> {
@@ -99,12 +99,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_primary(&mut self) -> ExprResult {
+    fn parse_primary(&mut self) -> ExprResult<'a> {
         let token = self.peek();
         let span = &token.span;
 
         let result = match &token.kind {
             Token::Number(n) => Ok(spanned(Expr::Literal(Literal::Number(*n)), span.clone())),
+            Token::Identifier(name) => Ok(spanned(Expr::Variable(name), span.clone())),
             Token::Lparen => {
                 self.next();
                 Ok(self.parse_expr()?)
@@ -115,21 +116,21 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn parse_mul(&mut self) -> ExprResult {
+    fn parse_mul(&mut self) -> ExprResult<'a> {
         binop!(self, parse_primary, {
             Token::Asterisk => BinOp::Mul,
             Token::Div => BinOp::Div,
         })
     }
 
-    fn parse_add(&mut self) -> ExprResult {
+    fn parse_add(&mut self) -> ExprResult<'a> {
         binop!(self, parse_mul, {
             Token::Add => BinOp::Add,
             Token::Sub => BinOp::Sub,
         })
     }
 
-    fn parse_expr(&mut self) -> ExprResult {
+    fn parse_expr(&mut self) -> ExprResult<'a> {
         self.parse_add()
     }
 
@@ -207,7 +208,7 @@ mod tests {
             }))
         }
 
-        let lexer = Lexer::new("let abc = 10 + 3 * (5 + 20);");
+        let lexer = Lexer::new("let abc = 10 + 3 * (5 + 20); abc;");
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
@@ -227,6 +228,9 @@ mod tests {
                               0, 15, 0, 26)),
                           0, 10, 0, 26)),
                     0, 0, 0, 26),
+                *new(Stmt::Expr(
+                    *new(Expr::Variable("abc"), 0, 29, 0, 32)),
+                    0, 29, 0, 32),
             ],
         };
 

@@ -26,6 +26,7 @@ impl Executor {
         match expr {
             Expr::Literal(Literal::Number(n)) => Value::Int(n),
             Expr::BinOp(binop, lhs, rhs) => self.run_binop(binop, lhs.kind, rhs.kind),
+            _ => unimplemented!(),
         }
     }
 
