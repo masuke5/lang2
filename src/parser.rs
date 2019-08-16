@@ -108,7 +108,15 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => Ok(spanned(Expr::Variable(name), span.clone())),
             Token::Lparen => {
                 self.next();
-                Ok(self.parse_expr()?)
+                let mut expr = self.parse_expr()?;
+
+                expect!(self, Token::Rparen)?;
+
+                // Adjust to parentheses
+                expr.span.start_col -= 1;
+                expr.span.end_col += 1;
+
+                return Ok(expr);
             },
             _ => Err(self.unexpected_token(token)),
         };
@@ -139,18 +147,16 @@ impl<'a> Parser<'a> {
         let let_span = self.peek().span.clone();
         self.next();
 
-        // Identifier
         let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), &Token::Semicolon)?;
-
-        // =
         skip_if_err!(self, expect!(self, Token::Assign), &Token::Semicolon)?;
-
-        // Initial expression
         let expr = skip_if_err!(self, self.parse_expr(), &Token::Semicolon)?;
 
         expect!(self, Token::Semicolon)?;
 
-        let span = Span::merge(&let_span, &expr.span);
+        let mut span = Span::merge(&let_span, &expr.span);
+        // Adjust to semicolon
+        span.end_col += 1;
+
         Ok(spanned(Stmt::Bind(name, expr), span))
     }
 
@@ -159,7 +165,10 @@ impl<'a> Parser<'a> {
 
         expect!(self, Token::Semicolon)?;
 
-        let span = expr.span.clone();
+        let mut span = expr.span.clone();
+        // Adjust to semicolon
+        span.end_col += 1;
+
         Ok(spanned(Stmt::Expr(expr), span))
     }
 
@@ -224,13 +233,13 @@ mod tests {
                               new(Expr::BinOp(BinOp::Add,
                                   new(Expr::Literal(Literal::Number(5)), 0, 20, 0, 21),
                                   new(Expr::Literal(Literal::Number(20)), 0, 24, 0, 26)),
-                                  0, 20, 0, 26)),
-                              0, 15, 0, 26)),
-                          0, 10, 0, 26)),
-                    0, 0, 0, 26),
+                                  0, 19, 0, 27)),
+                              0, 15, 0, 27)),
+                          0, 10, 0, 27)),
+                    0, 0, 0, 28),
                 *new(Stmt::Expr(
                     *new(Expr::Variable("abc"), 0, 29, 0, 32)),
-                    0, 29, 0, 32),
+                    0, 29, 0, 33),
             ],
         };
 
