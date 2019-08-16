@@ -172,31 +172,58 @@ impl<'a> Parser<'a> {
         Ok(spanned(Stmt::Expr(expr), span))
     }
 
-    fn parse_stmt(&mut self) -> StmtResult<'a> {
-        let token = self.peek().clone();
-
-        match token.kind {
-            Token::Let => self.parse_bind_stmt(),
-            _ => self.parse_expr_stmt(),
-        }
-    }
-
-    pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
+    fn parse_multiple_statements(&mut self, end_token: &Token) -> Result<Vec<Spanned<Stmt<'a>>>, Vec<Error>> {
         let mut stmts = Vec::new();
         let mut errors = Vec::new();
 
-        while self.peek().kind != Token::EOF {
+        while self.peek().kind != *end_token {
+            if let Token::EOF = self.peek().kind {
+                errors.push(Error::new(&format!("Expected `{}`, but got EOF", end_token), self.peek().span.clone()));
+                break;
+            }
+
             match self.parse_stmt() {
                 Ok(stmt) => stmts.push(stmt),
-                Err(err) => errors.push(err),
-            };
+                Err(err) => errors.extend(err),
+            }
         }
 
         if errors.len() > 0 {
             Err(errors)
         } else {
-            Ok(Program { stmt: stmts })
+            Ok(stmts)
         }
+    }
+
+    fn parse_block(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+        // Eat "{"
+        let lbrace_span = self.peek().span.clone();
+        self.next();
+
+        let stmts = self.parse_multiple_statements(&Token::Rbrace)?;
+
+        // Eat "}"
+        let rbrace_span = self.peek().span.clone();
+        self.next();
+
+        let span = Span::merge(&lbrace_span, &rbrace_span);
+        Ok(spanned(Stmt::Block(stmts), span))
+    }
+
+    fn parse_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+        let token = self.peek();
+
+        match token.kind {
+            Token::Let => self.parse_bind_stmt().map_err(|err| vec![err]),
+            Token::Lbrace => self.parse_block(),
+            _ => self.parse_expr_stmt().map_err(|err| vec![err]),
+        }
+    }
+
+    pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
+        let stmts = self.parse_multiple_statements(&Token::EOF)?;
+
+        Ok(Program { stmt: stmts })
     }
 }
 
@@ -217,7 +244,7 @@ mod tests {
             }))
         }
 
-        let lexer = Lexer::new("let abc = 10 + 3 * (5 + 20); abc;");
+        let lexer = Lexer::new("let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }");
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
@@ -240,6 +267,15 @@ mod tests {
                 *new(Stmt::Expr(
                     *new(Expr::Variable("abc"), 0, 29, 0, 32)),
                     0, 29, 0, 33),
+                *new(Stmt::Block(vec![
+                    *new(Stmt::Expr(
+                        *new(Expr::Variable("abc"), 0, 36, 0, 39)),
+                        0, 36, 0, 40),
+                    *new(Stmt::Expr(
+                        *new(Expr::Literal(Literal::Number(10)), 0, 41, 0, 43)),
+                        0, 41, 0, 44)]),
+                    0, 34, 0, 46),
+
             ],
         };
 

@@ -12,6 +12,8 @@ pub enum Token<'a> {
     EOF,
     Lparen,
     Rparen,
+    Lbrace,
+    Rbrace,
     Assign,
     Semicolon,
 }
@@ -29,6 +31,8 @@ impl<'a> fmt::Display for Token<'a> {
             Token::EOF => f.write_str("EOF"),
             Token::Lparen => f.write_str("("),
             Token::Rparen => f.write_str(")"),
+            Token::Lbrace => f.write_str("{"),
+            Token::Rbrace => f.write_str("}"),
             Token::Assign => f.write_str("="),
             Token::Semicolon => f.write_str(";"),
         }

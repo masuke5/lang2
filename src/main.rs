@@ -55,8 +55,10 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
         Stmt::Expr(expr) => {
             dump_expr(expr, depth);
         },
-        _ => {
-            unimplemented!();
+        Stmt::Block(stmts) => {
+            for stmt in stmts {
+                dump_stmt(stmt, depth);
+            }
         },
     }
 }

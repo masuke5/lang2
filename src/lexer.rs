@@ -121,6 +121,8 @@ impl<'a> Lexer<'a> {
             '/' => Ok(Token::Div),
             '(' => Ok(Token::Lparen),
             ')' => Ok(Token::Rparen),
+            '{' => Ok(Token::Lbrace),
+            '}' => Ok(Token::Rbrace),
             '=' => Ok(Token::Assign),
             ';' => Ok(Token::Semicolon),
             c => Err(self.error(&format!("Invalid character `{}`", c))),
