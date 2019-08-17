@@ -63,9 +63,19 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
     }
 }
 
+fn dump_toplevel(toplevel: Spanned<TopLevel>) {
+    match toplevel.kind {
+        TopLevel::Stmt(stmt) => dump_stmt(stmt, 0),
+        TopLevel::Function(name, params, return_ty, body) => {
+            println!("fn {}({}): {:?} {}", name, params.len(), return_ty, span_to_string(&toplevel.span));
+            dump_stmt(body, 1);
+        },
+    }
+}
+
 fn dump_ast(program: Program) {
-    for stmt in program.stmt {
-        dump_stmt(stmt, 0);
+    for toplevel in program.top {
+        dump_toplevel(toplevel);
     }
 }
 

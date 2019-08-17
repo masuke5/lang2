@@ -44,8 +44,20 @@ macro_rules! expect {
 }
 
 macro_rules! skip_if_err {
-    ($self:ident, $result:expr, $token:expr) => {
-        $result.or_else(|err| { $self.skip_until($token); Err(err) })
+    ($self:ident, $result:expr, $token:pat $(| $pat:pat),*) => {
+        $result.or_else(|err| {
+            while $self.peek().kind != Token::EOF {
+                match $self.peek().kind {
+                    $token $(| $pat)* => break,
+                    _ => $self.next(),
+                };
+            }
+
+            if $self.peek().kind != Token::EOF {
+                $self.next();
+            }
+            Err(err)
+        })
     }
 }
 
@@ -78,16 +90,6 @@ impl<'a> Parser<'a> {
     #[inline]
     fn unexpected_token(&self, token: &Spanned<Token>) -> Error {
         Error::new(&format!("Unexpected token `{}`", token.kind), token.span.clone())
-    }
-
-    fn skip_until(&mut self, token: &Token) {
-        while self.peek().kind != *token && self.peek().kind != Token::EOF {
-            self.next();
-        }
-
-        if self.peek().kind != Token::EOF {
-            self.next();
-        }
     }
 
     fn consume(&mut self, token: Token) -> bool {
@@ -147,9 +149,9 @@ impl<'a> Parser<'a> {
         let let_span = self.peek().span.clone();
         self.next();
 
-        let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), &Token::Semicolon)?;
-        skip_if_err!(self, expect!(self, Token::Assign), &Token::Semicolon)?;
-        let expr = skip_if_err!(self, self.parse_expr(), &Token::Semicolon)?;
+        let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), Token::Semicolon)?;
+        skip_if_err!(self, expect!(self, Token::Assign), Token::Semicolon)?;
+        let expr = skip_if_err!(self, self.parse_expr(), Token::Semicolon)?;
 
         expect!(self, Token::Semicolon)?;
 
@@ -161,7 +163,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr_stmt(&mut self) -> StmtResult<'a> {
-        let expr = skip_if_err!(self, self.parse_expr(), &Token::Semicolon)?;
+        let expr = skip_if_err!(self, self.parse_expr(), Token::Semicolon)?;
 
         expect!(self, Token::Semicolon)?;
 
@@ -220,10 +222,88 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
-        let stmts = self.parse_multiple_statements(&Token::EOF)?;
+    fn parse_type(&mut self) -> Result<Type, Error> {
+        let result = match self.peek().kind {
+            Token::Int => Ok(Type::Int),
+            _ => Err(self.unexpected_token(self.peek())),
+        };
 
-        Ok(Program { stmt: stmts })
+        self.next();
+
+        result
+    }
+
+    fn parse_fn_decl(&mut self) -> Result<Spanned<TopLevel<'a>>, Vec<Error>> {
+        // Eat "fn"
+        let fn_span = self.peek().span.clone();
+        self.next();
+
+        // name(
+        let name = expect!(self, Token::Identifier(name) => name).map_err(|err| vec![err])?;
+        skip_if_err!(self, expect!(self, Token::Lparen), Token::Rparen).map_err(|err| vec![err])?;
+
+        let mut errors = Vec::new();
+        let mut params = Vec::new();
+        loop {
+            let mut parse_param = || -> Result<(&'a str, Type), Error> {
+                // name: type
+                let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), Token::Comma | Token::Rparen)?;
+                skip_if_err!(self, expect!(self, Token::Colon), Token::Comma | Token::Rparen)?;
+                let ty = self.parse_type()?;
+                Ok((name, ty))
+            };
+
+            match parse_param() {
+                Ok(param) => params.push(param),
+                Err(err) => errors.push(err),
+            };
+
+            if self.consume(Token::Rparen) {
+                break;
+            } else if !self.consume(Token::Comma) {
+                return Err(vec![self.unexpected_token(self.peek())]);
+            }
+        }
+
+        if errors.len() > 0 {
+            return Err(errors);
+        }
+
+        expect!(self, Token::Colon).map_err(|err| vec![err])?;
+        let return_ty = self.parse_type().map_err(|err| vec![err])?;
+
+        let body = self.parse_stmt()?;
+
+        let span = Span::merge(&fn_span, &body.span);
+        Ok(spanned(TopLevel::Function(name, params, return_ty, body), span))
+    }
+
+    fn parse_toplevel(&mut self) -> Result<Spanned<TopLevel<'a>>, Vec<Error>> {
+        match self.peek().kind {
+            Token::Fn => self.parse_fn_decl(),
+            _ => self.parse_stmt().map(|stmt| {
+                let span = stmt.span.clone();
+                spanned(TopLevel::Stmt(stmt), span)
+            }),
+        }
+    }
+
+    pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
+        let mut toplevels = Vec::new();
+        let mut errors = Vec::new();
+
+        while self.peek().kind != Token::EOF {
+            match self.parse_toplevel() {
+                Ok(toplevel) => toplevels.push(toplevel),
+                Err(err) => errors.extend(err),
+            }
+        }
+
+        if errors.len() > 0 {
+            Err(errors)
+        } else {
+            Ok(Program { top: toplevels })
+        }
     }
 }
 
@@ -244,38 +324,54 @@ mod tests {
             }))
         }
 
-        let lexer = Lexer::new("let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }");
+        let lexer = Lexer::new(r#"let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }
+fn add(a: int, b: int): int { a + b; }"#);
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
 
         let expected = Program {
-            stmt: vec![
-                *new(Stmt::Bind(
-                    "abc",
-                    *new(Expr::BinOp(BinOp::Add,
-                          new(Expr::Literal(Literal::Number(10)), 0, 10, 0, 12),
-                          new(Expr::BinOp(BinOp::Mul,
-                              new(Expr::Literal(Literal::Number(3)), 0, 15, 0, 16),
-                              new(Expr::BinOp(BinOp::Add,
-                                  new(Expr::Literal(Literal::Number(5)), 0, 20, 0, 21),
-                                  new(Expr::Literal(Literal::Number(20)), 0, 24, 0, 26)),
-                                  0, 19, 0, 27)),
-                              0, 15, 0, 27)),
-                          0, 10, 0, 27)),
+            top: vec![
+                *new(TopLevel::Stmt(
+                    *new(Stmt::Bind(
+                        "abc",
+                        *new(Expr::BinOp(BinOp::Add,
+                              new(Expr::Literal(Literal::Number(10)), 0, 10, 0, 12),
+                              new(Expr::BinOp(BinOp::Mul,
+                                  new(Expr::Literal(Literal::Number(3)), 0, 15, 0, 16),
+                                  new(Expr::BinOp(BinOp::Add,
+                                      new(Expr::Literal(Literal::Number(5)), 0, 20, 0, 21),
+                                      new(Expr::Literal(Literal::Number(20)), 0, 24, 0, 26)),
+                                      0, 19, 0, 27)),
+                                  0, 15, 0, 27)),
+                              0, 10, 0, 27)),
+                        0, 0, 0, 28)),
                     0, 0, 0, 28),
-                *new(Stmt::Expr(
-                    *new(Expr::Variable("abc"), 0, 29, 0, 32)),
+                *new(TopLevel::Stmt(
+                    *new(Stmt::Expr(
+                        *new(Expr::Variable("abc"), 0, 29, 0, 32)),
+                        0, 29, 0, 33)),
                     0, 29, 0, 33),
-                *new(Stmt::Block(vec![
-                    *new(Stmt::Expr(
-                        *new(Expr::Variable("abc"), 0, 36, 0, 39)),
-                        0, 36, 0, 40),
-                    *new(Stmt::Expr(
-                        *new(Expr::Literal(Literal::Number(10)), 0, 41, 0, 43)),
-                        0, 41, 0, 44)]),
+                *new(TopLevel::Stmt(
+                    *new(Stmt::Block(vec![
+                        *new(Stmt::Expr(
+                            *new(Expr::Variable("abc"), 0, 36, 0, 39)),
+                            0, 36, 0, 40),
+                        *new(Stmt::Expr(
+                            *new(Expr::Literal(Literal::Number(10)), 0, 41, 0, 43)),
+                            0, 41, 0, 44)]),
+                        0, 34, 0, 46)),
                     0, 34, 0, 46),
-
+                *new(TopLevel::Function("add", vec![("a", Type::Int), ("b", Type::Int)], Type::Int,
+                    *new(Stmt::Block(vec![
+                        *new(Stmt::Expr(
+                            *new(Expr::BinOp(BinOp::Add,
+                                new(Expr::Variable("a"), 1, 30, 1, 31),
+                                new(Expr::Variable("b"), 1, 34, 1, 35)),
+                                1, 30, 1, 35)),
+                            1, 30, 1, 36)]),
+                        1, 28, 1, 38)),
+                    1, 0, 1, 38),
             ],
         };
 

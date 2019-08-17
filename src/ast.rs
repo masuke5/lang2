@@ -1,5 +1,10 @@
 use crate::span::Spanned;
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
+    Int,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum BinOp {
     Add,
@@ -39,6 +44,12 @@ pub enum Stmt<'a> {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum TopLevel<'a> {
+    Stmt(Spanned<Stmt<'a>>),
+    Function(&'a str, Vec<(&'a str, Type)>, Type, Spanned<Stmt<'a>>),
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Program<'a> {
-    pub stmt: Vec<Spanned<Stmt<'a>>>,
+    pub top: Vec<Spanned<TopLevel<'a>>>,
 }

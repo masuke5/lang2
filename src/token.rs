@@ -5,6 +5,8 @@ pub enum Token<'a> {
     Number(i64),
     Identifier(&'a str),
     Let,
+    Fn,
+    Int,
     Add,
     Sub,
     Asterisk,
@@ -16,6 +18,8 @@ pub enum Token<'a> {
     Rbrace,
     Assign,
     Semicolon,
+    Comma,
+    Colon,
 }
 
 impl<'a> fmt::Display for Token<'a> {
@@ -24,6 +28,8 @@ impl<'a> fmt::Display for Token<'a> {
             Token::Number(n) => write!(f, "{}", n),
             Token::Identifier(ident) => write!(f, "{}", ident),
             Token::Let => f.write_str("let"),
+            Token::Fn => f.write_str("fn"),
+            Token::Int => f.write_str("int"),
             Token::Add => f.write_str("+"),
             Token::Sub => f.write_str("-"),
             Token::Asterisk => f.write_str("*"),
@@ -35,6 +41,8 @@ impl<'a> fmt::Display for Token<'a> {
             Token::Rbrace => f.write_str("}"),
             Token::Assign => f.write_str("="),
             Token::Semicolon => f.write_str(";"),
+            Token::Comma => f.write_str(","),
+            Token::Colon => f.write_str(":"),
         }
     }
 }

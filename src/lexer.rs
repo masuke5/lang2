@@ -107,6 +107,8 @@ impl<'a> Lexer<'a> {
 
         match &self.raw[start_pos..self.pos] {
             "let" => Token::Let,
+            "fn" => Token::Fn,
+            "int" => Token::Int,
             s => Token::Identifier(s),
         }
     }
@@ -125,6 +127,8 @@ impl<'a> Lexer<'a> {
             '}' => Ok(Token::Rbrace),
             '=' => Ok(Token::Assign),
             ';' => Ok(Token::Semicolon),
+            ',' => Ok(Token::Comma),
+            ':' => Ok(Token::Colon),
             c => Err(self.error(&format!("Invalid character `{}`", c))),
         }
     }

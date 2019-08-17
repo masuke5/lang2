@@ -56,11 +56,10 @@ impl<'a> Executor<'a> {
     }
 
     pub fn exec(&mut self, program: Program<'a>) -> i64 {
-        for stmt in program.stmt {
-            self.run_stmt(stmt.kind);
-        }
-
-        0
+        unimplemented!();
+        //for stmt in program.stmt {
+        //    self.run_stmt(stmt.kind);
+        //}
     }
 }
 
