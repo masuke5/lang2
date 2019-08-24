@@ -43,7 +43,7 @@ macro_rules! expect {
     ($self:ident, $pat:pat) => (expect!($self, $pat => ()));
 }
 
-macro_rules! skip_if_err {
+macro_rules! unwrap_or_skip {
     ($self:ident, $result:expr, $token:pat $(| $pat:pat),*) => {
         $result.or_else(|err| {
             while $self.peek().kind != Token::EOF {
@@ -186,9 +186,9 @@ impl<'a> Parser<'a> {
         let let_span = self.peek().span.clone();
         self.next();
 
-        let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), Token::Semicolon)?;
-        skip_if_err!(self, expect!(self, Token::Assign), Token::Semicolon)?;
-        let expr = skip_if_err!(self, self.parse_expr(), Token::Semicolon)?;
+        let name = unwrap_or_skip!(self, expect!(self, Token::Identifier(name) => name), Token::Semicolon)?;
+        unwrap_or_skip!(self, expect!(self, Token::Assign), Token::Semicolon)?;
+        let expr = unwrap_or_skip!(self, self.parse_expr(), Token::Semicolon)?;
 
         expect!(self, Token::Semicolon)?;
 
@@ -200,7 +200,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr_stmt(&mut self) -> StmtResult<'a> {
-        let expr = skip_if_err!(self, self.parse_expr(), Token::Semicolon)?;
+        let expr = unwrap_or_skip!(self, self.parse_expr(), Token::Semicolon)?;
 
         expect!(self, Token::Semicolon)?;
 
@@ -277,15 +277,15 @@ impl<'a> Parser<'a> {
 
         // name(
         let name = expect!(self, Token::Identifier(name) => name).map_err(|err| vec![err])?;
-        skip_if_err!(self, expect!(self, Token::Lparen), Token::Rparen).map_err(|err| vec![err])?;
+        unwrap_or_skip!(self, expect!(self, Token::Lparen), Token::Rparen).map_err(|err| vec![err])?;
 
         let mut errors = Vec::new();
         let mut params = Vec::new();
         loop {
             let mut parse_param = || -> Result<(&'a str, Type), Error> {
                 // name: type
-                let name = skip_if_err!(self, expect!(self, Token::Identifier(name) => name), Token::Comma | Token::Rparen)?;
-                skip_if_err!(self, expect!(self, Token::Colon), Token::Comma | Token::Rparen)?;
+                let name = unwrap_or_skip!(self, expect!(self, Token::Identifier(name) => name), Token::Comma | Token::Rparen)?;
+                unwrap_or_skip!(self, expect!(self, Token::Colon), Token::Comma | Token::Rparen)?;
                 let ty = self.parse_type()?;
                 Ok((name, ty))
             };
