@@ -88,6 +88,11 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
+    fn prev(&self) -> &Spanned<Token<'a>> {
+        &self.tokens[self.pos - 1]
+    }
+
+    #[inline]
     fn unexpected_token(&self, token: &Spanned<Token>) -> Error {
         Error::new(&format!("Unexpected token `{}`", token.kind), token.span.clone())
     }
@@ -105,20 +110,19 @@ impl<'a> Parser<'a> {
         // Parse arguments
         let mut args = Vec::new();
 
-        let span = self.peek().span.clone();
-        let parse_args = || {
+        let mut parse_args = || {
             if !self.consume(Token::Rparen) {
                 loop {
                     args.push(self.parse_expr()?);
 
                     if self.consume(Token::Rparen) {
-                        return Ok(span);
+                        return Ok(self.prev().span.clone());
                     } else if !self.consume(Token::Comma) {
                         return Err(self.unexpected_token(self.peek()));
                     }
                 }
             } else {
-                Ok(span)
+                Ok(self.prev().span.clone())
             }
         };
         let rparen_span = parse_args()?;
@@ -154,8 +158,6 @@ impl<'a> Parser<'a> {
                 // Adjust to parentheses
                 expr.span.start_col -= 1;
                 expr.span.end_col += 1;
-
-                self.next();
 
                 return Ok(expr);
             },
@@ -362,7 +364,8 @@ mod tests {
         }
 
         let lexer = Lexer::new(r#"let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }
-fn add(a: int, b: int): int { a + b; }"#);
+fn add(a: int, b: int): int { a + b; }
+add(3, 5 + 8);"#);
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
@@ -409,6 +412,17 @@ fn add(a: int, b: int): int { a + b; }"#);
                             1, 30, 1, 36)]),
                         1, 28, 1, 38)),
                     1, 0, 1, 38),
+                *new(TopLevel::Stmt(
+                    *new(Stmt::Expr(
+                        *new(Expr::Call("add", vec![
+                            *new(Expr::Literal(Literal::Number(3)), 2, 4, 2, 5),
+                            *new(Expr::BinOp(BinOp::Add,
+                                new(Expr::Literal(Literal::Number(5)), 2, 7, 2, 8),
+                                new(Expr::Literal(Literal::Number(8)), 2, 11, 2, 12)),
+                                2, 7, 2, 12)]),
+                            2, 0, 2, 13)),
+                        2, 0, 2, 14)),
+                    2, 0, 2, 14),
             ],
         };
 

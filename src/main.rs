@@ -41,7 +41,7 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
             dump_expr(*rhs, depth + 1);
         },
         Expr::Call(name, args) => {
-            println!("{}", name);
+            println!("{} {}", name, span_to_string(&expr.span));
             for arg in args {
                 dump_expr(arg, depth + 1);
             }
