@@ -101,13 +101,50 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_primary(&mut self) -> ExprResult<'a> {
-        let token = self.peek();
-        let span = &token.span;
+    fn parse_call(&mut self, name: &'a str, name_span: Span) -> ExprResult<'a> {
+        // Parse arguments
+        let mut args = Vec::new();
 
-        let result = match &token.kind {
-            Token::Number(n) => Ok(spanned(Expr::Literal(Literal::Number(*n)), span.clone())),
-            Token::Identifier(name) => Ok(spanned(Expr::Variable(name), span.clone())),
+        let span = self.peek().span.clone();
+        let parse_args = || {
+            if !self.consume(Token::Rparen) {
+                loop {
+                    args.push(self.parse_expr()?);
+
+                    if self.consume(Token::Rparen) {
+                        return Ok(span);
+                    } else if !self.consume(Token::Comma) {
+                        return Err(self.unexpected_token(self.peek()));
+                    }
+                }
+            } else {
+                Ok(span)
+            }
+        };
+        let rparen_span = parse_args()?;
+
+        Ok(spanned(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
+    }
+
+    fn parse_var_or_call(&mut self, ident: &'a str, ident_span: Span) -> ExprResult<'a> {
+        self.next();
+
+        if self.consume(Token::Lparen) {
+            self.parse_call(ident, ident_span)
+        } else {
+            Ok(spanned(Expr::Variable(ident), ident_span.clone()))
+        }
+    }
+
+    fn parse_primary(&mut self) -> ExprResult<'a> {
+        let token = self.peek().clone();
+
+        match token.kind {
+            Token::Number(n) => {
+                self.next();
+                Ok(spanned(Expr::Literal(Literal::Number(n)), token.span))
+            },
+            Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::Lparen => {
                 self.next();
                 let mut expr = self.parse_expr()?;
@@ -118,12 +155,12 @@ impl<'a> Parser<'a> {
                 expr.span.start_col -= 1;
                 expr.span.end_col += 1;
 
+                self.next();
+
                 return Ok(expr);
             },
-            _ => Err(self.unexpected_token(token)),
-        };
-        self.next();
-        result
+            _ => Err(self.unexpected_token(&token)),
+        }
     }
 
     fn parse_mul(&mut self) -> ExprResult<'a> {

@@ -40,6 +40,12 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
             dump_expr(*lhs, depth + 1);
             dump_expr(*rhs, depth + 1);
         },
+        Expr::Call(name, args) => {
+            println!("{}", name);
+            for arg in args {
+                dump_expr(arg, depth + 1);
+            }
+        },
     }
 }
 

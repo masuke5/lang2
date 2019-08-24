@@ -34,6 +34,7 @@ pub enum Expr<'a> {
     Literal(Literal),
     BinOp(BinOp, Box<Spanned<Expr<'a>>>, Box<Spanned<Expr<'a>>>),
     Variable(&'a str),
+    Call(&'a str, Vec<Spanned<Expr<'a>>>),
 }
 
 #[derive(Debug, PartialEq)]
