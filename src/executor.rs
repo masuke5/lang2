@@ -5,12 +5,14 @@ use crate::env::*;
 
 pub struct Executor<'a> {
     var_map: HashMap<&'a str, Value>,
+    functions: HashMap<&'a str, Function<'a>>,
 }
 
 impl<'a> Executor<'a> {
     pub fn new() -> Self {
         Self {
             var_map: HashMap::new(),
+            functions: HashMap::new(),
         }
     }
 
@@ -26,12 +28,27 @@ impl<'a> Executor<'a> {
         })
     }
 
+    fn run_call(&mut self, name: &str, args: impl Iterator<Item = Expr<'a>>) -> Value {
+        let func = self.functions[name].clone();
+
+        for (i, arg) in args.enumerate() {
+            let param_name = func.params[i];
+            let value = self.run_expr(arg);
+            self.var_map.insert(param_name, value);
+        }
+        
+        self.run_stmt(func.stmt);
+
+        Value::Int(0)
+    }
+
     fn run_expr(&mut self, expr: Expr<'a>) -> Value {
         #[allow(unreachable_patterns)]
         match expr {
             Expr::Literal(Literal::Number(n)) => Value::Int(n),
             Expr::BinOp(binop, lhs, rhs) => self.run_binop(binop, lhs.kind, rhs.kind),
             Expr::Variable(name) => self.var_map[name].clone(),
+            Expr::Call(name, args) => self.run_call(name, args.into_iter().map(|expr| expr.kind)),
             _ => unimplemented!(),
         }
     }
@@ -55,11 +72,24 @@ impl<'a> Executor<'a> {
         };
     }
 
+    fn run_toplevel(&mut self, toplevel: TopLevel<'a>) {
+        match toplevel {
+            TopLevel::Stmt(stmt) => self.run_stmt(stmt.kind),
+            TopLevel::Function(name, params, _, stmt) => {
+                self.functions.insert(name, Function {
+                    stmt: stmt.kind,
+                    params: params.into_iter().map(|(name, _)| name).collect() 
+                });
+            },
+        }
+    }
+
     pub fn exec(&mut self, program: Program<'a>) -> i64 {
-        unimplemented!();
-        //for stmt in program.stmt {
-        //    self.run_stmt(stmt.kind);
-        //}
+        for toplevel in program.top {
+            self.run_toplevel(toplevel.kind);
+        }
+
+        0
     }
 }
 
