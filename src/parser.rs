@@ -267,6 +267,19 @@ impl<'a> Parser<'a> {
         Ok(spanned(Stmt::Return(expr),span))
     }
 
+    fn parse_if_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+        let if_token_span = self.peek().span.clone();
+        self.next();
+
+        let expr = self.parse_expr();
+        let expr = unwrap_or_skip!(self, expr, Token::Lbrace).map_err(|err| vec![err])?;
+
+        let stmt = self.parse_stmt()?;
+
+        let span = Span::merge(&if_token_span, &stmt.span);
+        Ok(spanned(Stmt::If(expr, Box::new(stmt)), span))
+    }
+
     fn parse_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
         let token = self.peek();
 
@@ -274,6 +287,7 @@ impl<'a> Parser<'a> {
             Token::Let => self.parse_bind_stmt().map_err(|err| vec![err]),
             Token::Lbrace => self.parse_block(),
             Token::Return => self.parse_return().map_err(|err| vec![err]),
+            Token::If => self.parse_if_stmt(),
             _ => self.parse_expr_stmt().map_err(|err| vec![err]),
         }
     }

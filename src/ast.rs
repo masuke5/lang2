@@ -43,6 +43,7 @@ pub enum Stmt<'a> {
     Expr(Spanned<Expr<'a>>),
     Block(Vec<Spanned<Stmt<'a>>>),
     Return(Spanned<Expr<'a>>),
+    If(Spanned<Expr<'a>>, Box<Spanned<Stmt<'a>>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
