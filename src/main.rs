@@ -8,6 +8,10 @@ mod env;
 mod executor;
 
 use std::process::exit;
+use std::fs::File;
+use std::io::Read;
+use std::borrow::Cow;
+
 use lexer::Lexer;
 use span::{Span, Spanned};
 use token::Token;
@@ -89,7 +93,7 @@ fn dump_ast(program: Program) {
     }
 }
 
-fn print_errors(input: String, errors: Vec<Error>) {
+fn print_errors(input: &str, errors: Vec<Error>) {
     let input: Vec<&str> = input.lines().collect();
     // Line number string length (Example: 123 = 3, 123456 = 6)
     let line_num_len = format!("{}", input.len()).len();
@@ -107,7 +111,7 @@ fn print_errors(input: String, errors: Vec<Error>) {
     }
 }
 
-fn execute(matches: ArgMatches, input: &str) -> Result<(), Vec<Error>> {
+fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     let lexer = Lexer::new(input);
     let tokens = lexer.lex()?;
     if matches.is_present("dump-token") {
@@ -130,11 +134,28 @@ fn execute(matches: ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     Ok(())
 }
 
+fn get_input<'a>(matches: &'a ArgMatches) -> Result<Cow<'a, str>, String> {
+    if let Some(filepath) = matches.value_of("file") {
+        let mut file = File::open(filepath).map_err(|err| format!("{}", err))?;
+        let mut input = String::new();
+        file.read_to_string(&mut input).map_err(|err| format!("{}", err))?;
+
+        Ok(input.into())
+    } else if let Some(input) = matches.value_of("cmd") {
+        Ok(input.into())
+    } else {
+        Err(String::from("Not specified file or cmd"))
+    }
+}
+
 fn main() {
     let matches = App::new("lang2")
         .version("0.0")
         .author("masuke5 <s.zerogoichi@gmail.com>")
         .about("lang2 interpreter")
+        .arg(Arg::with_name("file")
+            .help("Runs file")
+            .index(1))
         .arg(Arg::with_name("cmd")
              .short("c")
              .long("cmd")
@@ -148,9 +169,16 @@ fn main() {
              .help("Dumps AST"))
         .get_matches();
 
-    let cmd = matches.value_of("cmd").unwrap().to_string();
-    if let Err(errors) = execute(matches, &cmd) {
-        print_errors(cmd, errors);
+    let input = match get_input(&matches) {
+        Ok(input) => input,
+        Err(err) => {
+            eprintln!("Unable to load input: {}", err);
+            exit(1);
+        },
+    };
+
+    if let Err(errors) = execute(&matches, &input) {
+        print_errors(&input, errors);
         exit(1);
     }
 }
