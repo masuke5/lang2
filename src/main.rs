@@ -66,6 +66,10 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
                 dump_stmt(stmt, depth);
             }
         },
+        Stmt::Return(expr) => {
+            println!("return {}", span_to_string(&stmt.span));
+            dump_expr(expr, depth + 1);
+        },
     }
 }
 

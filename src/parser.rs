@@ -251,12 +251,29 @@ impl<'a> Parser<'a> {
         Ok(spanned(Stmt::Block(stmts), span))
     }
 
+    fn parse_return(&mut self) -> StmtResult<'a> {
+        // Eat "return"
+        let return_token_span = self.peek().span.clone();
+        self.next();
+
+        let expr = self.parse_expr()?;
+
+        expect!(self, Token::Semicolon)?;
+
+        let mut span = Span::merge(&return_token_span, &expr.span);
+        // Adjust to a semicolon
+        span.end_col += 1;
+
+        Ok(spanned(Stmt::Return(expr),span))
+    }
+
     fn parse_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
         let token = self.peek();
 
         match token.kind {
             Token::Let => self.parse_bind_stmt().map_err(|err| vec![err]),
             Token::Lbrace => self.parse_block(),
+            Token::Return => self.parse_return().map_err(|err| vec![err]),
             _ => self.parse_expr_stmt().map_err(|err| vec![err]),
         }
     }
@@ -365,7 +382,8 @@ mod tests {
 
         let lexer = Lexer::new(r#"let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }
 fn add(a: int, b: int): int { a + b; }
-add(3, 5 + 8);"#);
+add(3, 5 + 8);
+return abc;"#);
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
@@ -423,6 +441,11 @@ add(3, 5 + 8);"#);
                             2, 0, 2, 13)),
                         2, 0, 2, 14)),
                     2, 0, 2, 14),
+                *new(TopLevel::Stmt(
+                    *new(Stmt::Return(
+                        *new(Expr::Variable("abc"), 3, 7, 3, 10)),
+                        3, 0, 3, 11)),
+                    3, 0, 3, 11),
             ],
         };
 

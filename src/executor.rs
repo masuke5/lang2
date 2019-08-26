@@ -6,6 +6,7 @@ use crate::env::*;
 pub struct Executor<'a> {
     var_map: HashMap<&'a str, Value>,
     functions: HashMap<&'a str, Function<'a>>,
+    return_value: Option<Value>,
 }
 
 impl<'a> Executor<'a> {
@@ -13,6 +14,7 @@ impl<'a> Executor<'a> {
         Self {
             var_map: HashMap::new(),
             functions: HashMap::new(),
+            return_value: None,
         }
     }
 
@@ -39,7 +41,7 @@ impl<'a> Executor<'a> {
         
         self.run_stmt(func.stmt);
 
-        Value::Int(0)
+        self.return_value.clone().unwrap()
     }
 
     fn run_expr(&mut self, expr: Expr<'a>) -> Value {
@@ -58,21 +60,34 @@ impl<'a> Executor<'a> {
         self.var_map.insert(name, value);
     }
 
-    fn run_stmt(&mut self, stmt: Stmt<'a>) {
+    fn run_return(&mut self, expr: Expr<'a>) {
+        let value = self.run_expr(expr);
+        self.return_value = Some(value);
+    }
+
+    fn run_stmt(&mut self, stmt: Stmt<'a>) -> bool {
         #[allow(unreachable_patterns)]
         match stmt {
             Stmt::Bind(name, expr) => self.run_bind_stmt(name, expr.kind),
             Stmt::Expr(expr) => { self.run_expr(expr.kind); },
             Stmt::Block(stmts) => {
                 for stmt in stmts {
-                    self.run_stmt(stmt.kind);
+                    if self.run_stmt(stmt.kind) {
+                        break;
+                    }
                 }
             },
+            Stmt::Return(expr) => {
+                self.run_return(expr.kind);
+                return true;
+            }
             _ => unimplemented!(),
         };
+
+        false
     }
 
-    fn run_toplevel(&mut self, toplevel: TopLevel<'a>) {
+    fn run_toplevel(&mut self, toplevel: TopLevel<'a>) -> bool {
         match toplevel {
             TopLevel::Stmt(stmt) => self.run_stmt(stmt.kind),
             TopLevel::Function(name, params, _, stmt) => {
@@ -80,16 +95,19 @@ impl<'a> Executor<'a> {
                     stmt: stmt.kind,
                     params: params.into_iter().map(|(name, _)| name).collect() 
                 });
+                false
             },
         }
     }
 
     pub fn exec(&mut self, program: Program<'a>) -> i64 {
         for toplevel in program.top {
-            self.run_toplevel(toplevel.kind);
+            if self.run_toplevel(toplevel.kind) {
+                break;
+            }
         }
 
-        0
+        self.return_value.clone().unwrap_or(Value::Int(0)).int()
     }
 }
 
@@ -102,24 +120,20 @@ mod tests {
     #[test]
     fn exec() {
         let lexer = Lexer::new(r#"
-            {
-                let foo = 10 + 3 * 5 + 20;
-                let bar = 30;
-                let baz = foo + bar;
-            }"#);
+            fn add(a: int, b: int): int {
+                return a + b;
+            }
+
+            let foo = 10 + 3 * 5 + 20;
+            let bar = 30;
+            let baz = add(foo, bar);
+            return baz;"#);
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
         let mut executor = Executor::new();
-        let _ = executor.exec(program);
+        let result = executor.exec(program);
 
-        let mut expected = HashMap::new();
-        expected.insert("foo", Value::Int(45));
-        expected.insert("bar", Value::Int(30));
-        expected.insert("baz", Value::Int(75));
-
-        for name in executor.var_map.keys() {
-            assert_eq!(executor.var_map[name], expected[name]);
-        }
+        assert_eq!(result, 75);
     }
 }

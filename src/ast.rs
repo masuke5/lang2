@@ -42,6 +42,7 @@ pub enum Stmt<'a> {
     Bind(&'a str, Spanned<Expr<'a>>),
     Expr(Spanned<Expr<'a>>),
     Block(Vec<Spanned<Stmt<'a>>>),
+    Return(Spanned<Expr<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
