@@ -138,9 +138,9 @@ impl<'a> Lexer<'a> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
 
-        while self.peek() != '\0' {
-            self.skip_whitespace();
+        self.skip_whitespace();
 
+        while self.peek() != '\0' {
             self.start_line = self.line;
             self.start_col = self.col;
 
@@ -153,6 +153,8 @@ impl<'a> Lexer<'a> {
                 })),
                 Err(err) => errors.push(err),
             };
+
+            self.skip_whitespace();
         }
 
         tokens.push(Spanned::<Token>::new(Token::EOF, Span {
