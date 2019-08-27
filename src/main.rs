@@ -8,6 +8,7 @@ mod ast;
 mod parser;
 mod env;
 mod executor;
+mod ty;
 
 use std::process::exit;
 use std::fs::File;
@@ -34,7 +35,7 @@ fn dump_token(tokens: Vec<Spanned<Token>>) {
     }
 }
 
-fn dump_expr(expr: Spanned<Expr>, depth: usize) {
+fn dump_expr(expr: SpannedTyped<Expr>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 

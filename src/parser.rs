@@ -2,9 +2,14 @@ use crate::span::{Span, Spanned};
 use crate::error::Error;
 use crate::token::*;
 use crate::ast::*;
+use crate::ty::Type;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
+}
+
+fn spanned_typed<T>(kind: T, span: Span) -> SpannedTyped<T> {
+    SpannedTyped::<T>::new(kind, span, Type::Invalid)
 }
 
 macro_rules! binop {
@@ -17,7 +22,7 @@ macro_rules! binop {
                 } $(else if $self.consume($token) {
                     let rhs = $self.$func()?;
                     let span = Span::merge(&expr.span, &rhs.span);
-                    expr = spanned(Expr::BinOp($binop, Box::new(expr), Box::new(rhs)), span);
+                    expr = spanned_typed(Expr::BinOp($binop, Box::new(expr), Box::new(rhs)), span);
                 })* else {
                     break;
                 }
@@ -61,7 +66,7 @@ macro_rules! unwrap_or_skip {
     }
 }
 
-type ExprResult<'a> = Result<Spanned<Expr<'a>>, Error>;
+type ExprResult<'a> = Result<SpannedTyped<Expr<'a>>, Error>;
 type StmtResult<'a> = Result<Spanned<Stmt<'a>>, Error>;
 
 pub struct Parser<'a> {
@@ -127,7 +132,7 @@ impl<'a> Parser<'a> {
         };
         let rparen_span = parse_args()?;
 
-        Ok(spanned(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
+        Ok(spanned_typed(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
     }
 
     fn parse_var_or_call(&mut self, ident: &'a str, ident_span: Span) -> ExprResult<'a> {
@@ -136,7 +141,7 @@ impl<'a> Parser<'a> {
         if self.consume(Token::Lparen) {
             self.parse_call(ident, ident_span)
         } else {
-            Ok(spanned(Expr::Variable(ident), ident_span.clone()))
+            Ok(spanned_typed(Expr::Variable(ident), ident_span.clone()))
         }
     }
 
@@ -146,16 +151,16 @@ impl<'a> Parser<'a> {
         match token.kind {
             Token::Number(n) => {
                 self.next();
-                Ok(spanned(Expr::Literal(Literal::Number(n)), token.span))
+                Ok(spanned_typed(Expr::Literal(Literal::Number(n)), token.span))
             },
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {
                 self.next();
-                Ok(spanned(Expr::Literal(Literal::True), token.span))
+                Ok(spanned_typed(Expr::Literal(Literal::True), token.span))
             },
             Token::False => {
                 self.next();
-                Ok(spanned(Expr::Literal(Literal::False), token.span))
+                Ok(spanned_typed(Expr::Literal(Literal::False), token.span))
             },
             Token::Lparen => {
                 self.next();
@@ -419,6 +424,11 @@ mod tests {
             }))
         }
 
+        fn newt<T>(kind: T, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> Box<SpannedTyped<T>> {
+            let spanned = new(kind, start_line, start_col, end_line, end_col);
+            Box::new(SpannedTyped::new(spanned.kind, spanned.span, Type::Invalid))
+        }
+
         let lexer = Lexer::new(r#"let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }
 fn add(a: int, b: int): int { a + b; }
 add(3, 5 + 8);
@@ -432,13 +442,13 @@ return abc;"#);
                 *new(TopLevel::Stmt(
                     *new(Stmt::Bind(
                         "abc",
-                        *new(Expr::BinOp(BinOp::Add,
-                              new(Expr::Literal(Literal::Number(10)), 0, 10, 0, 12),
-                              new(Expr::BinOp(BinOp::Mul,
-                                  new(Expr::Literal(Literal::Number(3)), 0, 15, 0, 16),
-                                  new(Expr::BinOp(BinOp::Add,
-                                      new(Expr::Literal(Literal::Number(5)), 0, 20, 0, 21),
-                                      new(Expr::Literal(Literal::Number(20)), 0, 24, 0, 26)),
+                        *newt(Expr::BinOp(BinOp::Add,
+                              newt(Expr::Literal(Literal::Number(10)), 0, 10, 0, 12),
+                              newt(Expr::BinOp(BinOp::Mul,
+                                  newt(Expr::Literal(Literal::Number(3)), 0, 15, 0, 16),
+                                  newt(Expr::BinOp(BinOp::Add,
+                                      newt(Expr::Literal(Literal::Number(5)), 0, 20, 0, 21),
+                                      newt(Expr::Literal(Literal::Number(20)), 0, 24, 0, 26)),
                                       0, 19, 0, 27)),
                                   0, 15, 0, 27)),
                               0, 10, 0, 27)),
@@ -446,43 +456,43 @@ return abc;"#);
                     0, 0, 0, 28),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Expr(
-                        *new(Expr::Variable("abc"), 0, 29, 0, 32)),
+                        *newt(Expr::Variable("abc"), 0, 29, 0, 32)),
                         0, 29, 0, 33)),
                     0, 29, 0, 33),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Block(vec![
                         *new(Stmt::Expr(
-                            *new(Expr::Variable("abc"), 0, 36, 0, 39)),
+                            *newt(Expr::Variable("abc"), 0, 36, 0, 39)),
                             0, 36, 0, 40),
                         *new(Stmt::Expr(
-                            *new(Expr::Literal(Literal::Number(10)), 0, 41, 0, 43)),
+                            *newt(Expr::Literal(Literal::Number(10)), 0, 41, 0, 43)),
                             0, 41, 0, 44)]),
                         0, 34, 0, 46)),
                     0, 34, 0, 46),
                 *new(TopLevel::Function("add", vec![("a", Type::Int), ("b", Type::Int)], Type::Int,
                     *new(Stmt::Block(vec![
                         *new(Stmt::Expr(
-                            *new(Expr::BinOp(BinOp::Add,
-                                new(Expr::Variable("a"), 1, 30, 1, 31),
-                                new(Expr::Variable("b"), 1, 34, 1, 35)),
+                            *newt(Expr::BinOp(BinOp::Add,
+                                newt(Expr::Variable("a"), 1, 30, 1, 31),
+                                newt(Expr::Variable("b"), 1, 34, 1, 35)),
                                 1, 30, 1, 35)),
                             1, 30, 1, 36)]),
                         1, 28, 1, 38)),
                     1, 0, 1, 38),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Expr(
-                        *new(Expr::Call("add", vec![
-                            *new(Expr::Literal(Literal::Number(3)), 2, 4, 2, 5),
-                            *new(Expr::BinOp(BinOp::Add,
-                                new(Expr::Literal(Literal::Number(5)), 2, 7, 2, 8),
-                                new(Expr::Literal(Literal::Number(8)), 2, 11, 2, 12)),
+                        *newt(Expr::Call("add", vec![
+                            *newt(Expr::Literal(Literal::Number(3)), 2, 4, 2, 5),
+                            *newt(Expr::BinOp(BinOp::Add,
+                                newt(Expr::Literal(Literal::Number(5)), 2, 7, 2, 8),
+                                newt(Expr::Literal(Literal::Number(8)), 2, 11, 2, 12)),
                                 2, 7, 2, 12)]),
                             2, 0, 2, 13)),
                         2, 0, 2, 14)),
                     2, 0, 2, 14),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Return(
-                        *new(Expr::Variable("abc"), 3, 7, 3, 10)),
+                        *newt(Expr::Variable("abc"), 3, 7, 3, 10)),
                         3, 0, 3, 11)),
                     3, 0, 3, 11),
             ],
