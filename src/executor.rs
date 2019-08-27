@@ -73,6 +73,16 @@ impl<'a> Executor<'a> {
         self.return_value = Some(value);
     }
 
+    fn run_if(&mut self, cond: Expr<'a>, stmt: Stmt<'a>) -> bool {
+        let cond = self.run_expr(cond);
+
+        if cond.bool() {
+            self.run_stmt(stmt)
+        } else {
+            false
+        }
+    }
+
     fn run_stmt(&mut self, stmt: Stmt<'a>) -> bool {
         #[allow(unreachable_patterns)]
         match stmt {
@@ -81,14 +91,15 @@ impl<'a> Executor<'a> {
             Stmt::Block(stmts) => {
                 for stmt in stmts {
                     if self.run_stmt(stmt.kind) {
-                        break;
+                        return true;
                     }
                 }
             },
             Stmt::Return(expr) => {
                 self.run_return(expr.kind);
                 return true;
-            }
+            },
+            Stmt::If(cond, stmt) => return self.run_if(cond.kind, stmt.kind),
             _ => unimplemented!(),
         };
 
