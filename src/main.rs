@@ -1,3 +1,5 @@
+#![feature(bind_by_move_pattern_guards)]
+
 mod span;
 mod error;
 mod token;

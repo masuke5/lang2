@@ -3,6 +3,7 @@ use crate::ast::Stmt;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Int(i64),
+    Bool(bool),
 }
 
 impl Value {

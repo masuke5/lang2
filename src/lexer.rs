@@ -57,6 +57,18 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn next_is(&mut self, ch: char) -> bool {
+        match self.input.peek() {
+            Some(c) => ch == *c,
+            None => false,
+        }
+    }
+
+    fn two_char(&mut self, token: Token<'a>) -> Result<Token<'a>, Error> {
+        self.read_char();
+        Ok(token)
+    }
+
     fn skip_whitespace(&mut self) {
         loop {
             let c = self.peek();
@@ -127,10 +139,16 @@ impl<'a> Lexer<'a> {
             ')' => Ok(Token::Rparen),
             '{' => Ok(Token::Lbrace),
             '}' => Ok(Token::Rbrace),
+            '=' if self.next_is('=') => self.two_char(Token::Equal),
             '=' => Ok(Token::Assign),
             ';' => Ok(Token::Semicolon),
             ',' => Ok(Token::Comma),
             ':' => Ok(Token::Colon),
+            '<' if self.next_is('=') => self.two_char(Token::LessThanOrEqual),
+            '<' => Ok(Token::LessThan),
+            '>' if self.next_is('=') => self.two_char(Token::GreaterThanOrEqual),
+            '>' => Ok(Token::GreaterThan),
+            '!' if self.next_is('=') => self.two_char(Token::NotEqual),
             c => Err(self.error(&format!("Invalid character `{}`", c))),
         }
     }

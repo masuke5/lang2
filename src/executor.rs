@@ -22,12 +22,18 @@ impl<'a> Executor<'a> {
         let left = self.run_expr(lhs).int();
         let right = self.run_expr(rhs).int();
 
-        Value::Int(match binop {
-            BinOp::Add => left + right,
-            BinOp::Sub => left - right,
-            BinOp::Mul => left * right,
-            BinOp::Div => left / right,
-        })
+        match binop {
+            BinOp::Add => Value::Int(left + right),
+            BinOp::Sub => Value::Int(left - right),
+            BinOp::Mul => Value::Int(left * right),
+            BinOp::Div => Value::Int(left / right),
+            BinOp::Equal => Value::Bool(left == right),
+            BinOp::NotEqual => Value::Bool(left != right),
+            BinOp::LessThan => Value::Bool(left < right),
+            BinOp::LessThanOrEqual => Value::Bool(left <= right),
+            BinOp::GreaterThan => Value::Bool(left > right),
+            BinOp::GreaterThanOrEqual => Value::Bool(left >= right),
+        }
     }
 
     fn run_call(&mut self, name: &str, args: impl Iterator<Item = Expr<'a>>) -> Value {

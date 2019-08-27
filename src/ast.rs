@@ -3,6 +3,7 @@ use crate::span::Spanned;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Int,
+    Bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -10,7 +11,13 @@ pub enum BinOp {
     Add,
     Sub,
     Mul,
-    Div
+    Div,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 }
 
 impl BinOp {
@@ -20,6 +27,12 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::Equal => "==",
+            BinOp::NotEqual => "!=",
+            BinOp::LessThan => "<",
+            BinOp::LessThanOrEqual => "<=",
+            BinOp::GreaterThan => ">",
+            BinOp::GreaterThanOrEqual => ">=",
         }
     }
 }

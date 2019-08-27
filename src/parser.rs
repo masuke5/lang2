@@ -179,8 +179,24 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_relational(&mut self) -> ExprResult<'a> {
+        binop!(self, parse_add, {
+            Token::LessThan => BinOp::LessThan,
+            Token::LessThanOrEqual => BinOp::LessThanOrEqual,
+            Token::GreaterThan => BinOp::GreaterThan,
+            Token::GreaterThanOrEqual => BinOp::GreaterThanOrEqual,
+        })
+    }
+
+    fn parse_equality(&mut self) -> ExprResult<'a> {
+        binop!(self, parse_relational, {
+            Token::Equal => BinOp::Equal,
+            Token::NotEqual => BinOp::NotEqual,
+        })
+    }
+
     fn parse_expr(&mut self) -> ExprResult<'a> {
-        self.parse_add()
+        self.parse_equality()
     }
 
     fn parse_bind_stmt(&mut self) -> StmtResult<'a> {

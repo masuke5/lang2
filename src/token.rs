@@ -22,6 +22,12 @@ pub enum Token<'a> {
     Semicolon,
     Comma,
     Colon,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 }
 
 impl<'a> fmt::Display for Token<'a> {
@@ -47,6 +53,12 @@ impl<'a> fmt::Display for Token<'a> {
             Token::Semicolon => f.write_str(";"),
             Token::Comma => f.write_str(","),
             Token::Colon => f.write_str(":"),
+            Token::Equal => f.write_str("=="),
+            Token::NotEqual => f.write_str("!="),
+            Token::LessThan => f.write_str("<"),
+            Token::LessThanOrEqual => f.write_str("<="),
+            Token::GreaterThan => f.write_str(">"),
+            Token::GreaterThanOrEqual => f.write_str(">="),
         }
     }
 }
