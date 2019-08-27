@@ -149,6 +149,14 @@ impl<'a> Parser<'a> {
                 Ok(spanned(Expr::Literal(Literal::Number(n)), token.span))
             },
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
+            Token::True => {
+                self.next();
+                Ok(spanned(Expr::Literal(Literal::True), token.span))
+            },
+            Token::False => {
+                self.next();
+                Ok(spanned(Expr::Literal(Literal::False), token.span))
+            },
             Token::Lparen => {
                 self.next();
                 let mut expr = self.parse_expr()?;
@@ -311,6 +319,7 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Result<Type, Error> {
         let result = match self.peek().kind {
             Token::Int => Ok(Type::Int),
+            Token::Bool => Ok(Type::Bool),
             _ => Err(self.unexpected_token(self.peek())),
         };
 

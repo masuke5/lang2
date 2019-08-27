@@ -121,8 +121,11 @@ impl<'a> Lexer<'a> {
             "let" => Token::Let,
             "fn" => Token::Fn,
             "int" => Token::Int,
+            "bool" => Token::Bool,
             "return" => Token::Return,
             "if" => Token::If,
+            "true" => Token::True,
+            "false" => Token::False,
             s => Token::Identifier(s),
         }
     }

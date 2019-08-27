@@ -40,6 +40,8 @@ impl BinOp {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(i64),
+    True,
+    False,
 }
 
 #[derive(Debug, PartialEq, Clone)]

@@ -54,6 +54,8 @@ impl<'a> Executor<'a> {
         #[allow(unreachable_patterns)]
         match expr {
             Expr::Literal(Literal::Number(n)) => Value::Int(n),
+            Expr::Literal(Literal::True) => Value::Bool(true),
+            Expr::Literal(Literal::False) => Value::Bool(false),
             Expr::BinOp(binop, lhs, rhs) => self.run_binop(binop, lhs.kind, rhs.kind),
             Expr::Variable(name) => self.var_map[name].clone(),
             Expr::Call(name, args) => self.run_call(name, args.into_iter().map(|expr| expr.kind)),
