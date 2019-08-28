@@ -9,6 +9,7 @@ mod parser;
 mod env;
 mod executor;
 mod ty;
+mod sema;
 
 use std::process::exit;
 use std::fs::File;
@@ -22,6 +23,7 @@ use error::Error;
 use parser::Parser;
 use ast::*;
 use executor::Executor;
+use sema::Analyzer;
 
 use clap::{Arg, App, ArgMatches};
 
@@ -130,11 +132,14 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     }
 
     let parser = Parser::new(tokens);
-    let program = parser.parse()?;
+    let mut program = parser.parse()?;
     if matches.is_present("dump-ast") {
         dump_ast(program);
         exit(1);
     }
+
+    let analyzer = Analyzer::new();
+    analyzer.analyze(&mut program)?;
 
     let mut executor = Executor::new();
     let result = executor.exec(program);
