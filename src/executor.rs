@@ -4,7 +4,7 @@ use crate::ast::*;
 use crate::env::*;
 
 pub struct Executor<'a> {
-    var_map: HashMap<&'a str, Value>,
+    stack: Vec<HashMap<&'a str, Value>>,
     functions: HashMap<&'a str, Function<'a>>,
     return_value: Option<Value>,
 }
@@ -12,10 +12,33 @@ pub struct Executor<'a> {
 impl<'a> Executor<'a> {
     pub fn new() -> Self {
         Self {
-            var_map: HashMap::new(),
+            stack: Vec::new(),
             functions: HashMap::new(),
             return_value: None,
         }
+    }
+
+    fn new_stack(&mut self) {
+        self.stack.push(HashMap::new());
+    }
+
+    fn pop_stack(&mut self) {
+        self.stack.pop().unwrap();
+    }
+
+    fn new_var(&mut self, name: &'a str, value: Value) {
+        self.stack.last_mut().unwrap().insert(name, value);
+    }
+
+    fn find_var(&mut self, name: &str) -> &Value {
+        for vars in self.stack.iter().rev() {
+            match vars.get(name) {
+                Some(value) => return value,
+                None => {},
+            };
+        }
+
+        unreachable!();
     }
 
     fn run_binop(&mut self, binop: BinOp, lhs: Expr<'a>, rhs: Expr<'a>) -> Value {
@@ -39,17 +62,21 @@ impl<'a> Executor<'a> {
     fn run_call(&mut self, name: &str, args: impl Iterator<Item = Expr<'a>>) -> Value {
         let func = self.functions[name].clone();
 
+        self.new_stack();
+
         for (i, arg) in args.enumerate() {
             let param_name = func.params[i];
             let value = self.run_expr(arg);
-            self.var_map.insert(param_name, value);
+            self.new_var(param_name, value);
         }
         
         match name {
-            "printi" => stdlib::printi(self.var_map["n"].clone()),
-            "printlf" => stdlib::printlf(),
+            "printi" => { stdlib::printi(self.find_var("n").clone()); self.return_value = Some(Value::Int(0)); },
+            "printlf" => { stdlib::printlf(); self.return_value = Some(Value::Int(0)); },
             _ => { self.run_stmt(func.stmt); },
         }
+
+        self.pop_stack();
 
         self.return_value.clone().unwrap()
     }
@@ -61,7 +88,7 @@ impl<'a> Executor<'a> {
             Expr::Literal(Literal::True) => Value::Bool(true),
             Expr::Literal(Literal::False) => Value::Bool(false),
             Expr::BinOp(binop, lhs, rhs) => self.run_binop(binop, lhs.kind, rhs.kind),
-            Expr::Variable(name) => self.var_map[name].clone(),
+            Expr::Variable(name) => self.find_var(name).clone(),
             Expr::Call(name, args) => self.run_call(name, args.into_iter().map(|expr| expr.kind)),
             _ => unimplemented!(),
         }
@@ -69,7 +96,7 @@ impl<'a> Executor<'a> {
 
     fn run_bind_stmt(&mut self, name: &'a str, expr: Expr<'a>) {
         let value = self.run_expr(expr);
-        self.var_map.insert(name, value);
+        self.new_var(name, value);
     }
 
     fn run_return(&mut self, expr: Expr<'a>) {
@@ -93,11 +120,16 @@ impl<'a> Executor<'a> {
             Stmt::Bind(name, expr) => self.run_bind_stmt(name, expr.kind),
             Stmt::Expr(expr) => { self.run_expr(expr.kind); },
             Stmt::Block(stmts) => {
+                self.new_stack();
+
                 for stmt in stmts {
                     if self.run_stmt(stmt.kind) {
+                        self.pop_stack();
                         return true;
                     }
                 }
+
+                self.pop_stack();
             },
             Stmt::Return(expr) => {
                 self.run_return(expr.kind);
@@ -133,11 +165,16 @@ impl<'a> Executor<'a> {
             stmt: Stmt::Block(Vec::new()),
         });
 
+        self.new_stack();
+
         for toplevel in program.top {
             if self.run_toplevel(toplevel.kind) {
+                self.pop_stack();
                 break;
             }
         }
+
+        self.pop_stack();
     }
 }
 
