@@ -189,28 +189,3 @@ mod stdlib {
         println!();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
-
-    #[test]
-    fn exec() {
-        let lexer = Lexer::new(r#"
-            fn add(a: int, b: int): int {
-                return a + b;
-            }
-
-            let foo = 10 + 3 * 5 + 20;
-            let bar = 30;
-            let baz = add(foo, bar);
-            return baz;"#);
-        let tokens = lexer.lex().unwrap();
-        let parser = Parser::new(tokens);
-        let program = parser.parse().unwrap();
-        let mut executor = Executor::new();
-        let result = executor.exec(program);
-    }
-}
