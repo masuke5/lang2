@@ -71,6 +71,7 @@ pub enum Stmt<'a> {
     Block(Vec<Spanned<Stmt<'a>>>),
     Return(SpannedTyped<Expr<'a>>),
     If(SpannedTyped<Expr<'a>>, Box<Spanned<Stmt<'a>>>),
+    While(SpannedTyped<Expr<'a>>, Box<Spanned<Stmt<'a>>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]

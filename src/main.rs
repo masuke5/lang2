@@ -86,6 +86,11 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
             dump_expr(cond, depth + 1);
             dump_stmt(*body, depth + 1);
         },
+        Stmt::While(cond, body) => {
+            println!("while {}", span_to_string(&stmt.span));
+            dump_expr(cond, depth + 1);
+            dump_stmt(*body, depth + 1);
+        },
     }
 }
 

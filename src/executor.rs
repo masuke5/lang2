@@ -114,6 +114,19 @@ impl<'a> Executor<'a> {
         }
     }
 
+    fn run_while(&mut self, cond: Expr<'a>, stmt: Stmt<'a>) -> bool {
+        let cond = self.run_expr(cond);
+
+        while cond.bool() {
+            // TODO: Remove clone()
+            if self.run_stmt(stmt.clone()) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn run_stmt(&mut self, stmt: Stmt<'a>) -> bool {
         #[allow(unreachable_patterns)]
         match stmt {
@@ -136,6 +149,7 @@ impl<'a> Executor<'a> {
                 return true;
             },
             Stmt::If(cond, stmt) => return self.run_if(cond.kind, stmt.kind),
+            Stmt::While(cond, stmt) => return self.run_while(cond.kind, stmt.kind),
             _ => unimplemented!(),
         };
 

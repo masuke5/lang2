@@ -122,7 +122,7 @@ impl<'a> Analyzer<'a> {
     fn analyze_stmt(&mut self, stmt: &'a mut Stmt) {
         match stmt {
             Stmt::Expr(expr) => { self.analyze_expr(expr); },
-            Stmt::If(cond, stmt) => {
+            Stmt::If(cond, stmt) | Stmt::While(cond, stmt) => {
                 let (ty, span) = self.analyze_expr(cond);
                 match ty {
                     Type::Bool => {},

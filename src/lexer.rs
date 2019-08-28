@@ -124,6 +124,7 @@ impl<'a> Lexer<'a> {
             "bool" => Token::Bool,
             "return" => Token::Return,
             "if" => Token::If,
+            "while" => Token::While,
             "true" => Token::True,
             "false" => Token::False,
             s => Token::Identifier(s),
