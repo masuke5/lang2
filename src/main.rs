@@ -142,9 +142,7 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     analyzer.analyze(&mut program)?;
 
     let mut executor = Executor::new();
-    let result = executor.exec(program);
-
-    println!("{}", result);
+    executor.exec(program);
 
     Ok(())
 }

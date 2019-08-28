@@ -123,7 +123,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    pub fn exec(&mut self, program: Program<'a>) -> i64 {
+    pub fn exec(&mut self, program: Program<'a>) {
         self.functions.insert("printi", Function {
             params: vec!["n"],
             stmt: Stmt::Block(Vec::new()),
@@ -138,8 +138,6 @@ impl<'a> Executor<'a> {
                 break;
             }
         }
-
-        self.return_value.clone().unwrap_or(Value::Int(0)).int()
     }
 }
 
@@ -177,7 +175,5 @@ mod tests {
         let program = parser.parse().unwrap();
         let mut executor = Executor::new();
         let result = executor.exec(program);
-
-        assert_eq!(result, 75);
     }
 }
