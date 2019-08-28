@@ -188,6 +188,15 @@ impl<'a> Analyzer<'a> {
     }
 
     pub fn analyze(mut self, program: &'a mut Program) -> Result<(), Vec<Error>> {
+        self.functions.insert("printi", Function {
+            args: vec![("n", Type::Int)],
+            return_ty: Type::Int,
+        });
+        self.functions.insert("printlf", Function {
+            args: vec![],
+            return_ty: Type::Int,
+        });
+
         self.push_scope();
 
         for toplevel in &mut program.top {

@@ -45,7 +45,11 @@ impl<'a> Executor<'a> {
             self.var_map.insert(param_name, value);
         }
         
-        self.run_stmt(func.stmt);
+        match name {
+            "printi" => stdlib::printi(self.var_map["n"].clone()),
+            "printlf" => stdlib::printlf(),
+            _ => { self.run_stmt(func.stmt); },
+        }
 
         self.return_value.clone().unwrap()
     }
@@ -120,6 +124,15 @@ impl<'a> Executor<'a> {
     }
 
     pub fn exec(&mut self, program: Program<'a>) -> i64 {
+        self.functions.insert("printi", Function {
+            params: vec!["n"],
+            stmt: Stmt::Block(Vec::new()),
+        });
+        self.functions.insert("printlf", Function {
+            params: Vec::new(),
+            stmt: Stmt::Block(Vec::new()),
+        });
+
         for toplevel in program.top {
             if self.run_toplevel(toplevel.kind) {
                 break;
@@ -127,6 +140,18 @@ impl<'a> Executor<'a> {
         }
 
         self.return_value.clone().unwrap_or(Value::Int(0)).int()
+    }
+}
+
+mod stdlib {
+    use crate::env::*;
+
+    pub fn printi(n: Value) {
+        print!("{}", n.int());
+    }
+
+    pub fn printlf() {
+        println!();
     }
 }
 
