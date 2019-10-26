@@ -87,7 +87,6 @@ impl<'a> Parser<'a> {
             error!(self, token.span, "expected `{}` but got `{}`", expected, token.kind);
 
             self.skip_to(skip);
-            self.next();
 
             None
         } else {
@@ -107,7 +106,6 @@ impl<'a> Parser<'a> {
                 error!(self, token.span, "expected `identifier` but got `{}`", token.kind);
 
                 self.skip_to(skip);
-                self.next();
 
                 None
             },
@@ -206,7 +204,7 @@ impl<'a> Parser<'a> {
                 return Some(expr);
             },
             _ => {
-                error!(self, token.span, "unexpected token");
+                error!(self, token.span, "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`", self.peek().kind);
                 return None;
             }
         }
@@ -301,6 +299,11 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            // Skip semicolon
+            if self.consume(&Token::Semicolon) {
+                continue;
+            }
+
             if let Some(stmt) = self.parse_stmt() {
                 stmts.push(stmt);
             }
@@ -384,7 +387,7 @@ impl<'a> Parser<'a> {
             Token::Int => Some(Type::Int),
             Token::Bool => Some(Type::Bool),
             _ => {
-                error!(self, self.peek().span.clone(), "unexpected token");
+                error!(self, self.peek().span.clone(), "expected `int` or `bool` but got `{}`", self.peek().kind);
                 None
             },
         };
@@ -470,6 +473,10 @@ impl<'a> Parser<'a> {
         let mut toplevels = Vec::new();
 
         while self.peek().kind != Token::EOF {
+            if self.consume(&Token::Semicolon) {
+                continue;
+            }
+
             if let Some(toplevel) = self.parse_toplevel() {
                 toplevels.push(toplevel);
             }
