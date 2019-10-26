@@ -1,0 +1,72 @@
+<primary>       ::= <number>
+                  | <id>
+                  | <id> "(" <arg-list> ")"
+                  | "true"
+                  | "false"
+                  | "(" <expr> ")"
+
+<arg-list>      ::= <expr>
+                  | <arg-list> "," <expr>
+
+<factor>        ::= <factor> "*" <primary>
+                  | <factor> "/" <primary>
+                  | <factor> "%" <primary>
+
+<term>          ::= <term> "+" <factor>
+                  | <term> "-" <factor>
+
+<relational>    ::= <term> "<" <term>
+                  | <term> "<=" <term>
+                  | <term> ">" <term>
+                  | <term> ">=" <term>
+
+<equality>      ::= <relational> "==" <relational>
+                  | <relational> "!=" <relational>
+
+<expr>          ::= <equality>
+
+<bind>          ::= "let" <id> "=" <expr> ";"
+                  | "let" <id> ":" <type> "=" <expr> ";"
+
+<return>        ::= "return" <expr> ";"
+
+<block>         ::= "{" <comp-stmt> "}"
+
+<if>            ::= "if" <expr> <block>
+                  | "if" <expr> <block> "else" <block>
+                  | "if" <expr> <block> "else" <if>
+
+<while>         ::= "while" <expr> <block>
+
+<for>           ::= "for" <id> "in" <expr> <block>
+
+<expr-stmt>     ::= <expr> ";"
+
+<stmt>          ::= <bind-stmt>
+                  | <return>
+                  | <block>
+                  | <if>
+                  | <while>
+                  | <for>
+
+<comp-stmt>     ::= <stmt>
+                  | <comp-stmt> <stmt>
+
+<func-def>      ::= "fn" <id> "(" <param-list> ")" <block>
+                  | "fn" <id> "(" <param-list> ")" ":" <type> <block>
+
+<param-list>    ::= <param>
+                  | <param-list> "," <param>
+
+<param>         ::= <id> ":" <type>
+
+<type>          ::= <id>
+
+<toplevel>      ::= <stmt>
+                  | <func-def>
+
+<toplevel-list> ::= <toplevel>
+                  | <toplevel-list> <toplevel>
+
+<program>       ::= <toplevel-list>
+                 
