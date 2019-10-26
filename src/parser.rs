@@ -19,7 +19,7 @@ macro_rules! binop {
 
             loop {
                 if false {
-                } $(else if $self.consume($token) {
+                } $(else if $self.consume(&$token) {
                     let rhs = $self.$func()?;
                     let span = Span::merge(&expr.span, &rhs.span);
                     expr = spanned_typed(Expr::BinOp($binop, Box::new(expr), Box::new(rhs)), span);
@@ -28,50 +28,22 @@ macro_rules! binop {
                 }
             }
 
-            Ok(expr)
+            Some(expr)
         }
     }
 }
 
-macro_rules! expect {
-    ($self:ident, $pat:pat => $expr:expr) => {
-        {
-            let token = $self.peek();
-            let res = match token.kind {
-                $pat => Ok($expr),
-                _ => Err($self.unexpected_token(token)),
-            };
-            $self.next();
-            res
-        }
+macro_rules! error {
+    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
+        $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
     };
-    ($self:ident, $pat:pat) => (expect!($self, $pat => ()));
 }
 
-macro_rules! unwrap_or_skip {
-    ($self:ident, $result:expr, $token:pat $(| $pat:pat),*) => {
-        $result.or_else(|err| {
-            while $self.peek().kind != Token::EOF {
-                match $self.peek().kind {
-                    $token $(| $pat)* => break,
-                    _ => $self.next(),
-                };
-            }
-
-            if $self.peek().kind != Token::EOF {
-                $self.next();
-            }
-            Err(err)
-        })
-    }
-}
-
-type ExprResult<'a> = Result<SpannedTyped<Expr<'a>>, Error>;
-type StmtResult<'a> = Result<Spanned<Stmt<'a>>, Error>;
 
 pub struct Parser<'a> {
     tokens: Vec<Spanned<Token<'a>>>,
     pos: usize,
+    errors: Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
@@ -79,6 +51,7 @@ impl<'a> Parser<'a> {
         Self {
             tokens,
             pos: 0,
+            errors: Vec::new(),
         }
     }
 
@@ -98,12 +71,8 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn unexpected_token(&self, token: &Spanned<Token>) -> Error {
-        Error::new(&format!("Unexpected token `{}`", token.kind), token.span.clone())
-    }
-
-    fn consume(&mut self, token: Token) -> bool {
-        if self.peek().kind == token {
+    fn consume(&mut self, token: &Token) -> bool {
+        if &self.peek().kind == token {
             self.pos += 1;
             true
         } else {
@@ -111,88 +80,153 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_call(&mut self, name: &'a str, name_span: Span) -> ExprResult<'a> {
-        // Parse arguments
-        let mut args = Vec::new();
+    #[inline]
+    fn expect(&mut self, expected: &Token, skip: &[Token]) -> Option<()> {
+        if !self.consume(&expected) {
+            let token = self.peek().clone();
+            error!(self, token.span, "expected `{}` but got `{}`", expected, token.kind);
 
-        let mut parse_args = || {
-            if !self.consume(Token::Rparen) {
-                loop {
-                    args.push(self.parse_expr()?);
+            self.skip_to(skip);
+            self.next();
 
-                    if self.consume(Token::Rparen) {
-                        return Ok(self.prev().span.clone());
-                    } else if !self.consume(Token::Comma) {
-                        return Err(self.unexpected_token(self.peek()));
-                    }
-                }
-            } else {
-                Ok(self.prev().span.clone())
-            }
-        };
-        let rparen_span = parse_args()?;
-
-        Ok(spanned_typed(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
-    }
-
-    fn parse_var_or_call(&mut self, ident: &'a str, ident_span: Span) -> ExprResult<'a> {
-        self.next();
-
-        if self.consume(Token::Lparen) {
-            self.parse_call(ident, ident_span)
+            None
         } else {
-            Ok(spanned_typed(Expr::Variable(ident), ident_span.clone()))
+            Some(())
         }
     }
 
-    fn parse_primary(&mut self) -> ExprResult<'a> {
+    #[inline]
+    fn expect_identifier(&mut self, skip: &[Token]) -> Option<&'a str> {
+        match self.peek().kind {
+            Token::Identifier(name) => {
+                self.next();
+                Some(name)
+            }
+            _ => {
+                let token = self.peek().clone();
+                error!(self, token.span, "expected `identifier` but got `{}`", token.kind);
+
+                self.skip_to(skip);
+                self.next();
+
+                None
+            },
+        }
+    }
+
+    #[inline]
+    fn skip_to(&mut self, tokens: &[Token]) {
+        while !tokens.contains(&self.peek().kind) && self.peek().kind != Token::EOF {
+            self.next();
+        }
+    }
+
+    // Parse something using `func`. skip to `tokens` if fail.
+    fn parse_skip<T, F>(&mut self, mut func: F, tokens: &[Token]) -> Option<T> where F: FnMut(&mut Self,) -> Option<T> {
+        let res = func(self);
+        if let None = res {
+            self.skip_to(tokens);
+        }
+
+        res
+    }
+
+    fn parse_args(&mut self) -> Vec<SpannedTyped<Expr<'a>>> {
+        if !self.consume(&Token::Rparen) {
+            let mut args = Vec::new();
+
+            // Parse a first argument 
+            match self.parse_expr() {
+                Some(expr) => args.push(expr),
+                None => self.skip_to(&[Token::Comma, Token::Rparen]),
+            };
+
+            // Parse other arguments
+            while !self.consume(&Token::Rparen) {
+                if let None = self.expect(&Token::Comma, &[Token::Rparen]) {
+                    break;
+                }
+
+                match self.parse_expr() {
+                    Some(expr) => args.push(expr),
+                    None => self.skip_to(&[Token::Comma, Token::Rparen]),
+                };
+            }
+
+            args
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn parse_call(&mut self, name: &'a str, name_span: Span) -> Option<SpannedTyped<Expr<'a>>> {
+        let args = self.parse_args();
+        let rparen_span = &self.prev().span;
+
+        Some(spanned_typed(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
+    }
+
+    fn parse_var_or_call(&mut self, ident: &'a str, ident_span: Span) -> Option<SpannedTyped<Expr<'a>>> {
+        self.next();
+
+        if self.consume(&Token::Lparen) {
+            self.parse_call(ident, ident_span)
+        } else {
+            Some(spanned_typed(Expr::Variable(ident), ident_span.clone()))
+        }
+    }
+
+    fn parse_primary(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
         let token = self.peek().clone();
 
         match token.kind {
             Token::Number(n) => {
                 self.next();
-                Ok(spanned_typed(Expr::Literal(Literal::Number(n)), token.span))
+                Some(spanned_typed(Expr::Literal(Literal::Number(n)), token.span))
             },
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {
                 self.next();
-                Ok(spanned_typed(Expr::Literal(Literal::True), token.span))
+                Some(spanned_typed(Expr::Literal(Literal::True), token.span))
             },
             Token::False => {
                 self.next();
-                Ok(spanned_typed(Expr::Literal(Literal::False), token.span))
+                Some(spanned_typed(Expr::Literal(Literal::False), token.span))
             },
             Token::Lparen => {
                 self.next();
                 let mut expr = self.parse_expr()?;
 
-                expect!(self, Token::Rparen)?;
+                self.expect(&Token::Rparen, &[Token::Rparen]);
 
                 // Adjust to parentheses
                 expr.span.start_col -= 1;
                 expr.span.end_col += 1;
 
-                return Ok(expr);
+                return Some(expr);
             },
-            _ => Err(self.unexpected_token(&token)),
+            _ => {
+                error!(self, token.span, "unexpected token");
+                return None;
+            }
         }
     }
 
-    fn parse_mul(&mut self) -> ExprResult<'a> {
+    fn parse_mul(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
         binop!(self, parse_primary, {
             Token::Asterisk => BinOp::Mul,
             Token::Div => BinOp::Div,
         })
     }
 
-    fn parse_add(&mut self) -> ExprResult<'a> {
+    fn parse_add(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
         binop!(self, parse_mul, {
             Token::Add => BinOp::Add,
             Token::Sub => BinOp::Sub,
         })
     }
 
-    fn parse_relational(&mut self) -> ExprResult<'a> {
+    fn parse_relational(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
         binop!(self, parse_add, {
             Token::LessThan => BinOp::LessThan,
             Token::LessThanOrEqual => BinOp::LessThanOrEqual,
@@ -201,145 +235,158 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_equality(&mut self) -> ExprResult<'a> {
+    fn parse_equality(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
         binop!(self, parse_relational, {
             Token::Equal => BinOp::Equal,
             Token::NotEqual => BinOp::NotEqual,
         })
     }
 
-    fn parse_expr(&mut self) -> ExprResult<'a> {
+    fn parse_expr(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
         self.parse_equality()
     }
 
-    fn parse_bind_stmt(&mut self) -> StmtResult<'a> {
+    fn parse_bind_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
         // Eat "let"
         let let_span = self.peek().span.clone();
         self.next();
 
-        let name = unwrap_or_skip!(self, expect!(self, Token::Identifier(name) => name), Token::Semicolon)?;
-        unwrap_or_skip!(self, expect!(self, Token::Assign), Token::Semicolon)?;
-        let expr = unwrap_or_skip!(self, self.parse_expr(), Token::Semicolon)?;
+        // Bind name
+        let name = self.expect_identifier(&[Token::Semicolon])?;
 
-        expect!(self, Token::Semicolon)?;
+        self.expect(&Token::Assign, &[Token::Semicolon])?;
+
+        // Initial expression
+        let expr = match self.parse_expr() {
+            Some(expr) => expr,
+            None => {
+                self.skip_to(&[Token::Semicolon]);
+                return None;
+            },
+        };
+
+        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let mut span = Span::merge(&let_span, &expr.span);
         // Adjust to semicolon
         span.end_col += 1;
 
-        Ok(spanned(Stmt::Bind(name, expr), span))
+        Some(spanned(Stmt::Bind(name, expr), span))
     }
 
-    fn parse_expr_stmt(&mut self) -> StmtResult<'a> {
-        let expr = unwrap_or_skip!(self, self.parse_expr(), Token::Semicolon)?;
+    fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
+        let expr = match self.parse_expr() {
+            Some(expr) => expr,
+            None => {
+                self.skip_to(&[Token::Semicolon]);
+                return None;
+            },
+        };
 
-        expect!(self, Token::Semicolon)?;
+        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let mut span = expr.span.clone();
         // Adjust to semicolon
         span.end_col += 1;
 
-        Ok(spanned(Stmt::Expr(expr), span))
+        Some(spanned(Stmt::Expr(expr), span))
     }
 
-    fn parse_multiple_statements(&mut self, end_token: &Token) -> Result<Vec<Spanned<Stmt<'a>>>, Vec<Error>> {
+    fn parse_multiple_statements(&mut self, end_token: &Token) -> Vec<Spanned<Stmt<'a>>> {
         let mut stmts = Vec::new();
-        let mut errors = Vec::new();
 
         while self.peek().kind != *end_token {
             if let Token::EOF = self.peek().kind {
-                errors.push(Error::new(&format!("Expected `{}`, but got EOF", end_token), self.peek().span.clone()));
+                error!(self, self.peek().span.clone(), "expected `{}`, but got EOF", end_token);
                 break;
             }
 
-            match self.parse_stmt() {
-                Ok(stmt) => stmts.push(stmt),
-                Err(err) => errors.extend(err),
+            if let Some(stmt) = self.parse_stmt() {
+                stmts.push(stmt);
             }
         }
 
-        if errors.len() > 0 {
-            Err(errors)
-        } else {
-            Ok(stmts)
-        }
+        stmts
     }
 
-    fn parse_block(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+    fn parse_block(&mut self) -> Spanned<Stmt<'a>> {
         // Eat "{"
         let lbrace_span = self.peek().span.clone();
         self.next();
 
-        let stmts = self.parse_multiple_statements(&Token::Rbrace)?;
+        let stmts = self.parse_multiple_statements(&Token::Rbrace);
 
         // Eat "}"
         let rbrace_span = self.peek().span.clone();
         self.next();
 
         let span = Span::merge(&lbrace_span, &rbrace_span);
-        Ok(spanned(Stmt::Block(stmts), span))
+        spanned(Stmt::Block(stmts), span)
     }
 
-    fn parse_return(&mut self) -> StmtResult<'a> {
+    fn parse_return(&mut self) -> Option<Spanned<Stmt<'a>>> {
         // Eat "return"
         let return_token_span = self.peek().span.clone();
         self.next();
 
-        let expr = self.parse_expr()?;
+        let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
-        expect!(self, Token::Semicolon)?;
+        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let mut span = Span::merge(&return_token_span, &expr.span);
         // Adjust to a semicolon
         span.end_col += 1;
 
-        Ok(spanned(Stmt::Return(expr),span))
+        Some(spanned(Stmt::Return(expr),span))
     }
 
-    fn parse_if_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+    fn parse_if_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
         let if_token_span = self.peek().span.clone();
         self.next();
 
-        let expr = self.parse_expr();
-        let expr = unwrap_or_skip!(self, expr, Token::Lbrace).map_err(|err| vec![err])?;
-
-        let stmt = self.parse_stmt()?;
+        // Parse condition expression
+        let expr = self.parse_skip(Self::parse_expr, &[Token::Lbrace /* , Token::Else */]);
+        // Parse then-clause
+        let stmt = self.parse_stmt()?; // TODO: Allow block statement or else-clause only
 
         let span = Span::merge(&if_token_span, &stmt.span);
-        Ok(spanned(Stmt::If(expr, Box::new(stmt)), span))
+        Some(spanned(Stmt::If(expr?, Box::new(stmt)), span))
     }
 
-    fn parse_while_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+    fn parse_while_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
         let while_token_span = self.peek().span.clone();
         self.next();
 
-        let cond = self.parse_expr();
-        let cond = unwrap_or_skip!(self, cond, Token::Lbrace).map_err(|err| vec![err])?;
-
-        let stmt = self.parse_stmt()?;
+        // Parse condition expression
+        let cond = self.parse_skip(Self::parse_expr, &[Token::Lbrace]);
+        // Parse body
+        let stmt = self.parse_stmt()?; // TODO: Allow block statement only
 
         let span = Span::merge(&while_token_span, &stmt.span);
-        Ok(spanned(Stmt::While(cond, Box::new(stmt)), span))
+        Some(spanned(Stmt::While(cond?, Box::new(stmt)), span))
     }
 
-    fn parse_stmt(&mut self) -> Result<Spanned<Stmt<'a>>, Vec<Error>> {
+    fn parse_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
         let token = self.peek();
 
         match token.kind {
-            Token::Let => self.parse_bind_stmt().map_err(|err| vec![err]),
-            Token::Lbrace => self.parse_block(),
-            Token::Return => self.parse_return().map_err(|err| vec![err]),
+            Token::Let => self.parse_bind_stmt(),
+            Token::Lbrace => Some(self.parse_block()),
+            Token::Return => self.parse_return(),
             Token::If => self.parse_if_stmt(),
             Token::While => self.parse_while_stmt(),
-            _ => self.parse_expr_stmt().map_err(|err| vec![err]),
+            _ => self.parse_expr_stmt(),
         }
     }
 
-    fn parse_type(&mut self) -> Result<Type, Error> {
+    fn parse_type(&mut self) -> Option<Type> {
         let result = match self.peek().kind {
-            Token::Int => Ok(Type::Int),
-            Token::Bool => Ok(Type::Bool),
-            _ => Err(self.unexpected_token(self.peek())),
+            Token::Int => Some(Type::Int),
+            Token::Bool => Some(Type::Bool),
+            _ => {
+                error!(self, self.peek().span.clone(), "unexpected token");
+                None
+            },
         };
 
         self.next();
@@ -347,52 +394,69 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn parse_fn_decl(&mut self) -> Result<Spanned<TopLevel<'a>>, Vec<Error>> {
+    fn parse_param(&mut self) -> Option<(&'a str, Type)> {
+        let tokens_to_skip = [Token::Comma, Token::Rparen];
+
+        // Parse the parameter name
+        let name = self.expect_identifier(&tokens_to_skip)?;
+
+        // Parse the parameter type
+        self.expect(&Token::Colon, &tokens_to_skip)?;
+        let ty = self.parse_skip(Self::parse_type, &tokens_to_skip)?;
+
+        Some((name, ty))
+    }
+
+    fn parse_param_list(&mut self) -> Vec<(&'a str, Type)> {
+        let mut params = Vec::new();
+
+        // Parse the first parameter
+        if let Some(param) = self.parse_param() {
+            params.push(param);
+        }
+
+        // Parse other parameters
+        while !self.consume(&Token::Rparen) {
+            if let None = self.expect(&Token::Comma, &[Token::Rparen]) {
+                break;
+            }
+
+            if let Some(param) = self.parse_param() {
+                params.push(param);
+            }
+        }
+
+        params
+    }
+
+    fn parse_fn_decl(&mut self) -> Option<Spanned<TopLevel<'a>>> {
         // Eat "fn"
         let fn_span = self.peek().span.clone();
         self.next();
 
-        // name(
-        let name = expect!(self, Token::Identifier(name) => name).map_err(|err| vec![err])?;
-        unwrap_or_skip!(self, expect!(self, Token::Lparen), Token::Rparen).map_err(|err| vec![err])?;
+        // Parse the function name
+        let name = self.expect_identifier(&[Token::Lparen]);
 
-        let mut errors = Vec::new();
-        let mut params = Vec::new();
-        loop {
-            let mut parse_param = || -> Result<(&'a str, Type), Error> {
-                // name: type
-                let name = unwrap_or_skip!(self, expect!(self, Token::Identifier(name) => name), Token::Comma | Token::Rparen)?;
-                unwrap_or_skip!(self, expect!(self, Token::Colon), Token::Comma | Token::Rparen)?;
-                let ty = self.parse_type()?;
-                Ok((name, ty))
-            };
+        // Parse parameters
+        self.expect(&Token::Lparen, &[Token::Lparen]);
+        let params = self.parse_param_list();
 
-            match parse_param() {
-                Ok(param) => params.push(param),
-                Err(err) => errors.push(err),
-            };
+        // Parse the return type
+        let return_ty = if self.consume(&Token::Colon) {
+            self.parse_type()
+        } else {
+            // If omit type, the return type is void
+            Some(Type::Int) // TODO: Void
+        };
 
-            if self.consume(Token::Rparen) {
-                break;
-            } else if !self.consume(Token::Comma) {
-                return Err(vec![self.unexpected_token(self.peek())]);
-            }
-        }
-
-        if errors.len() > 0 {
-            return Err(errors);
-        }
-
-        expect!(self, Token::Colon).map_err(|err| vec![err])?;
-        let return_ty = self.parse_type().map_err(|err| vec![err])?;
-
+        // TODO: Allow block statement only
         let body = self.parse_stmt()?;
 
         let span = Span::merge(&fn_span, &body.span);
-        Ok(spanned(TopLevel::Function(name, params, return_ty, body), span))
+        Some(spanned(TopLevel::Function(name?, params, return_ty?, body), span))
     }
 
-    fn parse_toplevel(&mut self) -> Result<Spanned<TopLevel<'a>>, Vec<Error>> {
+    fn parse_toplevel(&mut self) -> Option<Spanned<TopLevel<'a>>> {
         match self.peek().kind {
             Token::Fn => self.parse_fn_decl(),
             _ => self.parse_stmt().map(|stmt| {
@@ -404,17 +468,15 @@ impl<'a> Parser<'a> {
 
     pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
         let mut toplevels = Vec::new();
-        let mut errors = Vec::new();
 
         while self.peek().kind != Token::EOF {
-            match self.parse_toplevel() {
-                Ok(toplevel) => toplevels.push(toplevel),
-                Err(err) => errors.extend(err),
+            if let Some(toplevel) = self.parse_toplevel() {
+                toplevels.push(toplevel);
             }
         }
 
-        if errors.len() > 0 {
-            Err(errors)
+        if self.errors.len() > 0 {
+            Err(self.errors)
         } else {
             Ok(Program { top: toplevels })
         }
