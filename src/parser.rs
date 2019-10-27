@@ -136,7 +136,7 @@ impl<'a> Parser<'a> {
         Some(expr)
     }
 
-    fn parse_args(&mut self) -> Vec<SpannedTyped<Expr<'a>>> {
+    fn parse_args(&mut self) -> Option<Vec<SpannedTyped<Expr<'a>>>> {
         if !self.consume(&Token::Rparen) {
             let mut args = Vec::new();
 
@@ -158,14 +158,18 @@ impl<'a> Parser<'a> {
                 };
             }
 
-            args
+            if self.peek().kind == Token::EOF {
+                None
+            } else {
+                Some(args)
+            }
         } else {
-            Vec::new()
+            Some(Vec::new())
         }
     }
 
     fn parse_call(&mut self, name: &'a str, name_span: Span) -> Option<SpannedTyped<Expr<'a>>> {
-        let args = self.parse_args();
+        let args = self.parse_args()?;
         let rparen_span = &self.prev().span;
 
         Some(spanned_typed(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
@@ -296,13 +300,14 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::Expr(expr), span))
     }
 
-    fn parse_multiple_statements(&mut self, end_token: &Token) -> Vec<Spanned<Stmt<'a>>> {
+    // Return None if reach EOF
+    fn parse_multiple_statements(&mut self, end_token: &Token) -> Option<Vec<Spanned<Stmt<'a>>>> {
         let mut stmts = Vec::new();
 
         while self.peek().kind != *end_token {
             if let Token::EOF = self.peek().kind {
                 error!(self, self.peek().span.clone(), "expected `{}`, but got EOF", end_token);
-                break;
+                return None;
             }
 
             // Skip semicolon
@@ -315,22 +320,22 @@ impl<'a> Parser<'a> {
             }
         }
 
-        stmts
+        Some(stmts)
     }
 
-    fn parse_block(&mut self) -> Spanned<Stmt<'a>> {
+    fn parse_block(&mut self) -> Option<Spanned<Stmt<'a>>> {
         // Eat "{"
         let lbrace_span = self.peek().span.clone();
         self.next();
 
-        let stmts = self.parse_multiple_statements(&Token::Rbrace);
+        let stmts = self.parse_multiple_statements(&Token::Rbrace)?;
 
         // Eat "}"
         let rbrace_span = self.peek().span.clone();
         self.next();
 
         let span = Span::merge(&lbrace_span, &rbrace_span);
-        spanned(Stmt::Block(stmts), span)
+        Some(spanned(Stmt::Block(stmts), span))
     }
 
     fn parse_return(&mut self) -> Option<Spanned<Stmt<'a>>> {
@@ -379,7 +384,7 @@ impl<'a> Parser<'a> {
 
         match token.kind {
             Token::Let => self.parse_bind_stmt(),
-            Token::Lbrace => Some(self.parse_block()),
+            Token::Lbrace => self.parse_block(),
             Token::Return => self.parse_return(),
             Token::If => self.parse_if_stmt(),
             Token::While => self.parse_while_stmt(),
@@ -415,7 +420,7 @@ impl<'a> Parser<'a> {
         Some((name, ty))
     }
 
-    fn parse_param_list(&mut self) -> Vec<(&'a str, Type)> {
+    fn parse_param_list(&mut self) -> Option<Vec<(&'a str, Type)>> {
         let mut params = Vec::new();
 
         // Parse the first parameter
@@ -434,7 +439,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        params
+        if self.peek().kind == Token::EOF {
+            None
+        } else {
+            Some(params)
+        }
     }
 
     fn parse_fn_decl(&mut self) -> Option<Spanned<TopLevel<'a>>> {
@@ -447,11 +456,11 @@ impl<'a> Parser<'a> {
 
         // Parse parameters
         self.expect(&Token::Lparen, &[Token::Lparen]);
-        let params = self.parse_param_list();
+        let params = self.parse_param_list()?;
 
         // Parse the return type
         let return_ty = if self.consume(&Token::Colon) {
-            self.parse_type()
+            self.parse_skip(Self::parse_type, &[Token::Lbrace])
         } else {
             // If omit type, the return type is void
             Some(Type::Int) // TODO: Void
