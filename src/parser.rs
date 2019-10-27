@@ -192,14 +192,15 @@ impl<'a> Parser<'a> {
                 Some(spanned_typed(Expr::Literal(Literal::False), token.span))
             },
             Token::Lparen => {
+                let lparen_span = self.peek().span.clone();
                 self.next();
+
                 let mut expr = self.parse_expr()?;
 
-                self.expect(&Token::Rparen, &[Token::Rparen]);
+                self.expect(&Token::Rparen, &[Token::Rparen])?;
+                let rparen_span = &self.prev().span;
 
-                // Adjust to parentheses
-                expr.span.start_col -= 1;
-                expr.span.end_col += 1;
+                expr.span = Span::merge(&lparen_span, rparen_span);
 
                 return Some(expr);
             },
@@ -264,10 +265,9 @@ impl<'a> Parser<'a> {
         };
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+        let semicolon_span = &self.prev().span;
 
-        let mut span = Span::merge(&let_span, &expr.span);
-        // Adjust to semicolon
-        span.end_col += 1;
+        let span = Span::merge(&let_span, semicolon_span);
 
         Some(spanned(Stmt::Bind(name, expr), span))
     }
@@ -282,10 +282,9 @@ impl<'a> Parser<'a> {
         };
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+        let semicolon_span = &self.prev().span;
 
-        let mut span = expr.span.clone();
-        // Adjust to semicolon
-        span.end_col += 1;
+        let span = Span::merge(&expr.span, semicolon_span);
 
         Some(spanned(Stmt::Expr(expr), span))
     }
@@ -335,10 +334,9 @@ impl<'a> Parser<'a> {
         let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+        let semicolon_span = &self.prev().span;
 
-        let mut span = Span::merge(&return_token_span, &expr.span);
-        // Adjust to a semicolon
-        span.end_col += 1;
+        let span = Span::merge(&return_token_span, &semicolon_span);
 
         Some(spanned(Stmt::Return(expr),span))
     }
@@ -514,7 +512,7 @@ mod tests {
 
         let lexer = Lexer::new(r#"let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }
 fn add(a: int, b: int): int { a + b; }
-add(3, 5 + 8);
+add(3, 5 + 8)  ;
 return abc;"#);
         let tokens = lexer.lex().unwrap();
         let parser = Parser::new(tokens);
@@ -571,8 +569,8 @@ return abc;"#);
                                 newt(Expr::Literal(Literal::Number(8)), 2, 11, 2, 12)),
                                 2, 7, 2, 12)]),
                             2, 0, 2, 13)),
-                        2, 0, 2, 14)),
-                    2, 0, 2, 14),
+                        2, 0, 2, 16)),
+                    2, 0, 2, 16),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Return(
                         *newt(Expr::Variable("abc"), 3, 7, 3, 10)),
