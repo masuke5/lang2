@@ -87,6 +87,9 @@ impl<'a> Parser<'a> {
             error!(self, token.span, "expected `{}` but got `{}`", expected, token.kind);
 
             self.skip_to(skip);
+            if self.peek().kind == *expected {
+                self.next();
+            }
 
             None
         } else {
@@ -106,6 +109,9 @@ impl<'a> Parser<'a> {
                 error!(self, token.span, "expected `identifier` but got `{}`", token.kind);
 
                 self.skip_to(skip);
+                if let Token::Identifier(_) = self.peek().kind {
+                    self.next();
+                }
 
                 None
             },
