@@ -10,6 +10,7 @@ mod env;
 mod executor;
 mod ty;
 mod sema;
+mod id;
 
 use std::process::exit;
 use std::fs::File;
@@ -24,6 +25,7 @@ use parser::Parser;
 use ast::*;
 use executor::Executor;
 use sema::Analyzer;
+use id::IdMap;
 
 use clap::{Arg, App, ArgMatches};
 
@@ -37,7 +39,7 @@ fn dump_token(tokens: Vec<Spanned<Token>>) {
     }
 }
 
-fn dump_expr(expr: SpannedTyped<Expr>, depth: usize) {
+fn dump_expr(id_map: &IdMap, expr: SpannedTyped<Expr>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -45,68 +47,68 @@ fn dump_expr(expr: SpannedTyped<Expr>, depth: usize) {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
-        Expr::Variable(name) => println!("{} {}", name, span_to_string(&expr.span)),
+        Expr::Variable(name) => println!("{} {}", id_map.name(&name), span_to_string(&expr.span)),
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
-            dump_expr(*lhs, depth + 1);
-            dump_expr(*rhs, depth + 1);
+            dump_expr(id_map, *lhs, depth + 1);
+            dump_expr(id_map, *rhs, depth + 1);
         },
         Expr::Call(name, args) => {
-            println!("{} {}", name, span_to_string(&expr.span));
+            println!("{} {}", id_map.name(&name), span_to_string(&expr.span));
             for arg in args {
-                dump_expr(arg, depth + 1);
+                dump_expr(id_map, arg, depth + 1);
             }
         },
     }
 }
 
-fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
+fn dump_stmt(id_map: &IdMap, stmt: Spanned<Stmt>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
     match stmt.kind {
         Stmt::Bind(name, expr) => {
-            println!("let {} =", name);
-            dump_expr(expr, depth + 1);
+            println!("let {} =", id_map.name(&name));
+            dump_expr(id_map, expr, depth + 1);
         },
         Stmt::Expr(expr) => {
-            dump_expr(expr, depth);
+            dump_expr(id_map, expr, depth);
         },
         Stmt::Block(stmts) => {
             for stmt in stmts {
-                dump_stmt(stmt, depth);
+                dump_stmt(id_map, stmt, depth);
             }
         },
         Stmt::Return(expr) => {
             println!("return {}", span_to_string(&stmt.span));
-            dump_expr(expr, depth + 1);
+            dump_expr(id_map, expr, depth + 1);
         },
         Stmt::If(cond, body) => {
             println!("if {}", span_to_string(&stmt.span));
-            dump_expr(cond, depth + 1);
-            dump_stmt(*body, depth + 1);
+            dump_expr(id_map, cond, depth + 1);
+            dump_stmt(id_map, *body, depth + 1);
         },
         Stmt::While(cond, body) => {
             println!("while {}", span_to_string(&stmt.span));
-            dump_expr(cond, depth + 1);
-            dump_stmt(*body, depth + 1);
+            dump_expr(id_map, cond, depth + 1);
+            dump_stmt(id_map, *body, depth + 1);
         },
     }
 }
 
-fn dump_toplevel(toplevel: Spanned<TopLevel>) {
+fn dump_toplevel(id_map: &IdMap, toplevel: Spanned<TopLevel>) {
     match toplevel.kind {
-        TopLevel::Stmt(stmt) => dump_stmt(stmt, 0),
+        TopLevel::Stmt(stmt) => dump_stmt(id_map, stmt, 0),
         TopLevel::Function(name, params, return_ty, body) => {
-            println!("fn {}({}): {:?} {}", name, params.len(), return_ty, span_to_string(&toplevel.span));
-            dump_stmt(body, 1);
+            println!("fn {}({}): {:?} {}", id_map.name(&name), params.len(), return_ty, span_to_string(&toplevel.span));
+            dump_stmt(id_map, body, 1);
         },
     }
 }
 
-fn dump_ast(program: Program) {
+fn dump_ast(id_map: &IdMap, program: Program) {
     for toplevel in program.top {
-        dump_toplevel(toplevel);
+        dump_toplevel(id_map, toplevel);
     }
 }
 
@@ -129,7 +131,8 @@ fn print_errors(input: &str, errors: Vec<Error>) {
 }
 
 fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
-    let lexer = Lexer::new(input);
+    let mut id_map = IdMap::new();
+    let lexer = Lexer::new(input, &mut id_map);
     let tokens = lexer.lex()?;
     if matches.is_present("dump-token") {
         dump_token(tokens);
@@ -139,14 +142,14 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     let parser = Parser::new(tokens);
     let mut program = parser.parse()?;
     if matches.is_present("dump-ast") {
-        dump_ast(program);
+        dump_ast(&id_map, program);
         exit(1);
     }
 
     let analyzer = Analyzer::new();
-    analyzer.analyze(&mut program)?;
+    analyzer.analyze(&mut program, &mut id_map)?;
 
-    let mut executor = Executor::new();
+    let mut executor = Executor::new(&id_map);
     executor.exec(program);
 
     Ok(())

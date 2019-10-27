@@ -1,4 +1,5 @@
 use crate::ast::Stmt;
+use crate::id::Id;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
@@ -23,7 +24,7 @@ impl Value {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Function<'a> {
-    pub params: Vec<&'a str>,
-    pub stmt: Stmt<'a>,
+pub struct Function {
+    pub params: Vec<Id>,
+    pub stmt: Stmt,
 }

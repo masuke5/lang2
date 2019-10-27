@@ -4,22 +4,23 @@ use crate::ty::Type;
 use crate::ast::*;
 use crate::error::Error;
 use crate::span::Span;
+use crate::id::{Id, IdMap};
 
 #[derive(Debug, Clone)]
-struct Function<'a> {
-    args: Vec<(&'a str, Type)>,
+struct Function {
+    args: Vec<(Id, Type)>,
     return_ty: Type,
 }
 
 #[derive(Debug)]
-pub struct Analyzer<'a> {
-    functions: HashMap<&'a str, Function<'a>>,
+pub struct Analyzer {
+    functions: HashMap<Id, Function>,
     errors: Vec<Error>,
-    vars: Vec<HashMap<&'a str, Type>>,
-    current_func: Option<&'a str>,
+    vars: Vec<HashMap<Id, Type>>,
+    current_func: Option<Id>,
 }
 
-impl<'a> Analyzer<'a> {
+impl Analyzer {
     pub fn new() -> Self {
         Self {
             functions: HashMap::new(),
@@ -41,13 +42,13 @@ impl<'a> Analyzer<'a> {
         self.vars.pop().unwrap();
     }
 
-    fn new_var(&mut self, name: &'a str, ty: Type) {
-        self.vars.last_mut().unwrap().insert(name, ty);
+    fn new_var(&mut self, name: &Id, ty: Type) {
+        self.vars.last_mut().unwrap().insert(*name, ty);
     }
 
-    fn find_var(&mut self, name: &'a str) -> Option<Type> {
+    fn find_var(&mut self, name: &Id) -> Option<Type> {
         for vars in self.vars.iter().rev() {
-            match vars.get(name) {
+            match vars.get(&name) {
                 Some(ty) => return Some(ty.clone()),
                 None => {},
             }
@@ -56,7 +57,7 @@ impl<'a> Analyzer<'a> {
         None
     }
 
-    fn analyze_expr(&mut self, expr: &'a mut SpannedTyped<Expr>) -> (&'a Type, &'a Span) {
+    fn analyze_expr<'a>(&mut self, expr: &'a mut SpannedTyped<Expr>) -> (&'a Type, &'a Span) { // ???: specify lifetime without &mut self
         match &mut expr.kind {
             Expr::Literal(Literal::Number(_)) => expr.ty = Type::Int,
             Expr::Literal(Literal::True) => expr.ty = Type::Bool,
@@ -64,7 +65,7 @@ impl<'a> Analyzer<'a> {
             Expr::Variable(name) => {
                 match self.find_var(name) {
                     Some(ty) => expr.ty = ty.clone(),
-                    None => self.add_error(&format!("undefined variable `{}`", name), expr.span.clone()),
+                    None => self.add_error(&format!("undefined variable"), expr.span.clone()),
                 }
             },
             Expr::BinOp(binop, lhs, rhs) => {
@@ -95,7 +96,7 @@ impl<'a> Analyzer<'a> {
                 let func = match self.functions.get(name) {
                     Some(func) => func.clone(),
                     None => {
-                        self.add_error(&format!("undefined function `{}`", name), expr.span.clone());
+                        self.add_error(&format!("undefined function"), expr.span.clone());
                         return (&expr.ty, &expr.span)
                     },
                 };
@@ -103,14 +104,14 @@ impl<'a> Analyzer<'a> {
                 expr.ty = func.return_ty;
 
                 if args.len() != func.args.len() {
-                    self.add_error(&format!("function `{}` takes {} parameters. but got {} arguments.", name, func.args.len(), args.len()), expr.span.clone());
+                    self.add_error(&format!("the function takes {} parameters. but got {} arguments.", func.args.len(), args.len()), expr.span.clone());
                     return (&expr.ty, &expr.span);
                 }
 
-                for (arg, (param_name, param_ty)) in args.iter_mut().zip(func.args.into_iter()) {
+                for (arg, (_, param_ty)) in args.iter_mut().zip(func.args.into_iter()) {
                     let (arg_ty, span) = self.analyze_expr(arg);
                     if *arg_ty != param_ty {
-                        self.add_error(&format!("parameter `{}` type is `{}`. but got `{}` type", param_name, param_ty, arg_ty), span.clone());
+                        self.add_error(&format!("the parameter type is `{}`. but got `{}` type", param_ty, arg_ty), span.clone());
                     }
                 }
             },
@@ -119,7 +120,7 @@ impl<'a> Analyzer<'a> {
         (&expr.ty, &expr.span)
     }
 
-    fn analyze_stmt(&mut self, stmt: &'a mut Stmt) {
+    fn analyze_stmt(&mut self, stmt: &mut Stmt) {
         match stmt {
             Stmt::Expr(expr) => { self.analyze_expr(expr); },
             Stmt::If(cond, stmt) | Stmt::While(cond, stmt) => {
@@ -151,7 +152,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Return(expr) => {
                 let (ty, span) = self.analyze_expr(expr);
                 if let Some(name) = self.current_func {
-                    let return_ty = self.functions[name].return_ty.clone();
+                    let return_ty = self.functions[&name].return_ty.clone();
                     if *ty != return_ty {
                         self.add_error(&format!("expected `{}` type, but got `{}` type", return_ty, ty), span.clone());
                     }
@@ -162,15 +163,15 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_toplevel(&mut self, toplevel: &'a mut TopLevel) {
+    fn analyze_toplevel(&mut self, toplevel: &mut TopLevel) {
         match toplevel {
             TopLevel::Stmt(stmt) => self.analyze_stmt(&mut stmt.kind),
             TopLevel::Function(name, args, return_ty, stmt) => {
-                let function = Function::<'a> {
+                let function = Function {
                     args: args.clone(),
                     return_ty: return_ty.clone(),
                 };
-                self.functions.insert(name, function);
+                self.functions.insert(*name, function);
 
                 self.push_scope();
 
@@ -178,7 +179,7 @@ impl<'a> Analyzer<'a> {
                     self.new_var(name, ty.clone());
                 }
 
-                self.current_func = Some(name);
+                self.current_func = Some(*name);
                 self.analyze_stmt(&mut stmt.kind);
                 self.current_func = None;
 
@@ -187,12 +188,12 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    pub fn analyze(mut self, program: &'a mut Program) -> Result<(), Vec<Error>> {
-        self.functions.insert("printi", Function {
-            args: vec![("n", Type::Int)],
+    pub fn analyze(mut self, program: &mut Program, id_map: &mut IdMap) -> Result<(), Vec<Error>> {
+        self.functions.insert(id_map.new_id("printi"), Function {
+            args: vec![(id_map.new_id("n"), Type::Int)],
             return_ty: Type::Int,
         });
-        self.functions.insert("printlf", Function {
+        self.functions.insert(id_map.new_id("printlf"), Function {
             args: vec![],
             return_ty: Type::Int,
         });

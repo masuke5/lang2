@@ -3,6 +3,7 @@ use crate::error::Error;
 use crate::token::*;
 use crate::ast::*;
 use crate::ty::Type;
+use crate::id::Id;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
@@ -19,14 +20,14 @@ macro_rules! error {
 }
 
 
-pub struct Parser<'a> {
-    tokens: Vec<Spanned<Token<'a>>>,
+pub struct Parser {
+    tokens: Vec<Spanned<Token>>,
     pos: usize,
     errors: Vec<Error>,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(tokens: Vec<Spanned<Token<'a>>>) -> Parser<'a> {
+impl Parser {
+    pub fn new(tokens: Vec<Spanned<Token>>) -> Parser {
         Self {
             tokens,
             pos: 0,
@@ -34,18 +35,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next(&mut self) -> &Spanned<Token<'a>> {
+    fn next(&mut self) -> &Spanned<Token> {
         self.pos += 1;
         &self.tokens[self.pos]
     }
 
     #[inline]
-    fn peek(&self) -> &Spanned<Token<'a>> {
+    fn peek(&self) -> &Spanned<Token> {
         &self.tokens[self.pos]
     }
 
     #[inline]
-    fn prev(&self) -> &Spanned<Token<'a>> {
+    fn prev(&self) -> &Spanned<Token> {
         &self.tokens[self.pos - 1]
     }
 
@@ -75,7 +76,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_identifier(&mut self, skip: &[Token]) -> Option<&'a str> {
+    fn expect_identifier(&mut self, skip: &[Token]) -> Option<Id> {
         match self.peek().kind {
             Token::Identifier(name) => {
                 self.next();
@@ -114,8 +115,8 @@ impl<'a> Parser<'a> {
         res
     }
 
-    fn parse_binop<F>(&mut self, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<SpannedTyped<Expr<'a>>>
-        where F: FnMut(&mut Self) -> Option<SpannedTyped<Expr<'a>>>
+    fn parse_binop<F>(&mut self, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<SpannedTyped<Expr>>
+        where F: FnMut(&mut Self) -> Option<SpannedTyped<Expr>>
     {
         let mut expr = func(self)?;
 
@@ -136,7 +137,7 @@ impl<'a> Parser<'a> {
         Some(expr)
     }
 
-    fn parse_args(&mut self) -> Option<Vec<SpannedTyped<Expr<'a>>>> {
+    fn parse_args(&mut self) -> Option<Vec<SpannedTyped<Expr>>> {
         if !self.consume(&Token::Rparen) {
             let mut args = Vec::new();
 
@@ -168,14 +169,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_call(&mut self, name: &'a str, name_span: Span) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_call(&mut self, name: Id, name_span: Span) -> Option<SpannedTyped<Expr>> {
         let args = self.parse_args()?;
         let rparen_span = &self.prev().span;
 
         Some(spanned_typed(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
     }
 
-    fn parse_var_or_call(&mut self, ident: &'a str, ident_span: Span) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<SpannedTyped<Expr>> {
         self.next();
 
         if self.consume(&Token::Lparen) {
@@ -185,7 +186,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_primary(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_primary(&mut self) -> Option<SpannedTyped<Expr>> {
         let token = self.peek().clone();
 
         match token.kind {
@@ -222,21 +223,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_mul(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_mul(&mut self) -> Option<SpannedTyped<Expr>> {
         self.parse_binop(Self::parse_primary, &[
             (&Token::Asterisk, &BinOp::Mul),
             (&Token::Div, &BinOp::Div),
         ])
     }
 
-    fn parse_add(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_add(&mut self) -> Option<SpannedTyped<Expr>> {
         self.parse_binop(Self::parse_mul, &[
             (&Token::Add, &BinOp::Add),
             (&Token::Sub, &BinOp::Sub),
         ])
     }
 
-    fn parse_relational(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_relational(&mut self) -> Option<SpannedTyped<Expr>> {
         self.parse_binop(Self::parse_add, &[
             (&Token::LessThan, &BinOp::LessThan),
             (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),
@@ -245,18 +246,18 @@ impl<'a> Parser<'a> {
         ])
     }
 
-    fn parse_equality(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_equality(&mut self) -> Option<SpannedTyped<Expr>> {
         self.parse_binop(Self::parse_relational, &[
             (&Token::Equal, &BinOp::Equal),
             (&Token::NotEqual, &BinOp::NotEqual),
         ])
     }
 
-    fn parse_expr(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
+    fn parse_expr(&mut self) -> Option<SpannedTyped<Expr>> {
         self.parse_equality()
     }
 
-    fn parse_bind_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_bind_stmt(&mut self) -> Option<Spanned<Stmt>> {
         // Eat "let"
         let let_span = self.peek().span.clone();
         self.next();
@@ -283,7 +284,7 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::Bind(name, expr), span))
     }
 
-    fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let expr = match self.parse_expr() {
             Some(expr) => expr,
             None => {
@@ -301,7 +302,7 @@ impl<'a> Parser<'a> {
     }
 
     // Return None if reach EOF
-    fn parse_multiple_statements(&mut self, end_token: &Token) -> Option<Vec<Spanned<Stmt<'a>>>> {
+    fn parse_multiple_statements(&mut self, end_token: &Token) -> Option<Vec<Spanned<Stmt>>> {
         let mut stmts = Vec::new();
 
         while self.peek().kind != *end_token {
@@ -323,7 +324,7 @@ impl<'a> Parser<'a> {
         Some(stmts)
     }
 
-    fn parse_block(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_block(&mut self) -> Option<Spanned<Stmt>> {
         // Eat "{"
         let lbrace_span = self.peek().span.clone();
         self.next();
@@ -338,7 +339,7 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::Block(stmts), span))
     }
 
-    fn parse_return(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_return(&mut self) -> Option<Spanned<Stmt>> {
         // Eat "return"
         let return_token_span = self.peek().span.clone();
         self.next();
@@ -353,7 +354,7 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::Return(expr),span))
     }
 
-    fn parse_if_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_if_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let if_token_span = self.peek().span.clone();
         self.next();
 
@@ -366,7 +367,7 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::If(expr?, Box::new(stmt)), span))
     }
 
-    fn parse_while_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_while_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let while_token_span = self.peek().span.clone();
         self.next();
 
@@ -379,7 +380,7 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::While(cond?, Box::new(stmt)), span))
     }
 
-    fn parse_stmt(&mut self) -> Option<Spanned<Stmt<'a>>> {
+    fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let token = self.peek();
 
         match token.kind {
@@ -407,7 +408,7 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn parse_param(&mut self) -> Option<(&'a str, Type)> {
+    fn parse_param(&mut self) -> Option<(Id, Type)> {
         let tokens_to_skip = [Token::Comma, Token::Rparen];
 
         // Parse the parameter name
@@ -420,7 +421,7 @@ impl<'a> Parser<'a> {
         Some((name, ty))
     }
 
-    fn parse_param_list(&mut self) -> Option<Vec<(&'a str, Type)>> {
+    fn parse_param_list(&mut self) -> Option<Vec<(Id, Type)>> {
         let mut params = Vec::new();
 
         // Parse the first parameter
@@ -446,7 +447,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fn_decl(&mut self) -> Option<Spanned<TopLevel<'a>>> {
+    fn parse_fn_decl(&mut self) -> Option<Spanned<TopLevel>> {
         // Eat "fn"
         let fn_span = self.peek().span.clone();
         self.next();
@@ -473,7 +474,7 @@ impl<'a> Parser<'a> {
         Some(spanned(TopLevel::Function(name?, params, return_ty?, body), span))
     }
 
-    fn parse_toplevel(&mut self) -> Option<Spanned<TopLevel<'a>>> {
+    fn parse_toplevel(&mut self) -> Option<Spanned<TopLevel>> {
         match self.peek().kind {
             Token::Fn => self.parse_fn_decl(),
             _ => self.parse_stmt().map(|stmt| {
@@ -483,7 +484,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(mut self) -> Result<Program<'a>, Vec<Error>> {
+    pub fn parse(mut self) -> Result<Program, Vec<Error>> {
         let mut toplevels = Vec::new();
 
         while self.peek().kind != Token::EOF {
@@ -508,6 +509,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
     use crate::lexer::Lexer;
+    use crate::id::{Id, IdMap};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -526,11 +528,17 @@ mod tests {
             Box::new(SpannedTyped::new(spanned.kind, spanned.span, Type::Invalid))
         }
 
+        let mut id_map = IdMap::new();
         let lexer = Lexer::new(r#"let abc = 10 + 3 * (5 + 20); abc; { abc; 10; }
 fn add(a: int, b: int): int { a + b; }
 add(3, 5 + 8)  ;
-return abc;"#);
+return abc;"#, &mut id_map);
         let tokens = lexer.lex().unwrap();
+
+        let mut id = |id: &str| -> Id {
+            id_map.new_id(id)
+        };
+
         let parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
 
@@ -538,7 +546,7 @@ return abc;"#);
             top: vec![
                 *new(TopLevel::Stmt(
                     *new(Stmt::Bind(
-                        "abc",
+                        id("abc"),
                         *newt(Expr::BinOp(BinOp::Add,
                               newt(Expr::Literal(Literal::Number(10)), 0, 10, 0, 12),
                               newt(Expr::BinOp(BinOp::Mul,
@@ -553,32 +561,32 @@ return abc;"#);
                     0, 0, 0, 28),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Expr(
-                        *newt(Expr::Variable("abc"), 0, 29, 0, 32)),
+                        *newt(Expr::Variable(id("abc")), 0, 29, 0, 32)),
                         0, 29, 0, 33)),
                     0, 29, 0, 33),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Block(vec![
                         *new(Stmt::Expr(
-                            *newt(Expr::Variable("abc"), 0, 36, 0, 39)),
+                            *newt(Expr::Variable(id("abc")), 0, 36, 0, 39)),
                             0, 36, 0, 40),
                         *new(Stmt::Expr(
                             *newt(Expr::Literal(Literal::Number(10)), 0, 41, 0, 43)),
                             0, 41, 0, 44)]),
                         0, 34, 0, 46)),
                     0, 34, 0, 46),
-                *new(TopLevel::Function("add", vec![("a", Type::Int), ("b", Type::Int)], Type::Int,
+                *new(TopLevel::Function(id("add"), vec![(id("a"), Type::Int), (id("b"), Type::Int)], Type::Int,
                     *new(Stmt::Block(vec![
                         *new(Stmt::Expr(
                             *newt(Expr::BinOp(BinOp::Add,
-                                newt(Expr::Variable("a"), 1, 30, 1, 31),
-                                newt(Expr::Variable("b"), 1, 34, 1, 35)),
+                                newt(Expr::Variable(id("a")), 1, 30, 1, 31),
+                                newt(Expr::Variable(id("b")), 1, 34, 1, 35)),
                                 1, 30, 1, 35)),
                             1, 30, 1, 36)]),
                         1, 28, 1, 38)),
                     1, 0, 1, 38),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Expr(
-                        *newt(Expr::Call("add", vec![
+                        *newt(Expr::Call(id("add"), vec![
                             *newt(Expr::Literal(Literal::Number(3)), 2, 4, 2, 5),
                             *newt(Expr::BinOp(BinOp::Add,
                                 newt(Expr::Literal(Literal::Number(5)), 2, 7, 2, 8),
@@ -589,7 +597,7 @@ return abc;"#);
                     2, 0, 2, 16),
                 *new(TopLevel::Stmt(
                     *new(Stmt::Return(
-                        *newt(Expr::Variable("abc"), 3, 7, 3, 10)),
+                        *newt(Expr::Variable(id("abc")), 3, 7, 3, 10)),
                         3, 0, 3, 11)),
                     3, 0, 3, 11),
             ],

@@ -1,9 +1,10 @@
 use std::fmt;
+use crate::id::Id;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Token<'a> {
+pub enum Token {
     Number(i64),
-    Identifier(&'a str),
+    Identifier(Id),
     True,
     False,
     Let,
@@ -34,7 +35,7 @@ pub enum Token<'a> {
     GreaterThanOrEqual,
 }
 
-impl<'a> fmt::Display for Token<'a> {
+impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Token::Number(_) => write!(f, "number"),

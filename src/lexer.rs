@@ -3,6 +3,7 @@ use std::iter::Peekable;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::token::*;
+use crate::id::IdMap;
 
 fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
@@ -11,6 +12,7 @@ fn is_identifier_char(c: char) -> bool {
 pub struct Lexer<'a> {
     raw: &'a str,
     input: Peekable<Chars<'a>>,
+    id_map: &'a mut IdMap,
     start_line: u32,
     start_col: u32,
     line: u32,
@@ -20,10 +22,11 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(s: &'a str) -> Lexer<'a> {
+    pub fn new(s: &'a str, id_map: &'a mut IdMap) -> Lexer<'a> {
         Self {
             raw: s,
             input: s.chars().peekable(),
+            id_map,
             start_line: 0,
             start_col: 0,
             line: 0,
@@ -64,7 +67,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn two_char(&mut self, token: Token<'a>) -> Result<Token<'a>, Error> {
+    fn two_char(&mut self, token: Token) -> Result<Token, Error> {
         self.read_char();
         Ok(token)
     }
@@ -89,7 +92,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn lex_number(&mut self, start_char: char) -> Token<'a> {
+    fn lex_number(&mut self, start_char: char) -> Token {
         let mut n = start_char.to_digit(10).unwrap() as i64;
         loop {
             match self.peek() {
@@ -106,7 +109,7 @@ impl<'a> Lexer<'a> {
         Token::Number(n)
     }
 
-    fn lex_identifier(&mut self, c: char) -> Token<'a> {
+    fn lex_identifier(&mut self, c: char) -> Token {
         let start_pos = self.pos - c.len_utf8();
 
         loop {
@@ -127,11 +130,14 @@ impl<'a> Lexer<'a> {
             "while" => Token::While,
             "true" => Token::True,
             "false" => Token::False,
-            s => Token::Identifier(s),
+            s => {
+                let id = self.id_map.new_id(s);
+                Token::Identifier(id)
+            }
         }
     }
 
-    fn next_token(&mut self) -> Result<Token<'a>, Error> {
+    fn next_token(&mut self) -> Result<Token, Error> {
         match self.read_char() {
             c if c.is_digit(10) => Ok(self.lex_number(c)),
             c if is_identifier_char(c) => Ok(self.lex_identifier(c)),
@@ -157,7 +163,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn lex(mut self) -> Result<Vec<Spanned<Token<'a>>>, Vec<Error>> {
+    pub fn lex(mut self) -> Result<Vec<Spanned<Token>>, Vec<Error>> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
 
@@ -202,7 +208,8 @@ mod tests {
 
     #[test]
     fn invalid_character() {
-        let lexer = Lexer::new("あ あ");
+        let mut id_map = IdMap::new();
+        let lexer = Lexer::new("あ あ", &mut id_map);
         let errors = lexer.lex().unwrap_err();
         let expected = vec![
             Error::new("Invalid character `あ`", Span {
@@ -235,11 +242,12 @@ mod tests {
             })
         }
 
-        let lexer = Lexer::new("let b = 1 + 2\n678 * (345 - 10005) /123 + abc");
+        let mut id_map = IdMap::new();
+        let lexer = Lexer::new("let b = 1 + 2\n678 * (345 - 10005) /123 + abc", &mut id_map);
         let tokens = lexer.lex().unwrap();
         let expected = vec![
             new(Token::Let,                 0,  0, 0,  3),
-            new(Token::Identifier("b"),     0,  4, 0,  5),
+            new(Token::Identifier(id_map.new_id("b")), 0,  4, 0,  5),
             new(Token::Assign,              0,  6, 0,  7),
             new(Token::Number(1),           0,  8, 0,  9),
             new(Token::Add,                 0, 10, 0, 11),
@@ -254,7 +262,7 @@ mod tests {
             new(Token::Div,                 1, 20, 1, 21),
             new(Token::Number(123),         1, 21, 1, 24),
             new(Token::Add,                 1, 25, 1, 26),
-            new(Token::Identifier("abc"),   1, 27, 1, 30),
+            new(Token::Identifier(id_map.new_id("abc")), 1, 27, 1, 30),
             new(Token::EOF,                 0, 0, 0, 0),
         ];
 

@@ -2,20 +2,27 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::env::*;
+use crate::id::{Id, IdMap};
 
 pub struct Executor<'a> {
-    stack: Vec<HashMap<&'a str, Value>>,
-    functions: HashMap<&'a str, Function<'a>>,
+    stack: Vec<HashMap<Id, Value>>,
+    functions: HashMap<Id, Function>,
     return_value: Option<Value>,
+    id_map: &'a IdMap,
 }
 
 impl<'a> Executor<'a> {
-    pub fn new() -> Self {
+    pub fn new(id_map: &'a IdMap) -> Self {
         Self {
             stack: Vec::new(),
             functions: HashMap::new(),
             return_value: None,
+            id_map,
         }
+    }
+
+    fn get_id(&mut self, s: &str) -> Id {
+        self.id_map.get(s).unwrap()
     }
 
     fn new_stack(&mut self) {
@@ -26,11 +33,11 @@ impl<'a> Executor<'a> {
         self.stack.pop().unwrap();
     }
 
-    fn new_var(&mut self, name: &'a str, value: Value) {
+    fn new_var(&mut self, name: Id, value: Value) {
         self.stack.last_mut().unwrap().insert(name, value);
     }
 
-    fn find_var(&mut self, name: &str) -> &Value {
+    fn find_var(&mut self, name: &Id) -> &Value {
         for vars in self.stack.iter().rev() {
             match vars.get(name) {
                 Some(value) => return value,
@@ -41,7 +48,7 @@ impl<'a> Executor<'a> {
         unreachable!();
     }
 
-    fn run_binop(&mut self, binop: BinOp, lhs: Expr<'a>, rhs: Expr<'a>) -> Value {
+    fn run_binop(&mut self, binop: BinOp, lhs: Expr, rhs: Expr) -> Value {
         let left = self.run_expr(lhs).int();
         let right = self.run_expr(rhs).int();
 
@@ -59,7 +66,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    fn run_call(&mut self, name: &str, args: impl Iterator<Item = Expr<'a>>) -> Value {
+    fn run_call(&mut self, name: &Id, args: impl Iterator<Item = Expr>) -> Value {
         let func = self.functions[name].clone();
 
         self.new_stack();
@@ -70,9 +77,16 @@ impl<'a> Executor<'a> {
             self.new_var(param_name, value);
         }
         
-        match name {
-            "printi" => { stdlib::printi(self.find_var("n").clone()); self.return_value = Some(Value::Int(0)); },
-            "printlf" => { stdlib::printlf(); self.return_value = Some(Value::Int(0)); },
+        match self.id_map.name(name) {
+            "printi" => {
+                let id = self.get_id("n");
+                stdlib::printi(self.find_var(&id).clone());
+                self.return_value = Some(Value::Int(0));
+            },
+            "printlf" => {
+                stdlib::printlf();
+                self.return_value = Some(Value::Int(0));
+            },
             _ => { self.run_stmt(func.stmt); },
         }
 
@@ -81,30 +95,30 @@ impl<'a> Executor<'a> {
         self.return_value.clone().unwrap()
     }
 
-    fn run_expr(&mut self, expr: Expr<'a>) -> Value {
+    fn run_expr(&mut self, expr: Expr) -> Value {
         #[allow(unreachable_patterns)]
         match expr {
             Expr::Literal(Literal::Number(n)) => Value::Int(n),
             Expr::Literal(Literal::True) => Value::Bool(true),
             Expr::Literal(Literal::False) => Value::Bool(false),
             Expr::BinOp(binop, lhs, rhs) => self.run_binop(binop, lhs.kind, rhs.kind),
-            Expr::Variable(name) => self.find_var(name).clone(),
-            Expr::Call(name, args) => self.run_call(name, args.into_iter().map(|expr| expr.kind)),
+            Expr::Variable(name) => self.find_var(&name).clone(),
+            Expr::Call(name, args) => self.run_call(&name, args.into_iter().map(|expr| expr.kind)),
             _ => unimplemented!(),
         }
     }
 
-    fn run_bind_stmt(&mut self, name: &'a str, expr: Expr<'a>) {
+    fn run_bind_stmt(&mut self, name: Id, expr: Expr) {
         let value = self.run_expr(expr);
         self.new_var(name, value);
     }
 
-    fn run_return(&mut self, expr: Expr<'a>) {
+    fn run_return(&mut self, expr: Expr) {
         let value = self.run_expr(expr);
         self.return_value = Some(value);
     }
 
-    fn run_if(&mut self, cond: Expr<'a>, stmt: Stmt<'a>) -> bool {
+    fn run_if(&mut self, cond: Expr, stmt: Stmt) -> bool {
         let cond = self.run_expr(cond);
 
         if cond.bool() {
@@ -114,7 +128,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    fn run_while(&mut self, cond: Expr<'a>, stmt: Stmt<'a>) -> bool {
+    fn run_while(&mut self, cond: Expr, stmt: Stmt) -> bool {
         let cond = self.run_expr(cond);
 
         while cond.bool() {
@@ -127,7 +141,7 @@ impl<'a> Executor<'a> {
         false
     }
 
-    fn run_stmt(&mut self, stmt: Stmt<'a>) -> bool {
+    fn run_stmt(&mut self, stmt: Stmt) -> bool {
         #[allow(unreachable_patterns)]
         match stmt {
             Stmt::Bind(name, expr) => self.run_bind_stmt(name, expr.kind),
@@ -156,7 +170,7 @@ impl<'a> Executor<'a> {
         false
     }
 
-    fn run_toplevel(&mut self, toplevel: TopLevel<'a>) -> bool {
+    fn run_toplevel(&mut self, toplevel: TopLevel) -> bool {
         match toplevel {
             TopLevel::Stmt(stmt) => self.run_stmt(stmt.kind),
             TopLevel::Function(name, params, _, stmt) => {
@@ -169,12 +183,16 @@ impl<'a> Executor<'a> {
         }
     }
 
-    pub fn exec(&mut self, program: Program<'a>) {
-        self.functions.insert("printi", Function {
-            params: vec!["n"],
+    pub fn exec(&mut self, program: Program) {
+        let printi = self.get_id("printi");
+        let n = self.get_id("n");
+        self.functions.insert(printi, Function {
+            params: vec![n],
             stmt: Stmt::Block(Vec::new()),
         });
-        self.functions.insert("printlf", Function {
+
+        let printlf = self.get_id("printlf");
+        self.functions.insert(printlf, Function {
             params: Vec::new(),
             stmt: Stmt::Block(Vec::new()),
         });

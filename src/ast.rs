@@ -1,5 +1,6 @@
 use crate::span::{Span, Spanned};
 use crate::ty::Type;
+use crate::id::Id;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SpannedTyped<T> {
@@ -57,30 +58,30 @@ pub enum Literal {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Expr<'a> {
+pub enum Expr {
     Literal(Literal),
-    BinOp(BinOp, Box<SpannedTyped<Expr<'a>>>, Box<SpannedTyped<Expr<'a>>>),
-    Variable(&'a str),
-    Call(&'a str, Vec<SpannedTyped<Expr<'a>>>),
+    BinOp(BinOp, Box<SpannedTyped<Expr>>, Box<SpannedTyped<Expr>>),
+    Variable(Id),
+    Call(Id, Vec<SpannedTyped<Expr>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Stmt<'a> {
-    Bind(&'a str, SpannedTyped<Expr<'a>>),
-    Expr(SpannedTyped<Expr<'a>>),
-    Block(Vec<Spanned<Stmt<'a>>>),
-    Return(SpannedTyped<Expr<'a>>),
-    If(SpannedTyped<Expr<'a>>, Box<Spanned<Stmt<'a>>>),
-    While(SpannedTyped<Expr<'a>>, Box<Spanned<Stmt<'a>>>),
+pub enum Stmt {
+    Bind(Id, SpannedTyped<Expr>),
+    Expr(SpannedTyped<Expr>),
+    Block(Vec<Spanned<Stmt>>),
+    Return(SpannedTyped<Expr>),
+    If(SpannedTyped<Expr>, Box<Spanned<Stmt>>),
+    While(SpannedTyped<Expr>, Box<Spanned<Stmt>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TopLevel<'a> {
-    Stmt(Spanned<Stmt<'a>>),
-    Function(&'a str, Vec<(&'a str, Type)>, Type, Spanned<Stmt<'a>>),
+pub enum TopLevel {
+    Stmt(Spanned<Stmt>),
+    Function(Id, Vec<(Id, Type)>, Type, Spanned<Stmt>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Program<'a> {
-    pub top: Vec<Spanned<TopLevel<'a>>>,
+pub struct Program {
+    pub top: Vec<Spanned<TopLevel>>,
 }
