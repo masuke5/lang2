@@ -12,27 +12,6 @@ fn spanned_typed<T>(kind: T, span: Span) -> SpannedTyped<T> {
     SpannedTyped::<T>::new(kind, span, Type::Invalid)
 }
 
-macro_rules! binop {
-    ($self:ident, $func:ident, { $($token:path => $binop:path),* $(,)? }) => {
-        {
-            let mut expr = $self.$func()?;
-
-            loop {
-                if false {
-                } $(else if $self.consume(&$token) {
-                    let rhs = $self.$func()?;
-                    let span = Span::merge(&expr.span, &rhs.span);
-                    expr = spanned_typed(Expr::BinOp($binop, Box::new(expr), Box::new(rhs)), span);
-                })* else {
-                    break;
-                }
-            }
-
-            Some(expr)
-        }
-    }
-}
-
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
         $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
@@ -80,7 +59,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[inline]
     fn expect(&mut self, expected: &Token, skip: &[Token]) -> Option<()> {
         if !self.consume(&expected) {
             let token = self.peek().clone();
@@ -97,7 +75,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[inline]
     fn expect_identifier(&mut self, skip: &[Token]) -> Option<&'a str> {
         match self.peek().kind {
             Token::Identifier(name) => {
@@ -126,13 +103,37 @@ impl<'a> Parser<'a> {
     }
 
     // Parse something using `func`. skip to `tokens` if fail.
-    fn parse_skip<T, F>(&mut self, mut func: F, tokens: &[Token]) -> Option<T> where F: FnMut(&mut Self,) -> Option<T> {
+    fn parse_skip<T, F>(&mut self, mut func: F, tokens: &[Token]) -> Option<T>
+        where F: FnMut(&mut Self,) -> Option<T>
+    {
         let res = func(self);
         if let None = res {
             self.skip_to(tokens);
         }
 
         res
+    }
+
+    fn parse_binop<F>(&mut self, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<SpannedTyped<Expr<'a>>>
+        where F: FnMut(&mut Self) -> Option<SpannedTyped<Expr<'a>>>
+    {
+        let mut expr = func(self)?;
+
+        'outer: loop {
+            for (token, binop) in rules {
+                if self.consume(token) {
+                    let rhs = func(self)?;
+                    let span = Span::merge(&expr.span, &rhs.span);
+
+                    expr = spanned_typed(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
+                    continue 'outer;
+                }
+            }
+
+            break;
+        }
+
+        Some(expr)
     }
 
     fn parse_args(&mut self) -> Vec<SpannedTyped<Expr<'a>>> {
@@ -218,33 +219,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mul(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
-        binop!(self, parse_primary, {
-            Token::Asterisk => BinOp::Mul,
-            Token::Div => BinOp::Div,
-        })
+        self.parse_binop(Self::parse_primary, &[
+            (&Token::Asterisk, &BinOp::Mul),
+            (&Token::Div, &BinOp::Div),
+        ])
     }
 
     fn parse_add(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
-        binop!(self, parse_mul, {
-            Token::Add => BinOp::Add,
-            Token::Sub => BinOp::Sub,
-        })
+        self.parse_binop(Self::parse_mul, &[
+            (&Token::Add, &BinOp::Add),
+            (&Token::Sub, &BinOp::Sub),
+        ])
     }
 
     fn parse_relational(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
-        binop!(self, parse_add, {
-            Token::LessThan => BinOp::LessThan,
-            Token::LessThanOrEqual => BinOp::LessThanOrEqual,
-            Token::GreaterThan => BinOp::GreaterThan,
-            Token::GreaterThanOrEqual => BinOp::GreaterThanOrEqual,
-        })
+        self.parse_binop(Self::parse_add, &[
+            (&Token::LessThan, &BinOp::LessThan),
+            (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),
+            (&Token::GreaterThan, &BinOp::GreaterThan),
+            (&Token::GreaterThanOrEqual, &BinOp::GreaterThanOrEqual),
+        ])
     }
 
     fn parse_equality(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
-        binop!(self, parse_relational, {
-            Token::Equal => BinOp::Equal,
-            Token::NotEqual => BinOp::NotEqual,
-        })
+        self.parse_binop(Self::parse_relational, &[
+            (&Token::Equal, &BinOp::Equal),
+            (&Token::NotEqual, &BinOp::NotEqual),
+        ])
     }
 
     fn parse_expr(&mut self) -> Option<SpannedTyped<Expr<'a>>> {
