@@ -5,211 +5,334 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::Span;
 use crate::id::{Id, IdMap};
+use crate::inst::{Inst, Function, BinOp as IBinOp};
 
-#[derive(Debug, Clone)]
-struct Function {
-    args: Vec<(Id, Type)>,
-    return_ty: Type,
+macro_rules! error {
+    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
+        $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
+    };
 }
 
 #[derive(Debug)]
 pub struct Analyzer {
     functions: HashMap<Id, Function>,
     errors: Vec<Error>,
-    vars: Vec<HashMap<Id, Type>>,
-    current_func: Option<Id>,
+    main_func_id: Id,
+    current_func: Id,
 }
 
 impl Analyzer {
-    pub fn new() -> Self {
+    pub fn new(id_map: &mut IdMap) -> Self {
+        let main_id = id_map.new_id("$main");
         Self {
             functions: HashMap::new(),
             errors: Vec::new(),
-            vars: Vec::new(),
-            current_func: None,
+            main_func_id: main_id,
+            current_func: main_id, 
         }
+    }
+
+    #[inline]
+    fn current_func_mut(&mut self) -> &mut Function {
+        self.functions.get_mut(&self.current_func).unwrap()
+    }
+
+    #[inline]
+    fn current_func_imm(&self) -> &Function {
+        self.functions.get(&self.current_func).unwrap()
     }
 
     fn add_error(&mut self, msg: &str, span: Span) {
         self.errors.push(Error::new(msg, span));
     }
 
-    fn push_scope(&mut self) {
-        self.vars.push(HashMap::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.vars.pop().unwrap();
-    }
-
-    fn new_var(&mut self, name: &Id, ty: Type) {
-        self.vars.last_mut().unwrap().insert(*name, ty);
-    }
-
-    fn find_var(&mut self, name: &Id) -> Option<Type> {
-        for vars in self.vars.iter().rev() {
-            match vars.get(&name) {
-                Some(ty) => return Some(ty.clone()),
-                None => {},
+    fn walk_expr(&mut self, expr: SpannedTyped<Expr>) -> (Type, Span) {
+        let ty = match expr.kind {
+            Expr::Literal(Literal::Number(n)) => {
+                let func = self.current_func_mut();
+                func.insts.push(Inst::Int(n));
+                Type::Int
             }
-        }
-
-        None
-    }
-
-    fn analyze_expr<'a>(&mut self, expr: &'a mut SpannedTyped<Expr>) -> (&'a Type, &'a Span) { // ???: specify lifetime without &mut self
-        match &mut expr.kind {
-            Expr::Literal(Literal::Number(_)) => expr.ty = Type::Int,
-            Expr::Literal(Literal::True) => expr.ty = Type::Bool,
-            Expr::Literal(Literal::False) => expr.ty = Type::Bool,
+            Expr::Literal(Literal::True) => {
+                let func = self.current_func_mut();
+                func.insts.push(Inst::Int(1));
+                Type::Bool
+            },
+            Expr::Literal(Literal::False) => {
+                let func = self.current_func_mut();
+                func.insts.push(Inst::Int(1));
+                Type::Bool
+            },
             Expr::Variable(name) => {
-                match self.find_var(name) {
-                    Some(ty) => expr.ty = ty.clone(),
-                    None => self.add_error(&format!("undefined variable"), expr.span.clone()),
-                }
-            },
-            Expr::BinOp(binop, lhs, rhs) => {
-                let (lty, _) = self.analyze_expr(lhs);
-                let (rty, _) = self.analyze_expr(rhs);
-
-                if *lty != *rty {
-                    self.add_error(&format!("different types `{}` and `{}`", lty, rty), expr.span.clone());
-                    return (&lty, &expr.span);
-                }
-
-                let binop_symbol = binop.to_symbol();
-                match (binop, lty) {
-                    (BinOp::Add, Type::Int) => expr.ty = Type::Int,
-                    (BinOp::Sub, Type::Int) => expr.ty = Type::Int,
-                    (BinOp::Mul, Type::Int) => expr.ty = Type::Int,
-                    (BinOp::Div, Type::Int) => expr.ty = Type::Int,
-                    (BinOp::Equal, Type::Int) => expr.ty = Type::Bool,
-                    (BinOp::NotEqual, Type::Int) => expr.ty = Type::Bool,
-                    (BinOp::LessThan, Type::Int) => expr.ty = Type::Bool,
-                    (BinOp::LessThanOrEqual, Type::Int) => expr.ty = Type::Bool,
-                    (BinOp::GreaterThan, Type::Int) => expr.ty = Type::Bool,
-                    (BinOp::GreaterThanOrEqual, Type::Int) => expr.ty = Type::Bool,
-                    _ => self.add_error(&format!("`{} {} {}` is not possible", lty, binop_symbol, rty), expr.span.clone()),
-                }
-            },
-            Expr::Call(name, args) => {
-                let func = match self.functions.get(name) {
-                    Some(func) => func.clone(),
+                let func = self.current_func_mut();
+                let (loc, ty) = match func.locals.get(&name) {
+                    Some(r) => r,
                     None => {
-                        self.add_error(&format!("undefined function"), expr.span.clone());
-                        return (&expr.ty, &expr.span)
+                        self.add_error("undefined variable", expr.span.clone());
+                        return (Type::Invalid, expr.span);
                     },
                 };
 
-                expr.ty = func.return_ty;
+                func.insts.push(Inst::Load(*loc, 0));
 
-                if args.len() != func.args.len() {
-                    self.add_error(&format!("the function takes {} parameters. but got {} arguments.", func.args.len(), args.len()), expr.span.clone());
-                    return (&expr.ty, &expr.span);
+                ty.clone()
+            },
+            Expr::BinOp(binop, lhs, rhs) => {
+                let (lty, _) = self.walk_expr(*lhs);
+                let (rty, _) = self.walk_expr(*rhs);
+
+                let func = self.current_func_mut();
+
+                // Insert an instruction
+                let ibinop = match binop {
+                    BinOp::Add => IBinOp::Add,
+                    BinOp::Sub => IBinOp::Sub,
+                    BinOp::Mul => IBinOp::Mul,
+                    BinOp::Div => IBinOp::Div,
+                    BinOp::LessThan => IBinOp::LessThan,
+                    BinOp::LessThanOrEqual => IBinOp::LessThanOrEqual,
+                    BinOp::GreaterThan => IBinOp::GreaterThan,
+                    BinOp::GreaterThanOrEqual => IBinOp::GreaterThanOrEqual,
+                    BinOp::Equal => IBinOp::Equal,
+                    BinOp::NotEqual => IBinOp::NotEqual,
+                };
+                func.insts.push(Inst::BinOp(ibinop));
+
+                // Type check
+                if lty != rty {
+                    self.add_error(&format!("different types `{}` and `{}`", lty, rty), expr.span.clone());
+                    return (lty, expr.span);
                 }
 
-                for (arg, (_, param_ty)) in args.iter_mut().zip(func.args.into_iter()) {
-                    let (arg_ty, span) = self.analyze_expr(arg);
-                    if *arg_ty != param_ty {
-                        self.add_error(&format!("the parameter type is `{}`. but got `{}` type", param_ty, arg_ty), span.clone());
+                let binop_symbol = binop.to_symbol();
+                match (binop, &lty) {
+                    (BinOp::Add, Type::Int) => Type::Int,
+                    (BinOp::Sub, Type::Int) => Type::Int,
+                    (BinOp::Mul, Type::Int) => Type::Int,
+                    (BinOp::Div, Type::Int) => Type::Int,
+                    (BinOp::Equal, Type::Int) => Type::Bool,
+                    (BinOp::NotEqual, Type::Int) => Type::Bool,
+                    (BinOp::LessThan, Type::Int) => Type::Bool,
+                    (BinOp::LessThanOrEqual, Type::Int) => Type::Bool,
+                    (BinOp::GreaterThan, Type::Int) => Type::Bool,
+                    (BinOp::GreaterThanOrEqual, Type::Int) => Type::Bool,
+                    _ => {
+                        self.add_error(&format!("`{} {} {}` is not possible", lty, binop_symbol, rty), expr.span.clone());
+                        Type::Invalid
                     }
                 }
+            },
+            Expr::Call(name, args) => {
+                let (return_ty, params) = {
+                    // Get the callee function
+                    let callee_func = match self.functions.get(&name) {
+                        Some(func) => func,
+                        None => {
+                            self.add_error(&format!("undefined function"), expr.span.clone());
+                            return (Type::Invalid, expr.span);
+                        },
+                    };
+
+                    // Check parameter length
+                    if args.len() != callee_func.params.len() {
+                        error!(self, expr.span.clone(),
+                            "the function takes {} parameters. but got {} arguments.",
+                            callee_func.params.len(),
+                            args.len());
+                        return (callee_func.return_ty.clone(), expr.span);
+                    }
+
+                    (callee_func.return_ty.clone(), callee_func.params.clone())
+                };
+
+                // Check parameter types
+                for (arg, param_ty) in args.into_iter().zip(params.iter()) {
+                    let (arg_ty, span) = self.walk_expr(arg);
+                    if arg_ty != *param_ty {
+                        error!(self, span.clone(), "the parameter type is `{}`. but got `{}` type", param_ty, arg_ty);
+                    }
+                }
+
+                let func = self.current_func_mut();
+
+                // Insert an instruction
+                func.insts.push(Inst::Call(name));
+
+                return_ty
             },
         };
 
-        (&expr.ty, &expr.span)
+        (ty, expr.span)
     }
 
-    fn analyze_stmt(&mut self, stmt: &mut Stmt) {
+    fn walk_stmt(&mut self, stmt: Stmt) {
         match stmt {
-            Stmt::Expr(expr) => { self.analyze_expr(expr); },
-            Stmt::If(cond, stmt) | Stmt::While(cond, stmt) => {
-                let (ty, span) = self.analyze_expr(cond);
+            Stmt::Expr(expr) => { self.walk_expr(expr); },
+            Stmt::If(cond, stmt) => {
+                // Condition
+                let (ty, span) = self.walk_expr(cond);
+                // Check if condition expression is bool type
                 match ty {
                     Type::Bool => {},
-                    ty => self.add_error(&format!("expected bool type, but got `{}` type", ty), span.clone()),
+                    _ => self.add_error(&format!("expected type `bool` but got type `{}`", ty), span),
                 };
 
-                let span = &stmt.span;
+                // Insert dummy instruction to jump to else-clause or end
+                let func = self.current_func_mut();
+                let jump_to_else = func.insts.len();
+                func.insts.push(Inst::Int(0));
+
+                // Then-clause
+                // Check if then-clause statement is block
                 match stmt.kind {
-                    Stmt::Block(_) | Stmt::If(_, _) => self.analyze_stmt(&mut stmt.kind),
-                    _ => self.add_error("expected block or if statement", span.clone()),
+                    Stmt::Block(_) => self.walk_stmt(stmt.kind),
+                    _ => self.add_error("expected block statement", stmt.span)
                 };
+
+                /* if with_else {
+                    // Insert dummy instruction to jump to end
+                    let jump_to_end = func.insts.len();
+                    func.insts.push(Inst::Int(0));
+
+                    func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
+
+                    // Insert else-clause instructions
+
+                    func.insts[jump_to_end] = Inst::Jump(func.insts.len());
+                } else { */
+
+                // Insert instruction to jump to end
+                let func = self.current_func_mut();
+                func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
+
+                //}
+            },
+            Stmt::While(cond, stmt) => {
+                let func = self.current_func_mut();
+                let begin = func.insts.len();
+
+                // Insert condition expression instruction
+                let (ty, span) = self.walk_expr(cond);
+                // Check if condition expression is bool type
+                match ty {
+                    Type::Bool => {},
+                    _ => self.add_error(&format!("expected type `bool` but got type `{}`", ty), span),
+                };
+
+                // Insert dummy instruction to jump to end
+                let func = self.current_func_mut();
+                let jump_to_end = func.insts.len();
+                func.insts.push(Inst::Int(0));
+
+                // Insert body statement instruction
+                // Check if body statement is block
+                match stmt.kind {
+                    Stmt::Block(_) => self.walk_stmt(stmt.kind),
+                    _ => self.add_error("expected block statement", stmt.span)
+                };
+
+                // Jump to begin
+                let func = self.current_func_mut();
+                func.insts.push(Inst::Jump(begin));
+
+                // Insert instruction to jump to end
+                func.insts[jump_to_end] = Inst::JumpIfZero(func.insts.len());
             },
             Stmt::Block(stmts) => {
-                self.push_scope();
-
                 for stmt in stmts {
-                    self.analyze_stmt(&mut stmt.kind);
+                    self.walk_stmt(stmt.kind);
                 }
-
-                self.pop_scope();
             },
             Stmt::Bind(name, expr) => {
-                let (ty, _) = self.analyze_expr(expr);
-                self.new_var(name, ty.clone());
+                let (ty, _) = self.walk_expr(expr);
+
+                let func = self.current_func_mut();
+
+                let loc = func.stack_size;
+                func.locals.insert(name, (loc as isize, ty.clone()));
+                func.stack_size += ty.size();
+
+                func.insts.push(Inst::Save(loc as isize, 0));
             },
             Stmt::Return(expr) => {
-                let (ty, span) = self.analyze_expr(expr);
-                if let Some(name) = self.current_func {
-                    let return_ty = self.functions[&name].return_ty.clone();
-                    if *ty != return_ty {
-                        self.add_error(&format!("expected `{}` type, but got `{}` type", return_ty, ty), span.clone());
-                    }
-                } else {
-                    self.add_error("'return' statement outside function", span.clone());
+                let main_id = self.main_func_id;
+                let func = self.current_func_imm();
+
+                if func.name == main_id {
+                    return;
                 }
+
+                let (ty, span) = self.walk_expr(expr);
+
+                // Check type
+                let return_ty = self.current_func_imm().return_ty.clone();
+                if ty != return_ty {
+                    error!(self, span, "expected `{}` type, but got `{}` type", return_ty, ty);
+                }
+
+                let func = self.current_func_mut();
+                func.insts.push(Inst::Return);
             },
         }
     }
 
-    fn analyze_toplevel(&mut self, toplevel: &mut TopLevel) {
+    fn walk_toplevel(&mut self, toplevel: TopLevel) {
         match toplevel {
-            TopLevel::Stmt(stmt) => self.analyze_stmt(&mut stmt.kind),
-            TopLevel::Function(name, args, return_ty, stmt) => {
-                let function = Function {
-                    args: args.clone(),
-                    return_ty: return_ty.clone(),
-                };
-                self.functions.insert(*name, function);
-
-                self.push_scope();
-
-                for (name, ty) in args {
-                    self.new_var(name, ty.clone());
-                }
-
-                self.current_func = Some(*name);
-                self.analyze_stmt(&mut stmt.kind);
-                self.current_func = None;
-
-                self.pop_scope();
+            TopLevel::Stmt(stmt) => {
+                self.current_func = self.main_func_id;
+                self.walk_stmt(stmt.kind);
+            },
+            TopLevel::Function(name, _, _, stmt) => {
+                self.current_func = name;
+                self.walk_stmt(stmt.kind);
             },
         }
     }
 
-    pub fn analyze(mut self, program: &mut Program, id_map: &mut IdMap) -> Result<(), Vec<Error>> {
-        self.functions.insert(id_map.new_id("printi"), Function {
-            args: vec![(id_map.new_id("n"), Type::Int)],
-            return_ty: Type::Int,
-        });
-        self.functions.insert(id_map.new_id("printlf"), Function {
-            args: vec![],
-            return_ty: Type::Int,
-        });
+    fn insert_function_header(&mut self, toplevel: &TopLevel) {
+        match toplevel {
+            TopLevel::Function(name, params, return_ty, _) => {
+                let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
+                let mut func = Function::new(*name, param_types, return_ty.clone());
+                let mut loc = -16isize; // 16 is fp and ip
+                for (id, ty) in params.iter().rev() {
+                    loc -= ty.size() as isize;
+                    func.locals.insert(*id, (loc, ty.clone()));
+                }
 
-        self.push_scope();
+                self.functions.insert(*name, func);
+            },
+            _ => {},
+        }
+    }
 
-        for toplevel in &mut program.top {
-            self.analyze_toplevel(&mut toplevel.kind);
+    pub fn analyze(mut self, program: Program) -> Result<HashMap<Id, Function>, Vec<Error>> {
+        // self.functions.insert(id_map.new_id("printi"), Function {
+        //     args: vec![(id_map.new_id("n"), Type::Int)],
+        //     return_ty: Type::Int,
+        // });
+        // self.functions.insert(id_map.new_id("printlf"), Function {
+        //     args: vec![],
+        //     return_ty: Type::Int,
+        // });
+
+        // Insert main function header
+        let main_func = Function::new(self.main_func_id, Vec::new(), Type::Int);
+        self.functions.insert(self.main_func_id, main_func);
+
+        // Insert function headers
+        for toplevel in program.top.iter() {
+            self.insert_function_header(&toplevel.kind);
         }
 
-        self.pop_scope();
+        for toplevel in program.top {
+            self.walk_toplevel(toplevel.kind);
+        }
 
         if self.errors.len() > 0 {
             Err(self.errors)
         } else {
-            Ok(())
+            Ok(self.functions)
         }
     }
 }

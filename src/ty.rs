@@ -17,6 +17,17 @@ impl fmt::Display for Type {
     }
 }
 
+impl Type {
+    // in bytes
+    pub fn size(&self) -> usize {
+        match self {
+            Type::Int => 8,
+            Type::Bool => 8,
+            Type::Invalid => 0,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Typed<T> {
     ty: Type,

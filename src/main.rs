@@ -6,11 +6,12 @@ mod token;
 mod lexer;
 mod ast;
 mod parser;
-mod env;
-mod executor;
+// mod env;
+// mod executor;
 mod ty;
 mod sema;
 mod id;
+mod inst;
 
 use std::process::exit;
 use std::fs::File;
@@ -23,7 +24,7 @@ use token::Token;
 use error::Error;
 use parser::Parser;
 use ast::*;
-use executor::Executor;
+// use executor::Executor;
 use sema::Analyzer;
 use id::IdMap;
 
@@ -119,7 +120,7 @@ fn print_errors(input: &str, errors: Vec<Error>) {
 
     for error in errors {
         // Print the line number
-        print!("\x1b[96m{:<width$} | \x1b[0m", error.span.start_line, width = line_num_len);
+        print!("\x1b[96m{:<width$} | \x1b[0m", error.span.start_line + 1, width = line_num_len);
         // Print the line
         println!("{}", input[error.span.start_line as usize]);
         // Print the error span
@@ -140,17 +141,22 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     }
 
     let parser = Parser::new(tokens);
-    let mut program = parser.parse()?;
+    let program = parser.parse()?;
     if matches.is_present("dump-ast") {
         dump_ast(&id_map, program);
         exit(1);
     }
 
-    let analyzer = Analyzer::new();
-    analyzer.analyze(&mut program, &mut id_map)?;
+    let analyzer = Analyzer::new(&mut id_map);
+    let functions = analyzer.analyze(program)?;
 
-    let mut executor = Executor::new(&id_map);
-    executor.exec(program);
+    for (name, func) in functions {
+        println!("{}:", id_map.name(&name));
+        inst::dump_insts(&func.insts, &id_map);
+    }
+
+    // let mut executor = Executor::new(&id_map);
+    // executor.exec(program);
 
     Ok(())
 }
