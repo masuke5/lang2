@@ -6,8 +6,6 @@ mod token;
 mod lexer;
 mod ast;
 mod parser;
-// mod env;
-// mod executor;
 mod ty;
 mod sema;
 mod id;
