@@ -12,6 +12,7 @@ mod ty;
 mod sema;
 mod id;
 mod inst;
+mod vm;
 
 use std::process::exit;
 use std::fs::File;
@@ -27,6 +28,7 @@ use ast::*;
 // use executor::Executor;
 use sema::Analyzer;
 use id::IdMap;
+use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
 
@@ -137,26 +139,29 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     let tokens = lexer.lex()?;
     if matches.is_present("dump-token") {
         dump_token(tokens);
-        exit(1);
+        exit(0);
     }
 
     let parser = Parser::new(tokens);
     let program = parser.parse()?;
     if matches.is_present("dump-ast") {
         dump_ast(&id_map, program);
-        exit(1);
+        exit(0);
     }
 
     let analyzer = Analyzer::new(&mut id_map);
     let functions = analyzer.analyze(program)?;
 
-    for (name, func) in functions {
-        println!("{}:", id_map.name(&name));
-        inst::dump_insts(&func.insts, &id_map);
+    if matches.is_present("dump-insts") {
+        for (name, func) in functions {
+            println!("{}:", id_map.name(&name));
+            inst::dump_insts(&func.insts, &id_map);
+        }
+        exit(0);
     }
 
-    // let mut executor = Executor::new(&id_map);
-    // executor.exec(program);
+    let mut vm = VM::new(functions, id_map);
+    vm.run();
 
     Ok(())
 }
@@ -194,6 +199,9 @@ fn main() {
         .arg(Arg::with_name("dump-ast")
              .long("dump-ast")
              .help("Dumps AST"))
+        .arg(Arg::with_name("dump-insts")
+             .long("dump-insts")
+             .help("Dumps instructions"))
         .get_matches();
 
     let input = match get_input(&matches) {

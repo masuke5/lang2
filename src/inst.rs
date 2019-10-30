@@ -43,6 +43,8 @@ impl Function {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inst {
     Int(i64),
+    True,
+    False,
     Load(isize, usize),
 
     BinOp(BinOp),
@@ -63,6 +65,8 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
 
         match inst {
             Inst::Int(n) => println!("int {}", n),
+            Inst::True => println!("true"),
+            Inst::False => println!("false"),
             Inst::Load(loc, offset) => {
                 print!("load {}", loc);
                 if *offset > 0 {

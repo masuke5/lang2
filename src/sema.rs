@@ -55,12 +55,12 @@ impl Analyzer {
             }
             Expr::Literal(Literal::True) => {
                 let func = self.current_func_mut();
-                func.insts.push(Inst::Int(1));
+                func.insts.push(Inst::True);
                 Type::Bool
             },
             Expr::Literal(Literal::False) => {
                 let func = self.current_func_mut();
-                func.insts.push(Inst::Int(1));
+                func.insts.push(Inst::False);
                 Type::Bool
             },
             Expr::Variable(name) => {
@@ -250,7 +250,7 @@ impl Analyzer {
 
                 let loc = func.stack_size;
                 func.locals.insert(name, (loc as isize, ty.clone()));
-                func.stack_size += ty.size();
+                func.stack_size += 1;
 
                 func.insts.push(Inst::Save(loc as isize, 0));
             },
@@ -294,9 +294,9 @@ impl Analyzer {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
                 let mut func = Function::new(*name, param_types, return_ty.clone());
-                let mut loc = -16isize; // 16 is fp and ip
+                let mut loc = -2isize; // 2 is fp and ip
                 for (id, ty) in params.iter().rev() {
-                    loc -= ty.size() as isize;
+                    loc -= 1;
                     func.locals.insert(*id, (loc, ty.clone()));
                 }
 
