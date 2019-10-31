@@ -168,7 +168,7 @@ impl Analyzer {
     fn walk_stmt(&mut self, stmt: Stmt) {
         match stmt {
             Stmt::Expr(expr) => { self.walk_expr(expr); },
-            Stmt::If(cond, stmt) => {
+            Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
                 let (ty, span) = self.walk_expr(cond);
                 // Check if condition expression is bool type
@@ -183,29 +183,26 @@ impl Analyzer {
                 func.insts.push(Inst::Int(0));
 
                 // Then-clause
-                // Check if then-clause statement is block
-                match stmt.kind {
-                    Stmt::Block(_) => self.walk_stmt(stmt.kind),
-                    _ => self.add_error("expected block statement", stmt.span)
-                };
+                self.walk_stmt(stmt.kind);
 
-                /* if with_else {
+                if let Some(else_stmt) = else_stmt {
                     // Insert dummy instruction to jump to end
+                    let func = self.current_func_mut();
                     let jump_to_end = func.insts.len();
                     func.insts.push(Inst::Int(0));
 
                     func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
 
                     // Insert else-clause instructions
+                    self.walk_stmt(else_stmt.kind);
 
+                    let func = self.current_func_mut();
                     func.insts[jump_to_end] = Inst::Jump(func.insts.len());
-                } else { */
-
-                // Insert instruction to jump to end
-                let func = self.current_func_mut();
-                func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
-
-                //}
+                } else {
+                    // Insert instruction to jump to end
+                    let func = self.current_func_mut();
+                    func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
+                }
             },
             Stmt::While(cond, stmt) => {
                 let func = self.current_func_mut();

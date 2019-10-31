@@ -71,7 +71,7 @@ pub enum Stmt {
     Expr(SpannedTyped<Expr>),
     Block(Vec<Spanned<Stmt>>),
     Return(SpannedTyped<Expr>),
-    If(SpannedTyped<Expr>, Box<Spanned<Stmt>>),
+    If(SpannedTyped<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(SpannedTyped<Expr>, Box<Spanned<Stmt>>),
 }
 

@@ -84,10 +84,13 @@ fn dump_stmt(id_map: &IdMap, stmt: Spanned<Stmt>, depth: usize) {
             println!("return {}", span_to_string(&stmt.span));
             dump_expr(id_map, expr, depth + 1);
         },
-        Stmt::If(cond, body) => {
+        Stmt::If(cond, body, else_stmt) => {
             println!("if {}", span_to_string(&stmt.span));
             dump_expr(id_map, cond, depth + 1);
             dump_stmt(id_map, *body, depth + 1);
+            if let Some(else_stmt) = else_stmt {
+                dump_stmt(id_map, *else_stmt, depth + 1);
+            }
         },
         Stmt::While(cond, body) => {
             println!("while {}", span_to_string(&stmt.span));

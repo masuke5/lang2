@@ -370,12 +370,23 @@ impl Parser {
         self.next();
 
         // Parse condition expression
-        let expr = self.parse_skip(Self::parse_expr, &[Token::Lbrace /* , Token::Else */]);
+        let expr = self.parse_skip(Self::parse_expr, &[Token::Lbrace, Token::Else]);
         // Parse then-clause
         let stmt = self.expect_block()?;
 
+        // Parse else-clause
+        let else_stmt = if self.consume(&Token::Else) {
+            if self.peek().kind == Token::If {
+                Some(self.parse_skip(Self::parse_if_stmt, &[Token::Rbrace])?)
+            } else {
+                Some(self.expect_block()?)
+            }
+        } else {
+            None
+        }.map(|stmt| Box::new(stmt));
+
         let span = Span::merge(&if_token_span, &stmt.span);
-        Some(spanned(Stmt::If(expr?, Box::new(stmt)), span))
+        Some(spanned(Stmt::If(expr?, Box::new(stmt), else_stmt), span))
     }
 
     fn parse_while_stmt(&mut self) -> Option<Spanned<Stmt>> {
