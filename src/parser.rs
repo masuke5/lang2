@@ -339,6 +339,17 @@ impl Parser {
         Some(spanned(Stmt::Block(stmts), span))
     }
 
+    fn expect_block(&mut self) -> Option<Spanned<Stmt>> {
+        if self.peek().kind != Token::Lbrace {
+            error!(self, self.peek().span.clone(), "expected block");
+            return None;
+        }
+
+        let block = self.parse_block()?;
+
+        Some(block)
+    }
+
     fn parse_return(&mut self) -> Option<Spanned<Stmt>> {
         // Eat "return"
         let return_token_span = self.peek().span.clone();
@@ -361,7 +372,7 @@ impl Parser {
         // Parse condition expression
         let expr = self.parse_skip(Self::parse_expr, &[Token::Lbrace /* , Token::Else */]);
         // Parse then-clause
-        let stmt = self.parse_stmt()?; // TODO: Allow block statement or else-clause only
+        let stmt = self.expect_block()?;
 
         let span = Span::merge(&if_token_span, &stmt.span);
         Some(spanned(Stmt::If(expr?, Box::new(stmt)), span))
@@ -374,7 +385,7 @@ impl Parser {
         // Parse condition expression
         let cond = self.parse_skip(Self::parse_expr, &[Token::Lbrace]);
         // Parse body
-        let stmt = self.parse_stmt()?; // TODO: Allow block statement only
+        let stmt = self.expect_block()?;
 
         let span = Span::merge(&while_token_span, &stmt.span);
         Some(spanned(Stmt::While(cond?, Box::new(stmt)), span))
@@ -467,8 +478,7 @@ impl Parser {
             Some(Type::Int) // TODO: Void
         };
 
-        // TODO: Allow block statement only
-        let body = self.parse_stmt()?;
+        let body = self.expect_block()?;
 
         let span = Span::merge(&fn_span, &body.span);
         Some(spanned(TopLevel::Function(name?, params, return_ty?, body), span))
