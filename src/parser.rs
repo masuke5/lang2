@@ -9,10 +9,6 @@ fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
 }
 
-fn spanned_typed<T>(kind: T, span: Span) -> SpannedTyped<T> {
-    SpannedTyped::<T>::new(kind, span, Type::Invalid)
-}
-
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
         $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
@@ -115,8 +111,8 @@ impl Parser {
         res
     }
 
-    fn parse_binop<F>(&mut self, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<SpannedTyped<Expr>>
-        where F: FnMut(&mut Self) -> Option<SpannedTyped<Expr>>
+    fn parse_binop<F>(&mut self, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<Spanned<Expr>>
+        where F: FnMut(&mut Self) -> Option<Spanned<Expr>>
     {
         let mut expr = func(self)?;
 
@@ -126,7 +122,7 @@ impl Parser {
                     let rhs = func(self)?;
                     let span = Span::merge(&expr.span, &rhs.span);
 
-                    expr = spanned_typed(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
+                    expr = spanned(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
                     continue 'outer;
                 }
             }
@@ -137,7 +133,7 @@ impl Parser {
         Some(expr)
     }
 
-    fn parse_args(&mut self) -> Option<Vec<SpannedTyped<Expr>>> {
+    fn parse_args(&mut self) -> Option<Vec<Spanned<Expr>>> {
         if !self.consume(&Token::Rparen) {
             let mut args = Vec::new();
 
@@ -169,39 +165,39 @@ impl Parser {
         }
     }
 
-    fn parse_call(&mut self, name: Id, name_span: Span) -> Option<SpannedTyped<Expr>> {
+    fn parse_call(&mut self, name: Id, name_span: Span) -> Option<Spanned<Expr>> {
         let args = self.parse_args()?;
         let rparen_span = &self.prev().span;
 
-        Some(spanned_typed(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
+        Some(spanned(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
     }
 
-    fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<SpannedTyped<Expr>> {
+    fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<Spanned<Expr>> {
         self.next();
 
         if self.consume(&Token::Lparen) {
             self.parse_call(ident, ident_span)
         } else {
-            Some(spanned_typed(Expr::Variable(ident), ident_span.clone()))
+            Some(spanned(Expr::Variable(ident), ident_span.clone()))
         }
     }
 
-    fn parse_primary(&mut self) -> Option<SpannedTyped<Expr>> {
+    fn parse_primary(&mut self) -> Option<Spanned<Expr>> {
         let token = self.peek().clone();
 
         match token.kind {
             Token::Number(n) => {
                 self.next();
-                Some(spanned_typed(Expr::Literal(Literal::Number(n)), token.span))
+                Some(spanned(Expr::Literal(Literal::Number(n)), token.span))
             },
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {
                 self.next();
-                Some(spanned_typed(Expr::Literal(Literal::True), token.span))
+                Some(spanned(Expr::Literal(Literal::True), token.span))
             },
             Token::False => {
                 self.next();
-                Some(spanned_typed(Expr::Literal(Literal::False), token.span))
+                Some(spanned(Expr::Literal(Literal::False), token.span))
             },
             Token::Lparen => {
                 let lparen_span = self.peek().span.clone();
@@ -223,21 +219,21 @@ impl Parser {
         }
     }
 
-    fn parse_mul(&mut self) -> Option<SpannedTyped<Expr>> {
+    fn parse_mul(&mut self) -> Option<Spanned<Expr>> {
         self.parse_binop(Self::parse_primary, &[
             (&Token::Asterisk, &BinOp::Mul),
             (&Token::Div, &BinOp::Div),
         ])
     }
 
-    fn parse_add(&mut self) -> Option<SpannedTyped<Expr>> {
+    fn parse_add(&mut self) -> Option<Spanned<Expr>> {
         self.parse_binop(Self::parse_mul, &[
             (&Token::Add, &BinOp::Add),
             (&Token::Sub, &BinOp::Sub),
         ])
     }
 
-    fn parse_relational(&mut self) -> Option<SpannedTyped<Expr>> {
+    fn parse_relational(&mut self) -> Option<Spanned<Expr>> {
         self.parse_binop(Self::parse_add, &[
             (&Token::LessThan, &BinOp::LessThan),
             (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),
@@ -246,14 +242,14 @@ impl Parser {
         ])
     }
 
-    fn parse_equality(&mut self) -> Option<SpannedTyped<Expr>> {
+    fn parse_equality(&mut self) -> Option<Spanned<Expr>> {
         self.parse_binop(Self::parse_relational, &[
             (&Token::Equal, &BinOp::Equal),
             (&Token::NotEqual, &BinOp::NotEqual),
         ])
     }
 
-    fn parse_expr(&mut self) -> Option<SpannedTyped<Expr>> {
+    fn parse_expr(&mut self) -> Option<Spanned<Expr>> {
         self.parse_equality()
     }
 
@@ -544,9 +540,9 @@ mod tests {
             }))
         }
 
-        fn newt<T>(kind: T, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> Box<SpannedTyped<T>> {
+        fn newt<T>(kind: T, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> Box<Spanned<T>> {
             let spanned = new(kind, start_line, start_col, end_line, end_col);
-            Box::new(SpannedTyped::new(spanned.kind, spanned.span, Type::Invalid))
+            Box::new(Spanned::new(spanned.kind, spanned.span))
         }
 
         let mut id_map = IdMap::new();

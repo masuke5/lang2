@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ty::Type;
 use crate::ast::*;
 use crate::error::Error;
-use crate::span::Span;
+use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, Function, BinOp as IBinOp};
 
@@ -46,7 +46,7 @@ impl Analyzer {
         self.errors.push(Error::new(msg, span));
     }
 
-    fn walk_expr(&mut self, expr: SpannedTyped<Expr>) -> (Type, Span) {
+    fn walk_expr(&mut self, expr: Spanned<Expr>) -> (Type, Span) {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
                 let func = self.current_func_mut();

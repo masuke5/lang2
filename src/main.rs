@@ -40,7 +40,7 @@ fn dump_token(tokens: Vec<Spanned<Token>>) {
     }
 }
 
-fn dump_expr(id_map: &IdMap, expr: SpannedTyped<Expr>, depth: usize) {
+fn dump_expr(id_map: &IdMap, expr: Spanned<Expr>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 

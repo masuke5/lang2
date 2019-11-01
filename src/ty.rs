@@ -27,9 +27,3 @@ impl Type {
         }
     }
 }
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Typed<T> {
-    ty: Type,
-    kind: T,
-}

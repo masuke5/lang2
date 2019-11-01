@@ -1,23 +1,6 @@
-use crate::span::{Span, Spanned};
+use crate::span::Spanned;
 use crate::ty::Type;
 use crate::id::Id;
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct SpannedTyped<T> {
-    pub kind: T,
-    pub ty: Type,
-    pub span: Span,
-}
-
-impl<T> SpannedTyped<T> {
-    pub fn new(kind: T, span: Span, ty: Type) -> SpannedTyped<T> {
-        Self {
-            kind,
-            span,
-            ty,
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BinOp {
@@ -60,19 +43,19 @@ pub enum Literal {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Literal(Literal),
-    BinOp(BinOp, Box<SpannedTyped<Expr>>, Box<SpannedTyped<Expr>>),
+    BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
-    Call(Id, Vec<SpannedTyped<Expr>>),
+    Call(Id, Vec<Spanned<Expr>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
-    Bind(Id, SpannedTyped<Expr>),
-    Expr(SpannedTyped<Expr>),
+    Bind(Id, Spanned<Expr>),
+    Expr(Spanned<Expr>),
     Block(Vec<Spanned<Stmt>>),
-    Return(SpannedTyped<Expr>),
-    If(SpannedTyped<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
-    While(SpannedTyped<Expr>, Box<Spanned<Stmt>>),
+    Return(Spanned<Expr>),
+    If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
+    While(Spanned<Expr>, Box<Spanned<Stmt>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
