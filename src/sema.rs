@@ -222,11 +222,7 @@ impl Analyzer {
                 func.insts.push(Inst::Int(0));
 
                 // Insert body statement instruction
-                // Check if body statement is block
-                match stmt.kind {
-                    Stmt::Block(_) => self.walk_stmt(stmt.kind),
-                    _ => self.add_error("expected block statement", stmt.span)
-                };
+                self.walk_stmt(stmt.kind);
 
                 // Jump to begin
                 let func = self.current_func_mut();
