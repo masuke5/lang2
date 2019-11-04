@@ -3,6 +3,7 @@ use crate::ty::Type;
 use crate::id::{Id, IdMap};
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum BinOp {
     Add,
     Sub,
@@ -41,6 +42,7 @@ impl Function {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum Inst {
     Int(i64),
     True,
