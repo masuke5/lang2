@@ -32,39 +32,36 @@ impl Analyzer {
         }
     }
 
-    #[inline]
-    fn current_func_mut(&mut self) -> &mut Function {
-        self.functions.get_mut(&self.current_func).unwrap()
-    }
+    // #[inline]
+    // fn current_func_mut(&mut self) -> &mut Function {
+    //     self.functions.get_mut(&self.current_func).unwrap()
+    // }
 
-    #[inline]
-    fn current_func_imm(&self) -> &Function {
-        self.functions.get(&self.current_func).unwrap()
-    }
+    // #[inline]
+    // fn current_func_imm(&self) -> &Function {
+    //     self.functions.get(&self.current_func).unwrap()
+    // }
 
     fn add_error(&mut self, msg: &str, span: Span) {
         self.errors.push(Error::new(msg, span));
     }
 
-    fn walk_expr(&mut self, expr: Spanned<Expr>) -> (Type, Span) {
+    fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
-                let func = self.current_func_mut();
-                func.insts.push(Inst::Int(n));
+                insts.push(Inst::Int(n));
                 Type::Int
             }
             Expr::Literal(Literal::True) => {
-                let func = self.current_func_mut();
-                func.insts.push(Inst::True);
+                insts.push(Inst::True);
                 Type::Bool
             },
             Expr::Literal(Literal::False) => {
-                let func = self.current_func_mut();
-                func.insts.push(Inst::False);
+                insts.push(Inst::False);
                 Type::Bool
             },
             Expr::Variable(name) => {
-                let func = self.current_func_mut();
+                let func = &self.functions[&self.current_func];
                 let (loc, ty) = match func.locals.get(&name) {
                     Some(r) => r,
                     None => {
@@ -73,15 +70,13 @@ impl Analyzer {
                     },
                 };
 
-                func.insts.push(Inst::Load(*loc, 0));
+                insts.push(Inst::Load(*loc, 0));
 
                 ty.clone()
             },
             Expr::BinOp(binop, lhs, rhs) => {
-                let (lty, _) = self.walk_expr(*lhs);
-                let (rty, _) = self.walk_expr(*rhs);
-
-                let func = self.current_func_mut();
+                let (lty, _) = self.walk_expr(insts, *lhs);
+                let (rty, _) = self.walk_expr(insts, *rhs);
 
                 // Insert an instruction
                 let ibinop = match binop {
@@ -96,7 +91,7 @@ impl Analyzer {
                     BinOp::Equal => IBinOp::Equal,
                     BinOp::NotEqual => IBinOp::NotEqual,
                 };
-                func.insts.push(Inst::BinOp(ibinop));
+                insts.push(Inst::BinOp(ibinop));
 
                 // Type check
                 if lty != rty {
@@ -147,16 +142,14 @@ impl Analyzer {
 
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
-                    let (arg_ty, span) = self.walk_expr(arg);
+                    let (arg_ty, span) = self.walk_expr(insts, arg);
                     if arg_ty != *param_ty {
                         error!(self, span.clone(), "the parameter type is `{}`. but got `{}` type", param_ty, arg_ty);
                     }
                 }
 
-                let func = self.current_func_mut();
-
                 // Insert an instruction
-                func.insts.push(Inst::Call(name));
+                insts.push(Inst::Call(name));
 
                 return_ty
             },
@@ -165,12 +158,12 @@ impl Analyzer {
         (ty, expr.span)
     }
 
-    fn walk_stmt(&mut self, stmt: Stmt) {
+    fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Stmt) {
         match stmt {
-            Stmt::Expr(expr) => { self.walk_expr(expr); },
+            Stmt::Expr(expr) => { self.walk_expr(insts, expr); },
             Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
-                let (ty, span) = self.walk_expr(cond);
+                let (ty, span) = self.walk_expr(insts, cond);
                 // Check if condition expression is bool type
                 match ty {
                     Type::Bool => {},
@@ -178,38 +171,33 @@ impl Analyzer {
                 };
 
                 // Insert dummy instruction to jump to else-clause or end
-                let func = self.current_func_mut();
-                let jump_to_else = func.insts.len();
-                func.insts.push(Inst::Int(0));
+                let jump_to_else = insts.len();
+                insts.push(Inst::Int(0));
 
                 // Then-clause
-                self.walk_stmt(stmt.kind);
+                self.walk_stmt(insts, stmt.kind);
 
                 if let Some(else_stmt) = else_stmt {
                     // Insert dummy instruction to jump to end
-                    let func = self.current_func_mut();
-                    let jump_to_end = func.insts.len();
-                    func.insts.push(Inst::Int(0));
+                    let jump_to_end = insts.len();
+                    insts.push(Inst::Int(0));
 
-                    func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
+                    insts[jump_to_else] = Inst::JumpIfZero(insts.len());
 
                     // Insert else-clause instructions
-                    self.walk_stmt(else_stmt.kind);
+                    self.walk_stmt(insts, else_stmt.kind);
 
-                    let func = self.current_func_mut();
-                    func.insts[jump_to_end] = Inst::Jump(func.insts.len());
+                    insts[jump_to_end] = Inst::Jump(insts.len());
                 } else {
                     // Insert instruction to jump to end
-                    let func = self.current_func_mut();
-                    func.insts[jump_to_else] = Inst::JumpIfZero(func.insts.len());
+                    insts[jump_to_else] = Inst::JumpIfZero(insts.len());
                 }
             },
             Stmt::While(cond, stmt) => {
-                let func = self.current_func_mut();
-                let begin = func.insts.len();
+                let begin = insts.len();
 
                 // Insert condition expression instruction
-                let (ty, span) = self.walk_expr(cond);
+                let (ty, span) = self.walk_expr(insts, cond);
                 // Check if condition expression is bool type
                 match ty {
                     Type::Bool => {},
@@ -217,67 +205,69 @@ impl Analyzer {
                 };
 
                 // Insert dummy instruction to jump to end
-                let func = self.current_func_mut();
-                let jump_to_end = func.insts.len();
-                func.insts.push(Inst::Int(0));
+                let jump_to_end = insts.len();
+                insts.push(Inst::Int(0));
 
                 // Insert body statement instruction
-                self.walk_stmt(stmt.kind);
+                self.walk_stmt(insts, stmt.kind);
 
                 // Jump to begin
-                let func = self.current_func_mut();
-                func.insts.push(Inst::Jump(begin));
+                insts.push(Inst::Jump(begin));
 
                 // Insert instruction to jump to end
-                func.insts[jump_to_end] = Inst::JumpIfZero(func.insts.len());
+                insts[jump_to_end] = Inst::JumpIfZero(insts.len());
             },
             Stmt::Block(stmts) => {
                 for stmt in stmts {
-                    self.walk_stmt(stmt.kind);
+                    self.walk_stmt(insts, stmt.kind);
                 }
             },
             Stmt::Bind(name, expr) => {
-                let (ty, _) = self.walk_expr(expr);
+                let (ty, _) = self.walk_expr(insts, expr);
 
-                let func = self.current_func_mut();
+                let current_func = self.functions.get_mut(&self.current_func).unwrap();
 
-                let loc = func.stack_size;
-                func.locals.insert(name, (loc as isize, ty.clone()));
-                func.stack_size += 1;
+                let loc = current_func.stack_size;
+                current_func.locals.insert(name, (loc as isize, ty.clone()));
+                current_func.stack_size += 1;
 
-                func.insts.push(Inst::Save(loc as isize, 0));
+                insts.push(Inst::Save(loc as isize, 0));
             },
             Stmt::Return(expr) => {
                 let main_id = self.main_func_id;
-                let func = self.current_func_imm();
 
-                if func.name == main_id {
+                let (ty, span) = self.walk_expr(insts, expr);
+
+                let current_func = &self.functions[&self.current_func];
+
+                // Check if is outside function
+                if current_func.name == main_id {
+                    error!(self, span, "return statement outside function");
                     return;
                 }
 
-                let (ty, span) = self.walk_expr(expr);
-
                 // Check type
-                let return_ty = self.current_func_imm().return_ty.clone();
-                if ty != return_ty {
-                    error!(self, span, "expected `{}` type, but got `{}` type", return_ty, ty);
+                if ty != current_func.return_ty {
+                    error!(self, span, "expected `{}` type, but got `{}` type", current_func.return_ty, ty);
                 }
 
-                let func = self.current_func_mut();
-                func.insts.push(Inst::Return);
+                insts.push(Inst::Return);
             },
         }
     }
 
-    fn walk_toplevel(&mut self, toplevel: TopLevel) {
+    fn walk_toplevel(&mut self, main_insts: &mut Vec<Inst>, toplevel: TopLevel) {
         match toplevel {
             TopLevel::Stmt(stmt) => {
                 self.current_func = self.main_func_id;
-                self.walk_stmt(stmt.kind);
+                self.walk_stmt(main_insts, stmt.kind);
             },
             TopLevel::Function(name, _, _, stmt) => {
                 self.current_func = name;
-                self.walk_stmt(stmt.kind);
+
+                let mut insts = Vec::new();
+                self.walk_stmt(&mut insts, stmt.kind);
+                self.functions.get_mut(&name).unwrap().insts = insts;
             },
         }
     }
@@ -318,9 +308,12 @@ impl Analyzer {
             self.insert_function_header(&toplevel.kind);
         }
 
+        let mut main_insts = Vec::new();
         for toplevel in program.top {
-            self.walk_toplevel(toplevel.kind);
+            self.walk_toplevel(&mut main_insts, toplevel.kind);
         }
+
+        self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
 
         if self.errors.len() > 0 {
             Err(self.errors)
