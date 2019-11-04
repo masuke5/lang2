@@ -130,6 +130,7 @@ impl<'a> VM<'a> {
                 Inst::Call(name) => {
                     let func = &self.functions[name];
 
+                    self.stack.push(Value::Int(func.params.len() as i64));
                     self.stack.push(Value::Int(self.ip as i64));
                     self.stack.push(Value::Int(self.fp as i64));
                     self.insts_stack.push(insts);
@@ -141,6 +142,9 @@ impl<'a> VM<'a> {
 
                     continue;
                 },
+                Inst::Pop => {
+                    self.stack.pop().unwrap();
+                },
                 Inst::Return => {
                     let return_value: Value = pop!(self);
 
@@ -149,6 +153,11 @@ impl<'a> VM<'a> {
                     self.fp = pop!(self, i64) as usize;
                     self.ip = pop!(self, i64) as usize;
                     insts = self.insts_stack.pop().unwrap();
+
+                    let param_count = pop!(self, i64) as usize;
+                    for _ in 0..param_count {
+                        self.stack.pop().unwrap();
+                    }
 
                     self.stack.push(return_value);
                 }

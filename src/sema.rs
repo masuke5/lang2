@@ -160,7 +160,10 @@ impl Analyzer {
 
     fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Stmt) {
         match stmt {
-            Stmt::Expr(expr) => { self.walk_expr(insts, expr); },
+            Stmt::Expr(expr) => {
+                self.walk_expr(insts, expr);
+                insts.push(Inst::Pop);
+            },
             Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
                 let (ty, span) = self.walk_expr(insts, cond);
@@ -277,7 +280,7 @@ impl Analyzer {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
                 let mut func = Function::new(*name, param_types, return_ty.clone());
-                let mut loc = -2isize; // 2 is fp and ip
+                let mut loc = -3isize; // 2 is fp and ip
                 for (id, ty) in params.iter().rev() {
                     loc -= 1;
                     func.locals.insert(*id, (loc, ty.clone()));

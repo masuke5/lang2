@@ -50,6 +50,7 @@ pub enum Inst {
     BinOp(BinOp),
     Save(isize, usize),
     Call(Id),
+    Pop,
 
     Jump(usize),
     JumpIfZero(usize),
@@ -101,6 +102,7 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
             Inst::Call(name) => {
                 println!("call {}", id_map.name(&name));
             },
+            Inst::Pop => println!("pop"),
             Inst::Jump(i) => println!("jump {}", i),
             Inst::JumpIfZero(i) => println!("jump_if_zero {}", i),
             Inst::JumpIfNonZero(i) => println!("jump_if_non_zero {}", i),
