@@ -6,6 +6,7 @@ use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, Function, BinOp as IBinOp};
+use crate::stdlib::NativeFuncMap;
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
@@ -14,33 +15,27 @@ macro_rules! error {
 }
 
 #[derive(Debug)]
-pub struct Analyzer {
+pub struct Analyzer<'a> {
+    stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
     errors: Vec<Error>,
     main_func_id: Id,
     current_func: Id,
+    id_map: &'a IdMap,
 }
 
-impl Analyzer {
-    pub fn new(id_map: &mut IdMap) -> Self {
+impl<'a> Analyzer<'a> {
+    pub fn new(stdlib_funcs: &'a NativeFuncMap, id_map: &'a mut IdMap) -> Self {
         let main_id = id_map.new_id("$main");
         Self {
+            stdlib_funcs,
             functions: HashMap::new(),
             errors: Vec::new(),
             main_func_id: main_id,
             current_func: main_id, 
+            id_map,
         }
     }
-
-    // #[inline]
-    // fn current_func_mut(&mut self) -> &mut Function {
-    //     self.functions.get_mut(&self.current_func).unwrap()
-    // }
-
-    // #[inline]
-    // fn current_func_imm(&self) -> &Function {
-    //     self.functions.get(&self.current_func).unwrap()
-    // }
 
     fn add_error(&mut self, msg: &str, span: Span) {
         self.errors.push(Error::new(msg, span));
@@ -118,27 +113,34 @@ impl Analyzer {
                 }
             },
             Expr::Call(name, args) => {
-                let (return_ty, params) = {
-                    // Get the callee function
-                    let callee_func = match self.functions.get(&name) {
-                        Some(func) => func,
-                        None => {
-                            self.add_error(&format!("undefined function"), expr.span.clone());
-                            return (Type::Invalid, expr.span);
-                        },
-                    };
+                let name_str = self.id_map.name(&name);
 
-                    // Check parameter length
-                    if args.len() != callee_func.params.len() {
-                        error!(self, expr.span.clone(),
-                            "the function takes {} parameters. but got {} arguments.",
-                            callee_func.params.len(),
-                            args.len());
-                        return (callee_func.return_ty.clone(), expr.span);
-                    }
+                let (return_ty, params, inst) = match self.stdlib_funcs.get(name_str) {
+                    Some(func) => {
+                        (func.return_ty.clone(), func.params.clone(), Inst::CallNative(func.body.clone(), func.params.len()))
+                    },
+                    None => {
+                        // Get the callee function
+                        let callee_func = match self.functions.get(&name) {
+                            Some(func) => func,
+                            None => {
+                                self.add_error(&format!("undefined function"), expr.span.clone());
+                                return (Type::Invalid, expr.span);
+                            },
+                        };
 
-                    (callee_func.return_ty.clone(), callee_func.params.clone())
+                        (callee_func.return_ty.clone(), callee_func.params.clone(), Inst::Call(name))
+                    },
                 };
+
+                // Check parameter length
+                if args.len() != params.len() {
+                    error!(self, expr.span.clone(),
+                        "the function takes {} parameters. but got {} arguments",
+                        params.len(),
+                        args.len());
+                    return (return_ty, expr.span);
+                }
 
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
@@ -149,7 +151,7 @@ impl Analyzer {
                 }
 
                 // Insert an instruction
-                insts.push(Inst::Call(name));
+                insts.push(inst);
 
                 return_ty
             },

@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::fmt;
+
 use crate::ty::Type;
 use crate::id::{Id, IdMap};
+use crate::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -18,7 +21,7 @@ pub enum BinOp {
     NotEqual,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub name: Id,
     pub stack_size: usize,
@@ -26,6 +29,22 @@ pub struct Function {
     pub locals: HashMap<Id, (isize, Type)>,
     pub insts: Vec<Inst>,
     pub return_ty: Type,
+}
+
+#[derive(Clone)]
+pub struct NativeFunctionBody(pub fn(&[Value]) -> Value);
+
+impl fmt::Debug for NativeFunctionBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[funcition pointer]") 
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeFunction {
+    pub params: Vec<Type>,
+    pub return_ty: Type,
+    pub body: NativeFunctionBody,
 }
 
 impl Function {
@@ -41,7 +60,7 @@ impl Function {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum Inst {
     Int(i64),
@@ -52,6 +71,7 @@ pub enum Inst {
     BinOp(BinOp),
     Save(isize, usize),
     Call(Id),
+    CallNative(NativeFunctionBody, usize),
     Pop,
 
     Jump(usize),
@@ -103,6 +123,9 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
             },
             Inst::Call(name) => {
                 println!("call {}", id_map.name(&name));
+            },
+            Inst::CallNative(_, param_count) => {
+                println!("call_native nparam={}", param_count);
             },
             Inst::Pop => println!("pop"),
             Inst::Jump(i) => println!("jump {}", i),

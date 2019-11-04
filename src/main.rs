@@ -11,6 +11,8 @@ mod sema;
 mod id;
 mod inst;
 mod vm;
+mod value;
+mod stdlib;
 
 use std::process::exit;
 use std::fs::File;
@@ -150,7 +152,9 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
         exit(0);
     }
 
-    let analyzer = Analyzer::new(&mut id_map);
+    let stdlib_funcs = stdlib::functions();
+
+    let analyzer = Analyzer::new(&stdlib_funcs, &mut id_map);
     let functions = analyzer.analyze(program)?;
 
     if matches.is_present("dump-insts") {

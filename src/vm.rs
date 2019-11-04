@@ -1,43 +1,10 @@
 use std::collections::HashMap;
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
+use crate::value::{FromValue, Value};
 
 fn get_id(id_map: &IdMap, s: &str) -> Id {
     id_map.get(s).unwrap()
-}
-
-trait FromValue {
-    fn from_value(value: &Value) -> Self;
-}
-
-#[derive(Debug, Clone)]
-pub enum Value {
-    Int(i64),
-    Bool(bool),
-}
-
-impl FromValue for i64 {
-    fn from_value(value: &Value) -> Self {
-        match value {
-            Value::Int(n) => *n,
-            _ => panic!("expected int"),
-        }
-    }
-}
-
-impl FromValue for bool {
-    fn from_value(value: &Value) -> Self {
-        match value {
-            Value::Bool(b) => *b,
-            _ => panic!("expected bool"),
-        }
-    }
-}
-
-impl FromValue for Value {
-    fn from_value(value: &Value) -> Value {
-        value.clone()
-    }
 }
 
 macro_rules! pop {
@@ -141,6 +108,15 @@ impl<'a> VM<'a> {
                     insts = &func.insts;
 
                     continue;
+                },
+                Inst::CallNative(func, param_count) => {
+                    let start = self.stack.len() - param_count;
+                    let end = start + param_count;
+                    let return_value = func.0(&self.stack[start..end]);
+
+                    self.stack.truncate(start);
+
+                    self.stack.push(return_value);
                 },
                 Inst::Pop => {
                     self.stack.pop().unwrap();
