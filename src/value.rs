@@ -6,6 +6,7 @@ pub trait FromValue {
 pub enum Value {
     Int(i64),
     Bool(bool),
+    Unintialized,
 }
 
 impl FromValue for i64 {

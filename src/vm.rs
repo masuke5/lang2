@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::iter;
+
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
 use crate::value::{FromValue, Value};
@@ -47,7 +49,9 @@ impl<'a> VM<'a> {
             return;
         }
 
-        let mut insts = &self.functions[&get_id(&self.id_map, "$main")].insts;
+        let main_func = &self.functions[&get_id(&self.id_map, "$main")];
+        self.stack.extend(iter::repeat(Value::Unintialized).take(main_func.stack_size));
+        let mut insts = &main_func.insts;
 
         loop {
             if self.ip >= insts.len() {
@@ -105,6 +109,7 @@ impl<'a> VM<'a> {
                     self.ip = 0;
                     self.fp = self.stack.len();
 
+                    self.stack.extend(iter::repeat(Value::Unintialized).take(func.stack_size));
                     insts = &func.insts;
 
                     continue;
