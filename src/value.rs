@@ -6,6 +6,7 @@ pub trait FromValue {
 pub enum Value {
     Int(i64),
     Bool(bool),
+    String(String),
     Unintialized,
 }
 
@@ -23,6 +24,15 @@ impl FromValue for bool {
         match value {
             Value::Bool(b) => *b,
             _ => panic!("expected bool"),
+        }
+    }
+}
+
+impl FromValue for String {
+    fn from_value(value: &Value) -> Self {
+        match value {
+            Value::String(s) => s.clone(),
+            _ => panic!("expected string"),
         }
     }
 }

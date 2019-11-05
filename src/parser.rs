@@ -190,6 +190,10 @@ impl Parser {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::Number(n)), token.span))
             },
+            Token::String(s) => {
+                self.next();
+                Some(spanned(Expr::Literal(Literal::String(s)), token.span))
+            },
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {
                 self.next();

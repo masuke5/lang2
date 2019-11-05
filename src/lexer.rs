@@ -138,10 +138,40 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn lex_string(&mut self) -> Result<Token, Error> {
+        let mut s = String::new();
+        while self.peek() != '"' && self.peek() != '\0' {
+            if self.peek() == '\\' {
+                match self.read_char(){
+                    '"' => s.push('"'),
+                    '\\' => s.push('\\'),
+                    'n' => s.push('\n'),
+                    'r' => s.push('\r'),
+                    't' => s.push('\t'),
+                    ch => {
+                        return Err(self.error(&format!("unknown escape sequence '\\{}'", ch)));
+                    },
+                };
+                self.read_char();
+            } else {
+                s.push(self.peek());
+                self.read_char();
+            }
+        }
+
+        if self.peek() == '\0' {
+            Err(self.error("unexpected EOF"))
+        } else {
+            self.read_char();
+            Ok(Token::String(s))
+        }
+    }
+
     fn next_token(&mut self) -> Result<Token, Error> {
         match self.read_char() {
             c if c.is_digit(10) => Ok(self.lex_number(c)),
             c if is_identifier_char(c) => Ok(self.lex_identifier(c)),
+            '"' => self.lex_string(),
             '+' => Ok(Token::Add),
             '-' => Ok(Token::Sub),
             '*' => Ok(Token::Asterisk),

@@ -46,7 +46,11 @@ impl<'a> Analyzer<'a> {
             Expr::Literal(Literal::Number(n)) => {
                 insts.push(Inst::Int(n));
                 Type::Int
-            }
+            },
+            Expr::Literal(Literal::String(s)) => {
+                insts.push(Inst::String(s));
+                Type::String
+            },
             Expr::Literal(Literal::True) => {
                 insts.push(Inst::True);
                 Type::Bool

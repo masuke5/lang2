@@ -4,6 +4,7 @@ use crate::id::Id;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Number(i64),
+    String(String),
     Identifier(Id),
     True,
     False,
@@ -40,6 +41,7 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Token::Number(_) => write!(f, "number"),
+            Token::String(_) => write!(f, "string"),
             Token::Identifier(_) => write!(f, "identifier"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),

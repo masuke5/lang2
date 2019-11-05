@@ -4,6 +4,7 @@ use std::fmt;
 pub enum Type {
     Int,
     Bool,
+    String,
     Invalid,
 }
 
@@ -12,6 +13,7 @@ impl fmt::Display for Type {
         match self {
             Type::Int => write!(f, "int"),
             Type::Bool => write!(f, "bool"),
+            Type::String => write!(f, "string"),
             Type::Invalid => write!(f, "invalid"),
         }
     }

@@ -62,6 +62,9 @@ impl<'a> VM<'a> {
                 Inst::Int(n) => {
                     self.stack.push(Value::Int(*n));
                 },
+                Inst::String(s) => {
+                    self.stack.push(Value::String(s.clone()));
+                },
                 Inst::True => {
                     self.stack.push(Value::Bool(true));
                 },

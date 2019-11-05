@@ -36,6 +36,7 @@ impl BinOp {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(i64),
+    String(String),
     True,
     False,
 }

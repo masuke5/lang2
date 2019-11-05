@@ -48,6 +48,7 @@ fn dump_expr(id_map: &IdMap, expr: Spanned<Expr>, depth: usize) {
 
     match expr.kind {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
+        Expr::Literal(Literal::String(s)) => println!("\"{}\" {}", s, span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
         Expr::Variable(name) => println!("{} {}", id_map.name(&name), span_to_string(&expr.span)),

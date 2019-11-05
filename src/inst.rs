@@ -64,6 +64,7 @@ impl Function {
 #[allow(dead_code)]
 pub enum Inst {
     Int(i64),
+    String(String),
     True,
     False,
     Load(isize, usize),
@@ -88,6 +89,7 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
 
         match inst {
             Inst::Int(n) => println!("int {}", n),
+            Inst::String(s) => println!("string \"{}\"", s),
             Inst::True => println!("true"),
             Inst::False => println!("false"),
             Inst::Load(loc, offset) => {
