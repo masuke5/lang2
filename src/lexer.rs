@@ -145,6 +145,7 @@ impl<'a> Lexer<'a> {
         let mut s = String::new();
         while self.peek() != '"' && self.peek() != '\0' {
             if self.peek() == '\\' {
+                self.read_char();
                 match self.read_char(){
                     '"' => s.push('"'),
                     '\\' => s.push('\\'),
@@ -156,7 +157,6 @@ impl<'a> Lexer<'a> {
                         return None;
                     },
                 };
-                self.read_char();
             } else {
                 s.push(self.peek());
                 self.read_char();
