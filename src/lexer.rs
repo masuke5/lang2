@@ -12,6 +12,7 @@ fn is_identifier_char(c: char) -> bool {
 pub struct Lexer<'a> {
     raw: &'a str,
     input: Peekable<Chars<'a>>,
+    errors: Vec<Error>,
     id_map: &'a mut IdMap,
     start_line: u32,
     start_col: u32,
@@ -26,6 +27,7 @@ impl<'a> Lexer<'a> {
         Self {
             raw: s,
             input: s.chars().peekable(),
+            errors: Vec::new(),
             id_map,
             start_line: 0,
             start_col: 0,
@@ -33,6 +35,16 @@ impl<'a> Lexer<'a> {
             col: 0,
             pos: 0,
         }
+    }
+
+    fn error(&mut self, msg: &str) {
+        let error = Error::new(msg, Span {
+            start_line: self.start_line,
+            start_col: self.start_col,
+            end_line: self.line,
+            end_col: self.col,
+        });
+        self.errors.push(error);
     }
 
     fn read_char(&mut self) -> char {
@@ -67,9 +79,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn two_char(&mut self, token: Token) -> Result<Token, Error> {
+    fn two_char(&mut self, token: Token) -> Option<Token> {
         self.read_char();
-        Ok(token)
+        Some(token)
     }
 
     fn skip_whitespace(&mut self) {
@@ -81,15 +93,6 @@ impl<'a> Lexer<'a> {
 
             self.read_char();
         }
-    }
-
-    fn error(&mut self, msg: &str) -> Error {
-        Error::new(msg, Span {
-            start_line: self.start_line,
-            start_col: self.start_col,
-            end_line: self.line,
-            end_col: self.col,
-        })
     }
 
     fn lex_number(&mut self, start_char: char) -> Token {
@@ -138,7 +141,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_string(&mut self) -> Result<Token, Error> {
+    fn lex_string(&mut self) -> Option<Token> {
         let mut s = String::new();
         while self.peek() != '"' && self.peek() != '\0' {
             if self.peek() == '\\' {
@@ -149,7 +152,8 @@ impl<'a> Lexer<'a> {
                     'r' => s.push('\r'),
                     't' => s.push('\t'),
                     ch => {
-                        return Err(self.error(&format!("unknown escape sequence '\\{}'", ch)));
+                        self.error(&format!("unknown escape sequence '\\{}'", ch));
+                        return None;
                     },
                 };
                 self.read_char();
@@ -160,43 +164,46 @@ impl<'a> Lexer<'a> {
         }
 
         if self.peek() == '\0' {
-            Err(self.error("unexpected EOF"))
+            self.error("unexpected EOF");
+            return None;
         } else {
             self.read_char();
-            Ok(Token::String(s))
+            Some(Token::String(s))
         }
     }
 
-    fn next_token(&mut self) -> Result<Token, Error> {
+    fn next_token(&mut self) -> Option<Token> {
         match self.read_char() {
-            c if c.is_digit(10) => Ok(self.lex_number(c)),
-            c if is_identifier_char(c) => Ok(self.lex_identifier(c)),
+            c if c.is_digit(10) => Some(self.lex_number(c)),
+            c if is_identifier_char(c) => Some(self.lex_identifier(c)),
             '"' => self.lex_string(),
-            '+' => Ok(Token::Add),
-            '-' => Ok(Token::Sub),
-            '*' => Ok(Token::Asterisk),
-            '/' => Ok(Token::Div),
-            '(' => Ok(Token::Lparen),
-            ')' => Ok(Token::Rparen),
-            '{' => Ok(Token::Lbrace),
-            '}' => Ok(Token::Rbrace),
+            '+' => Some(Token::Add),
+            '-' => Some(Token::Sub),
+            '*' => Some(Token::Asterisk),
+            '/' => Some(Token::Div),
+            '(' => Some(Token::Lparen),
+            ')' => Some(Token::Rparen),
+            '{' => Some(Token::Lbrace),
+            '}' => Some(Token::Rbrace),
             '=' if self.next_is('=') => self.two_char(Token::Equal),
-            '=' => Ok(Token::Assign),
-            ';' => Ok(Token::Semicolon),
-            ',' => Ok(Token::Comma),
-            ':' => Ok(Token::Colon),
+            '=' => Some(Token::Assign),
+            ';' => Some(Token::Semicolon),
+            ',' => Some(Token::Comma),
+            ':' => Some(Token::Colon),
             '<' if self.next_is('=') => self.two_char(Token::LessThanOrEqual),
-            '<' => Ok(Token::LessThan),
+            '<' => Some(Token::LessThan),
             '>' if self.next_is('=') => self.two_char(Token::GreaterThanOrEqual),
-            '>' => Ok(Token::GreaterThan),
+            '>' => Some(Token::GreaterThan),
             '!' if self.next_is('=') => self.two_char(Token::NotEqual),
-            c => Err(self.error(&format!("Invalid character `{}`", c))),
+            c => {
+                self.error(&format!("Invalid character `{}`", c));
+                None
+            },
         }
     }
 
     pub fn lex(mut self) -> Result<Vec<Spanned<Token>>, Vec<Error>> {
         let mut tokens = Vec::new();
-        let mut errors = Vec::new();
 
         self.skip_whitespace();
 
@@ -204,15 +211,14 @@ impl<'a> Lexer<'a> {
             self.start_line = self.line;
             self.start_col = self.col;
 
-            match self.next_token() {
-                Ok(token) => tokens.push(Spanned::<Token>::new(token, Span {
+            if let Some(token) = self.next_token() {
+                tokens.push(Spanned::<Token>::new(token, Span {
                     start_line: self.start_line,
                     end_line: self.line,
                     start_col: self.start_col,
                     end_col: self.col,
-                })),
-                Err(err) => errors.push(err),
-            };
+                }));
+            }
 
             self.skip_whitespace();
         }
@@ -224,8 +230,8 @@ impl<'a> Lexer<'a> {
             end_col: 0,
         }));
 
-        if errors.len() > 0 {
-            Err(errors)
+        if self.errors.len() > 0 {
+            Err(self.errors)
         } else {
             Ok(tokens)
         }
