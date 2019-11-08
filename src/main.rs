@@ -121,19 +121,35 @@ fn dump_ast(id_map: &IdMap, program: Program) {
 
 fn print_errors(input: &str, errors: Vec<Error>) {
     let input: Vec<&str> = input.lines().collect();
-    // Line number string length (Example: 123 = 3, 123456 = 6)
-    let line_num_len = format!("{}", input.len()).len();
 
     for error in errors {
-        // Print the line number
-        print!("\x1b[96m{:<width$} | \x1b[0m", error.span.start_line + 1, width = line_num_len);
-        // Print the line
-        println!("{}", input[error.span.start_line as usize]);
-        // Print the error span
-        print!("\x1b[96m{} | \x1b[91m{}", " ".repeat(line_num_len), " ".repeat(error.span.start_col as usize));
-        print!("{} ", "~".repeat((error.span.end_col - error.span.start_col) as usize));
-        // Print the error message
-        println!("{}\x1b[0m", error.msg);
+        // Print the error position and message
+        let es = error.span;
+        println!("\x1b[91merror\x1b[0m:{}:{}-{}:{}: \x1b[97m{}\x1b[0m", es.start_line, es.start_col, es.end_line, es.end_col, error.msg);
+
+        // Print the lines
+        let line_count = es.end_line - es.start_line + 1;
+        for i in 0..line_count {
+            let line = (es.start_line + i) as usize;
+            let line_len = if line >= input.len() as usize { 0 } else { input[line].len() as u32 };
+            println!("{}", if line >= input.len() as usize { "" } else { input[line] });
+
+            // Print the error span
+            let (start, length) = if line_count == 1 {
+                (es.start_col, es.end_col - es.start_col)
+            } else {
+                if i == 0 {
+                    (es.start_col, line_len - es.start_col)
+                } else if i == line_count - 1 {
+                    (0, line_len - es.end_col)
+                } else {
+                    (0, line_len)
+                }
+            };
+            let (start, length) = (start as usize, length as usize);
+
+            println!("{}\x1b[91m{}\x1b[0m", " ".repeat(start), "~".repeat(length));
+        }
     }
 }
 
