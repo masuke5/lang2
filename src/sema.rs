@@ -14,6 +14,19 @@ macro_rules! error {
     };
 }
 
+macro_rules! check_type {
+    ($self:ident, $ty1:expr, $ty2:expr, $format:tt, $span:expr) => {
+        {
+            if $ty1 != $ty2 && $ty1 != Type::Invalid && $ty2 != Type::Invalid {
+                $self.errors.push(Error::new(&format!($format, expected = $ty1, actual = $ty2), $span));
+                false
+            } else {
+                true
+            }
+        }
+    };
+}
+
 #[derive(Debug)]
 pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
@@ -93,8 +106,7 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::BinOp(ibinop));
 
                 // Type check
-                if lty != rty {
-                    self.add_error(&format!("different types `{}` and `{}`", lty, rty), expr.span.clone());
+                if !check_type!(self, lty, rty, "different types `{expected}` and `{actual}`", expr.span.clone()) {
                     return (lty, expr.span);
                 }
 
@@ -149,9 +161,7 @@ impl<'a> Analyzer<'a> {
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
                     let (arg_ty, span) = self.walk_expr(insts, arg);
-                    if arg_ty != *param_ty {
-                        error!(self, span.clone(), "the parameter type is `{}`. but got `{}` type", param_ty, arg_ty);
-                    }
+                    check_type!(self, *param_ty, arg_ty, "the parameter type is `{expected}`. but got `{actual}` type", span.clone()); 
                 }
 
                 // Insert an instruction
@@ -173,11 +183,7 @@ impl<'a> Analyzer<'a> {
             Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
                 let (ty, span) = self.walk_expr(insts, cond);
-                // Check if condition expression is bool type
-                match ty {
-                    Type::Bool => {},
-                    _ => self.add_error(&format!("expected type `bool` but got type `{}`", ty), span),
-                };
+                check_type!(self, Type::Bool, ty, "expected type `{expected}` but got type `{actual}`", span);
 
                 // Insert dummy instruction to jump to else-clause or end
                 let jump_to_else = insts.len();
@@ -207,11 +213,7 @@ impl<'a> Analyzer<'a> {
 
                 // Insert condition expression instruction
                 let (ty, span) = self.walk_expr(insts, cond);
-                // Check if condition expression is bool type
-                match ty {
-                    Type::Bool => {},
-                    _ => self.add_error(&format!("expected type `bool` but got type `{}`", ty), span),
-                };
+                check_type!(self, Type::Bool, ty, "expected type `{expected}` but got type `{actual}`", span);
 
                 // Insert dummy instruction to jump to end
                 let jump_to_end = insts.len();
@@ -256,9 +258,7 @@ impl<'a> Analyzer<'a> {
                 }
 
                 // Check type
-                if ty != current_func.return_ty {
-                    error!(self, span, "expected `{}` type, but got `{}` type", current_func.return_ty, ty);
-                }
+                check_type!(self, current_func.return_ty, ty, "expected `{expected}` type, but got `{actual}` type", span);
 
                 insts.push(Inst::Return);
             },
