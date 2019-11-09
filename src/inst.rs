@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use crate::ty::Type;
@@ -26,7 +25,6 @@ pub struct Function {
     pub name: Id,
     pub stack_size: usize,
     pub params: Vec<Type>,
-    pub locals: HashMap<Id, (isize, Type)>,
     pub insts: Vec<Inst>,
     pub return_ty: Type,
 }
@@ -53,7 +51,6 @@ impl Function {
             name,
             params,
             stack_size: 0,
-            locals: HashMap::new(),
             insts: Vec::new(),
             return_ty,
         }

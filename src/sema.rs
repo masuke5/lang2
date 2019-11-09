@@ -17,11 +17,15 @@ macro_rules! error {
 macro_rules! check_type {
     ($self:ident, $ty1:expr, $ty2:expr, $format:tt, $span:expr) => {
         {
-            if $ty1 != $ty2 && $ty1 != Type::Invalid && $ty2 != Type::Invalid {
-                $self.errors.push(Error::new(&format!($format, expected = $ty1, actual = $ty2), $span));
-                false
+            if $ty1 != Type::Invalid && $ty2 != Type::Invalid {
+                if $ty1 != $ty2 {
+                    $self.errors.push(Error::new(&format!($format, expected = $ty1, actual = $ty2), $span));
+                    false
+                } else {
+                    true
+                }
             } else {
-                true
+                false
             }
         }
     };
@@ -31,6 +35,7 @@ macro_rules! check_type {
 pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
+    variables: Vec<HashMap<Id, (isize, Type)>>,
     errors: Vec<Error>,
     main_func_id: Id,
     current_func: Id,
@@ -43,6 +48,7 @@ impl<'a> Analyzer<'a> {
         Self {
             stdlib_funcs,
             functions: HashMap::new(),
+            variables: Vec::new(),
             errors: Vec::new(),
             main_func_id: main_id,
             current_func: main_id, 
@@ -52,6 +58,45 @@ impl<'a> Analyzer<'a> {
 
     fn add_error(&mut self, msg: &str, span: Span) {
         self.errors.push(Error::new(msg, span));
+    }
+
+    fn push_scope(&mut self) {
+        self.variables.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.variables.pop().unwrap();
+    }
+    
+    fn insert_params(&mut self, params: Vec<(Id, Type)>) {
+        let last_map = self.variables.last_mut().unwrap();
+        let mut loc = -3isize; // fp, ip
+        for (id, ty) in params.iter().rev() {
+            loc -= 1;
+            last_map.insert(*id, (loc, ty.clone()));
+        }
+    }
+
+    fn new_var(&mut self, id: Id, ty: Type) -> isize {
+        let last_map = self.variables.last_mut().unwrap();
+        let current_func = self.functions.get_mut(&self.current_func).unwrap();
+
+        let loc = current_func.stack_size as isize;
+        last_map.insert(id, (loc, ty.clone()));
+
+        current_func.stack_size += 1;
+
+        loc
+    }
+
+    fn find_var(&self, id: &Id) -> Option<&(isize, Type)> {
+        for variables in self.variables.iter().rev() {
+            if let Some(var) = variables.get(id) {
+                return Some(var);
+            }
+        }
+
+        None
     }
 
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {
@@ -73,8 +118,7 @@ impl<'a> Analyzer<'a> {
                 Type::Bool
             },
             Expr::Variable(name) => {
-                let func = &self.functions[&self.current_func];
-                let (loc, ty) = match func.locals.get(&name) {
+                let (loc, ty) = match self.find_var(&name) {
                     Some(r) => r,
                     None => {
                         self.add_error("undefined variable", expr.span.clone());
@@ -229,18 +273,16 @@ impl<'a> Analyzer<'a> {
                 insts[jump_to_end] = Inst::JumpIfZero(insts.len());
             },
             Stmt::Block(stmts) => {
+                self.push_scope();
                 for stmt in stmts {
                     self.walk_stmt(insts, stmt.kind);
                 }
+                self.pop_scope();
             },
             Stmt::Bind(name, expr) => {
                 let (ty, _) = self.walk_expr(insts, expr);
 
-                let current_func = self.functions.get_mut(&self.current_func).unwrap();
-
-                let loc = current_func.stack_size;
-                current_func.locals.insert(name, (loc as isize, ty.clone()));
-                current_func.stack_size += 1;
+                let loc = self.new_var(name, ty);
 
                 insts.push(Inst::Save(loc as isize, 0));
             },
@@ -271,12 +313,20 @@ impl<'a> Analyzer<'a> {
                 self.current_func = self.main_func_id;
                 self.walk_stmt(main_insts, stmt.kind);
             },
-            TopLevel::Function(name, _, _, stmt) => {
+            TopLevel::Function(name, params, _, stmt) => {
                 self.current_func = name;
 
+                self.push_scope();
+
+                // params
+                self.insert_params(params);
+
+                // body
                 let mut insts = Vec::new();
                 self.walk_stmt(&mut insts, stmt.kind);
                 self.functions.get_mut(&name).unwrap().insts = insts;
+
+                self.pop_scope();
             },
         }
     }
@@ -285,12 +335,7 @@ impl<'a> Analyzer<'a> {
         match toplevel {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
-                let mut func = Function::new(*name, param_types, return_ty.clone());
-                let mut loc = -3isize; // 2 is fp and ip
-                for (id, ty) in params.iter().rev() {
-                    loc -= 1;
-                    func.locals.insert(*id, (loc, ty.clone()));
-                }
+                let func = Function::new(*name, param_types, return_ty.clone());
 
                 self.functions.insert(*name, func);
             },
@@ -317,10 +362,14 @@ impl<'a> Analyzer<'a> {
             self.insert_function_header(&toplevel.kind);
         }
 
+        self.push_scope();
+
         let mut main_insts = Vec::new();
         for toplevel in program.top {
             self.walk_toplevel(&mut main_insts, toplevel.kind);
         }
+
+        self.pop_scope();
 
         self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
 
