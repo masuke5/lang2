@@ -194,6 +194,8 @@ impl<'a> Lexer<'a> {
             '<' => Some(Token::LessThan),
             '>' if self.next_is('=') => self.two_char(Token::GreaterThanOrEqual),
             '>' => Some(Token::GreaterThan),
+            '&' if self.next_is('&') => self.two_char(Token::And),
+            '|' if self.next_is('|') => self.two_char(Token::Or),
             '!' if self.next_is('=') => self.two_char(Token::NotEqual),
             c => {
                 self.error(&format!("Invalid character `{}`", c));

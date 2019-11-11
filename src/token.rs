@@ -35,6 +35,8 @@ pub enum Token {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    And,
+    Or,
 }
 
 impl fmt::Display for Token {
@@ -72,6 +74,8 @@ impl fmt::Display for Token {
             Token::LessThanOrEqual => write!(f, "<="),
             Token::GreaterThan => write!(f, ">"),
             Token::GreaterThanOrEqual => write!(f, ">="),
+            Token::And => write!(f, "&&"),
+            Token::Or => write!(f, "||"),
         }
     }
 }

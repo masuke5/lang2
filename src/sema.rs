@@ -5,7 +5,7 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::inst::{Inst, Function, BinOp as IBinOp};
+use crate::inst::{Inst, Function, NativeFunctionBody, BinOp as IBinOp};
 use crate::stdlib::NativeFuncMap;
 
 macro_rules! error {
@@ -99,6 +99,10 @@ impl<'a> Analyzer<'a> {
         None
     }
 
+    fn call_native(name: Id, body: NativeFunctionBody, params: usize) -> Inst {
+        Inst::CallNative(name, body, params)
+    }
+
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
@@ -146,6 +150,8 @@ impl<'a> Analyzer<'a> {
                     BinOp::GreaterThanOrEqual => IBinOp::GreaterThanOrEqual,
                     BinOp::Equal => IBinOp::Equal,
                     BinOp::NotEqual => IBinOp::NotEqual,
+                    BinOp::And => IBinOp::And,
+                    BinOp::Or => IBinOp::Or,
                 };
                 insts.push(Inst::BinOp(ibinop));
 
@@ -166,6 +172,8 @@ impl<'a> Analyzer<'a> {
                     (BinOp::LessThanOrEqual, Type::Int) => Type::Bool,
                     (BinOp::GreaterThan, Type::Int) => Type::Bool,
                     (BinOp::GreaterThanOrEqual, Type::Int) => Type::Bool,
+                    (BinOp::And, Type::Bool) => Type::Bool,
+                    (BinOp::Or, Type::Bool) => Type::Bool,
                     _ => {
                         self.add_error(&format!("`{} {} {}` is not possible", lty, binop_symbol, rty), expr.span.clone());
                         Type::Invalid
@@ -177,7 +185,7 @@ impl<'a> Analyzer<'a> {
 
                 let (return_ty, params, inst) = match self.stdlib_funcs.get(name_str) {
                     Some(func) => {
-                        (func.return_ty.clone(), func.params.clone(), Inst::CallNative(func.body.clone(), func.params.len()))
+                        (func.return_ty.clone(), func.params.clone(), Self::call_native(name, func.body.clone(), func.params.len()))
                     },
                     None => {
                         // Get the callee function

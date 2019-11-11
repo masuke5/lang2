@@ -18,6 +18,8 @@ pub enum BinOp {
     GreaterThanOrEqual,
     Equal,
     NotEqual,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone)]
@@ -69,13 +71,18 @@ pub enum Inst {
     BinOp(BinOp),
     Save(isize, usize),
     Call(Id),
-    CallNative(NativeFunctionBody, usize),
     Pop,
+
+    #[cfg(debug_assertions)]
+    CallNative(Id, NativeFunctionBody, usize),
+    #[cfg(not(debug_assertions))]
+    CallNative(NativeFunctionBody, usize),
 
     Jump(usize),
     JumpIfZero(usize),
     JumpIfNonZero(usize),
     Return,
+
 }
 
 pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
@@ -110,6 +117,8 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
                     BinOp::GreaterThanOrEqual => println!("greater_than_or_equal"),
                     BinOp::Equal => println!("equal"),
                     BinOp::NotEqual => println!("not_equal"),
+                    BinOp::And => println!("and"),
+                    BinOp::Or => println!("or"),
                 };
             },
             Inst::Save(loc, offset) => {
@@ -123,8 +132,13 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
             Inst::Call(name) => {
                 println!("call {}", id_map.name(&name));
             },
+            #[cfg(debug_assertions)]
+            Inst::CallNative(name, _, param_count) => {
+                println!("call_native {} params={}", id_map.name(&name), param_count);
+            },
+            #[cfg(not(debug_assertions))]
             Inst::CallNative(_, param_count) => {
-                println!("call_native nparam={}", param_count);
+                println!("call_native params={}", param_count);
             },
             Inst::Pop => println!("pop"),
             Inst::Jump(i) => println!("jump {}", i),

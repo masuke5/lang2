@@ -76,24 +76,41 @@ impl<'a> VM<'a> {
                     self.stack.push(value);
                 },
                 Inst::BinOp(binop) => {
-                    let rhs: i64 = pop!(self);
-                    let lhs: i64 = pop!(self);
+                    match binop {
+                        BinOp::And | BinOp::Or => {
+                            let rhs: bool = pop!(self);
+                            let lhs: bool = pop!(self);
 
-                    let result = match binop {
-                        BinOp::Add => Value::Int(lhs + rhs),
-                        BinOp::Sub => Value::Int(lhs - rhs),
-                        BinOp::Mul => Value::Int(lhs * rhs),
-                        BinOp::Div => Value::Int(lhs / rhs),
-                        BinOp::Mod => Value::Int(lhs % rhs),
-                        BinOp::LessThan => Value::Bool(lhs < rhs),
-                        BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
-                        BinOp::GreaterThan => Value::Bool(lhs > rhs),
-                        BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
-                        BinOp::Equal => Value::Bool(lhs == rhs),
-                        BinOp::NotEqual => Value::Bool(lhs != rhs),
-                    };
+                            let result = match binop {
+                                BinOp::And => Value::Bool(lhs && rhs),
+                                BinOp::Or => Value::Bool(lhs || rhs),
+                                _ => panic!(),
+                            };
 
-                    self.stack.push(result);
+                            self.stack.push(result);
+                        },
+                        binop => {
+                            let rhs: i64 = pop!(self);
+                            let lhs: i64 = pop!(self);
+
+                            let result = match binop {
+                                BinOp::Add => Value::Int(lhs + rhs),
+                                BinOp::Sub => Value::Int(lhs - rhs),
+                                BinOp::Mul => Value::Int(lhs * rhs),
+                                BinOp::Div => Value::Int(lhs / rhs),
+                                BinOp::Mod => Value::Int(lhs % rhs),
+                                BinOp::LessThan => Value::Bool(lhs < rhs),
+                                BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
+                                BinOp::GreaterThan => Value::Bool(lhs > rhs),
+                                BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
+                                BinOp::Equal => Value::Bool(lhs == rhs),
+                                BinOp::NotEqual => Value::Bool(lhs != rhs),
+                                _ => panic!(),
+                            };
+
+                            self.stack.push(result);
+                        },
+                    }
                 },
                 Inst::Save(loc, _) => {
                     let value = self.stack.pop().unwrap();
@@ -117,6 +134,17 @@ impl<'a> VM<'a> {
 
                     continue;
                 },
+                #[cfg(debug_assertions)]
+                Inst::CallNative(_, func, param_count) => {
+                    let start = self.stack.len() - param_count;
+                    let end = start + param_count;
+                    let return_value = func.0(&self.stack[start..end]);
+
+                    self.stack.truncate(start);
+
+                    self.stack.push(return_value);
+                },
+                #[cfg(not(debug_assertions))]
                 Inst::CallNative(func, param_count) => {
                     let start = self.stack.len() - param_count;
                     let end = start + param_count;

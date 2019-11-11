@@ -14,6 +14,8 @@ pub enum BinOp {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    And,
+    Or,
 }
 
 impl BinOp {
@@ -29,6 +31,8 @@ impl BinOp {
             BinOp::LessThanOrEqual => "<=",
             BinOp::GreaterThan => ">",
             BinOp::GreaterThanOrEqual => ">=",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
         }
     }
 }

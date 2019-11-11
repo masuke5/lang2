@@ -253,8 +253,20 @@ impl Parser {
         ])
     }
 
+    fn parse_and(&mut self) -> Option<Spanned<Expr>> {
+        self.parse_binop(Self::parse_equality, &[
+            (&Token::And, &BinOp::And),
+        ])
+    }
+
+    fn parse_or(&mut self) -> Option<Spanned<Expr>> {
+        self.parse_binop(Self::parse_and, &[
+            (&Token::Or, &BinOp::Or),
+        ])
+    }
+
     fn parse_expr(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_equality()
+        self.parse_or()
     }
 
     fn parse_bind_stmt(&mut self) -> Option<Spanned<Stmt>> {
