@@ -431,8 +431,9 @@ impl Parser {
         let result = match self.peek().kind {
             Token::Int => Some(Type::Int),
             Token::Bool => Some(Type::Bool),
+            Token::StringType => Some(Type::String),
             _ => {
-                error!(self, self.peek().span.clone(), "expected `int` or `bool` but got `{}`", self.peek().kind);
+                error!(self, self.peek().span.clone(), "expected `int`, `bool` or `string` but got `{}`", self.peek().kind);
                 None
             },
         };
