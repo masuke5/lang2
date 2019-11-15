@@ -66,6 +66,7 @@ pub enum Inst {
     String(String),
     True,
     False,
+    Tuple(usize),
     Load(isize, usize),
 
     BinOp(BinOp),
@@ -96,6 +97,7 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
             Inst::String(s) => println!("string \"{}\"", s),
             Inst::True => println!("true"),
             Inst::False => println!("false"),
+            Inst::Tuple(n) => println!("tuple {}", n),
             Inst::Load(loc, offset) => {
                 print!("load {}", loc);
                 if *offset > 0 {

@@ -51,6 +51,12 @@ fn dump_expr(id_map: &IdMap, expr: Spanned<Expr>, depth: usize) {
         Expr::Literal(Literal::String(s)) => println!("\"{}\" {}", s, span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
+        Expr::Tuple(exprs) => {
+            println!("tuple {}", span_to_string(&expr.span));
+            for expr in exprs {
+                dump_expr(id_map, expr, depth + 1);
+            }
+        },
         Expr::Variable(name) => println!("{} {}", id_map.name(&name), span_to_string(&expr.span)),
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
@@ -79,8 +85,9 @@ fn dump_stmt(id_map: &IdMap, stmt: Spanned<Stmt>, depth: usize) {
             dump_expr(id_map, expr, depth);
         },
         Stmt::Block(stmts) => {
+            println!("block {}", span_to_string(&stmt.span));
             for stmt in stmts {
-                dump_stmt(id_map, stmt, depth);
+                dump_stmt(id_map, stmt, depth + 1);
             }
         },
         Stmt::Return(expr) => {

@@ -182,6 +182,26 @@ impl Parser {
         }
     }
 
+    fn parse_tuple(&mut self, lparen_span: &Span, first: Spanned<Expr>) -> Option<Spanned<Expr>> {
+        let mut inner = vec![first];
+
+        while self.peek().kind != Token::Rparen && self.consume(&Token::Comma) {
+            if self.peek().kind == Token::Rparen {
+                break;
+            }
+
+            let expr = self.parse_skip(Self::parse_expr, &[Token::Comma, Token::Rparen])?;
+            inner.push(expr);
+        }
+
+        self.expect(&Token::Rparen, &[Token::Rparen])?;
+
+        let rparen_span = &self.prev().span;
+        let span = Span::merge(&lparen_span, rparen_span);
+
+        Some(spanned(Expr::Tuple(inner), span))
+    }
+
     fn parse_primary(&mut self) -> Option<Spanned<Expr>> {
         let token = self.peek().clone();
 
@@ -209,16 +229,20 @@ impl Parser {
 
                 let mut expr = self.parse_expr()?;
 
-                self.expect(&Token::Rparen, &[Token::Rparen])?;
-                let rparen_span = &self.prev().span;
+                if self.peek().kind == Token::Comma {
+                    self.parse_tuple(&lparen_span, expr)
+                } else {
+                    self.expect(&Token::Rparen, &[Token::Rparen])?;
+                    let rparen_span = &self.prev().span;
 
-                expr.span = Span::merge(&lparen_span, rparen_span);
+                    expr.span = Span::merge(&lparen_span, rparen_span);
 
-                return Some(expr);
+                    Some(expr)
+                }
             },
             _ => {
                 error!(self, token.span, "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`", self.peek().kind);
-                return None;
+                None
             }
         }
     }
@@ -432,8 +456,32 @@ impl Parser {
             Token::Int => Some(Type::Int),
             Token::Bool => Some(Type::Bool),
             Token::StringType => Some(Type::String),
+            Token::Lparen => {
+                self.next();
+
+                if self.consume(&Token::Rparen) {
+                    error!(self, self.prev().span.clone(), "tuple has to one type at least");
+                    None
+                } else {
+                    let mut inner = Vec::new();
+
+                    let ty = self.parse_skip(Self::parse_type, &[Token::Rparen])?;
+                    inner.push(ty);
+
+                    while self.consume(&Token::Comma) && !self.consume(&Token::Rparen) {
+                        if self.consume(&Token::Rparen) {
+                            break;
+                        }
+
+                        let ty = self.parse_skip(Self::parse_type, &[Token::Comma, Token::Rparen])?;
+                        inner.push(ty);
+                    }
+
+                    Some(Type::Tuple(inner))
+                }
+            },
             _ => {
-                error!(self, self.peek().span.clone(), "expected `int`, `bool` or `string` but got `{}`", self.peek().kind);
+                error!(self, self.peek().span.clone(), "expected `int`, `bool`, `string` or `(` but got `{}`", self.peek().kind);
                 None
             },
         };

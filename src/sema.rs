@@ -84,7 +84,7 @@ impl<'a> Analyzer<'a> {
         let loc = current_func.stack_size as isize;
         last_map.insert(id, (loc, ty.clone()));
 
-        current_func.stack_size += 1;
+        current_func.stack_size += ty.size();
 
         loc
     }
@@ -120,6 +120,17 @@ impl<'a> Analyzer<'a> {
             Expr::Literal(Literal::False) => {
                 insts.push(Inst::False);
                 Type::Bool
+            },
+            Expr::Tuple(exprs) => {
+                let mut types = Vec::new();
+                for expr in exprs {
+                    let (ty, _) = self.walk_expr(insts, expr);
+                    types.push(ty);
+                }
+
+                insts.push(Inst::Tuple(types.len()));
+
+                Type::Tuple(types)
             },
             Expr::Variable(name) => {
                 let (loc, ty) = match self.find_var(&name) {
@@ -290,7 +301,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Bind(name, expr) => {
                 let (ty, _) = self.walk_expr(insts, expr);
 
-                let loc = self.new_var(name, ty);
+                let loc = self.new_var(name, ty.clone());
 
                 insts.push(Inst::Save(loc as isize, 0));
             },

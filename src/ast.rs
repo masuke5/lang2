@@ -48,6 +48,7 @@ pub enum Literal {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Literal(Literal),
+    Tuple(Vec<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
     Call(Id, Vec<Spanned<Expr>>),

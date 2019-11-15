@@ -71,6 +71,17 @@ impl<'a> VM<'a> {
                 Inst::False => {
                     self.stack.push(Value::Bool(false));
                 },
+                Inst::Tuple(n) => {
+                    let mut values = Vec::with_capacity(*n);
+                    values.resize(*n, Value::Int(0));
+
+                    for i in 0..*n {
+                        let value: Value = pop!(self);
+                        values[n - i - 1] = value;
+                    }
+
+                    self.stack.push(Value::Tuple(values));
+                },
                 Inst::Load(loc, _) => {
                     let value = self.stack[(self.fp as isize + *loc) as usize].clone();
                     self.stack.push(value);
