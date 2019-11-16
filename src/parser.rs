@@ -111,23 +111,36 @@ impl Parser {
         res
     }
 
-    fn parse_binop<F>(&mut self, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<Spanned<Expr>>
+    #[inline]
+    fn parse_binop<F>(&mut self, allow_join: bool, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<Spanned<Expr>>
         where F: FnMut(&mut Self) -> Option<Spanned<Expr>>
     {
         let mut expr = func(self)?;
 
-        'outer: loop {
+        if allow_join {
+            'outer: loop {
+                for (token, binop) in rules {
+                    if self.consume(token) {
+                        let rhs = func(self)?;
+                        let span = Span::merge(&expr.span, &rhs.span);
+
+                        expr = spanned(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
+                        continue 'outer;
+                    }
+                }
+
+                break;
+            }
+        } else {
             for (token, binop) in rules {
                 if self.consume(token) {
                     let rhs = func(self)?;
                     let span = Span::merge(&expr.span, &rhs.span);
 
                     expr = spanned(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
-                    continue 'outer;
+                    break;
                 }
             }
-
-            break;
         }
 
         Some(expr)
@@ -248,21 +261,21 @@ impl Parser {
     }
 
     fn parse_mul(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(Self::parse_primary, &[
+        self.parse_binop(true, Self::parse_primary, &[
             (&Token::Asterisk, &BinOp::Mul),
             (&Token::Div, &BinOp::Div),
         ])
     }
 
     fn parse_add(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(Self::parse_mul, &[
+        self.parse_binop(true, Self::parse_mul, &[
             (&Token::Add, &BinOp::Add),
             (&Token::Sub, &BinOp::Sub),
         ])
     }
 
     fn parse_relational(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(Self::parse_add, &[
+        self.parse_binop(false, Self::parse_add, &[
             (&Token::LessThan, &BinOp::LessThan),
             (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),
             (&Token::GreaterThan, &BinOp::GreaterThan),
@@ -271,20 +284,20 @@ impl Parser {
     }
 
     fn parse_equality(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(Self::parse_relational, &[
+        self.parse_binop(false, Self::parse_relational, &[
             (&Token::Equal, &BinOp::Equal),
             (&Token::NotEqual, &BinOp::NotEqual),
         ])
     }
 
     fn parse_and(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(Self::parse_equality, &[
+        self.parse_binop(true, Self::parse_equality, &[
             (&Token::And, &BinOp::And),
         ])
     }
 
     fn parse_or(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(Self::parse_and, &[
+        self.parse_binop(true, Self::parse_and, &[
             (&Token::Or, &BinOp::Or),
         ])
     }
