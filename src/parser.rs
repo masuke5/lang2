@@ -260,8 +260,38 @@ impl Parser {
         }
     }
 
+    fn parse_field(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_primary;
+        let mut expr = parse(self)?;
+
+        loop {
+            if self.consume(&Token::Dot) {
+                match self.peek().kind {
+                    Token::Number(n) => {
+                        self.next();
+
+                        if n < 0 {
+                            error!(self, self.peek().span.clone(), "field of negative number");
+                            return None;
+                        }
+
+                        let span = Span::merge(&expr.span, &self.peek().span);
+                        expr = spanned(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
+                    },
+                    _ => {
+                        error!(self, self.peek().span.clone(), "expected `number` but got `{}`", self.peek().kind);
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        Some(expr)
+    }
+
     fn parse_mul(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(true, Self::parse_primary, &[
+        self.parse_binop(true, Self::parse_field, &[
             (&Token::Asterisk, &BinOp::Mul),
             (&Token::Div, &BinOp::Div),
         ])

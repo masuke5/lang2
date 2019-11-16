@@ -132,6 +132,28 @@ impl<'a> Analyzer<'a> {
 
                 Type::Tuple(types)
             },
+            Expr::Field(expr, field) => {
+                match field {
+                    Field::Number(i) => {
+                        let (ty, span) = self.walk_expr(insts, *expr);
+                        
+                        match ty {
+                            Type::Tuple(types) => {
+                                if let Some(ty) = types.get(i) {
+                                    ty.clone()
+                                } else {
+                                    error!(self, span, "error");
+                                    Type::Invalid
+                                }
+                            },
+                            ty => {
+                                error!(self, span, "expected type `tuple` but got type `{}`", ty);
+                                Type::Invalid
+                            },
+                        }
+                    },
+                }
+            },
             Expr::Variable(name) => {
                 let (loc, ty) = match self.find_var(&name) {
                     Some(r) => r,

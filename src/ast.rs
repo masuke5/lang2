@@ -46,9 +46,15 @@ pub enum Literal {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum Field {
+    Number(usize),
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Literal(Literal),
     Tuple(Vec<Spanned<Expr>>),
+    Field(Box<Spanned<Expr>>, Field),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
     Call(Id, Vec<Spanned<Expr>>),

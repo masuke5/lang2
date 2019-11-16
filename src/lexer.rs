@@ -18,7 +18,7 @@ pub struct Lexer<'a> {
     start_col: u32,
     line: u32,
     col: u32,
-    // For make slice for identifier
+    // To make slice for identifier
     pos: usize,
 }
 
@@ -198,6 +198,7 @@ impl<'a> Lexer<'a> {
             '&' if self.next_is('&') => self.two_char(Token::And),
             '|' if self.next_is('|') => self.two_char(Token::Or),
             '!' if self.next_is('=') => self.two_char(Token::NotEqual),
+            '.' => Some(Token::Dot),
             c => {
                 self.error(&format!("Invalid character `{}`", c));
                 None

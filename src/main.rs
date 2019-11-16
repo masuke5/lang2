@@ -57,6 +57,13 @@ fn dump_expr(id_map: &IdMap, expr: Spanned<Expr>, depth: usize) {
                 dump_expr(id_map, expr, depth + 1);
             }
         },
+        Expr::Field(expr, field) => {
+            match field {
+                Field::Number(i) => println!(".{} {}", i, span_to_string(&expr.span)),
+            };
+
+            dump_expr(id_map, *expr, depth + 1);
+        },
         Expr::Variable(name) => println!("{} {}", id_map.name(&name), span_to_string(&expr.span)),
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
