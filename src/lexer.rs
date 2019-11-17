@@ -13,7 +13,6 @@ pub struct Lexer<'a> {
     raw: &'a str,
     input: Peekable<Chars<'a>>,
     errors: Vec<Error>,
-    id_map: &'a mut IdMap,
     start_line: u32,
     start_col: u32,
     line: u32,
@@ -23,12 +22,11 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(s: &'a str, id_map: &'a mut IdMap) -> Lexer<'a> {
+    pub fn new(s: &'a str) -> Lexer<'a> {
         Self {
             raw: s,
             input: s.chars().peekable(),
             errors: Vec::new(),
-            id_map,
             start_line: 0,
             start_col: 0,
             line: 0,
@@ -136,7 +134,7 @@ impl<'a> Lexer<'a> {
             "true" => Token::True,
             "false" => Token::False,
             s => {
-                let id = self.id_map.new_id(s);
+                let id = IdMap::new_id(s);
                 Token::Identifier(id)
             }
         }
@@ -249,8 +247,7 @@ mod tests {
 
     #[test]
     fn invalid_character() {
-        let mut id_map = IdMap::new();
-        let lexer = Lexer::new("あ あ", &mut id_map);
+        let lexer = Lexer::new("あ あ");
         let errors = lexer.lex().unwrap_err();
         let expected = vec![
             Error::new("Invalid character `あ`", Span {
@@ -283,14 +280,13 @@ mod tests {
             })
         }
 
-        let mut id_map = IdMap::new();
         let lexer = Lexer::new(r#"let b = 1 + 2
 678 * (345 - 10005) /123 + abc
-"abcあいうえお\n\t""#, &mut id_map);
+"abcあいうえお\n\t""#);
         let tokens = lexer.lex().unwrap();
         let expected = vec![
             new(Token::Let,                 0,  0, 0,  3),
-            new(Token::Identifier(id_map.new_id("b")), 0,  4, 0,  5),
+            new(Token::Identifier(IdMap::new_id("b")), 0,  4, 0,  5),
             new(Token::Assign,              0,  6, 0,  7),
             new(Token::Number(1),           0,  8, 0,  9),
             new(Token::Add,                 0, 10, 0, 11),
@@ -305,7 +301,7 @@ mod tests {
             new(Token::Div,                 1, 20, 1, 21),
             new(Token::Number(123),         1, 21, 1, 24),
             new(Token::Add,                 1, 25, 1, 26),
-            new(Token::Identifier(id_map.new_id("abc")), 1, 27, 1, 30),
+            new(Token::Identifier(IdMap::new_id("abc")), 1, 27, 1, 30),
             new(Token::String(String::from("abcあいうえお\n\t")), 2, 0, 2, 14),
             new(Token::EOF,                 0, 0, 0, 0),
         ];

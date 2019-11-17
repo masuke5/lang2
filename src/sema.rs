@@ -40,13 +40,13 @@ pub struct Analyzer<'a> {
     main_func_id: Id,
     temp_var_id: Id,
     current_func: Id,
-    id_map: &'a IdMap,
 }
 
 impl<'a> Analyzer<'a> {
-    pub fn new(stdlib_funcs: &'a NativeFuncMap, id_map: &'a mut IdMap) -> Self {
-        let main_func_id = id_map.new_id("$main");
-        let temp_var_id = id_map.new_id("$temp");
+    pub fn new(stdlib_funcs: &'a NativeFuncMap) -> Self {
+        let main_func_id = IdMap::new_id("$main");
+        let temp_var_id = IdMap::new_id("$temp");
+
         Self {
             stdlib_funcs,
             functions: HashMap::new(),
@@ -55,7 +55,6 @@ impl<'a> Analyzer<'a> {
             main_func_id,
             temp_var_id,
             current_func: main_func_id, 
-            id_map,
         }
     }
 
@@ -263,9 +262,9 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Call(name, args) => {
-                let name_str = self.id_map.name(&name);
+                let name_str = IdMap::name(&name);
 
-                let (return_ty, params, inst) = match self.stdlib_funcs.get(name_str) {
+                let (return_ty, params, inst) = match self.stdlib_funcs.get(&*name_str) {
                     Some(func) => {
                         (func.return_ty.clone(), func.params.clone(), Self::call_native(name, func.body.clone(), func.params.len()))
                     },

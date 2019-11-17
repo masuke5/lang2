@@ -85,7 +85,7 @@ pub enum Inst {
 
 }
 
-pub fn dump_insts(insts: &[Inst], id_map: &IdMap) {
+pub fn dump_insts(insts: &[Inst]) {
     let index_len = format!("{}", insts.len()).len();
 
     for (i, inst) in insts.iter().enumerate() {
@@ -130,11 +130,11 @@ pub fn dump_insts(insts: &[Inst], id_map: &IdMap) {
                 }
             },
             Inst::Call(name) => {
-                println!("call {}", id_map.name(&name));
+                println!("call {}", IdMap::name(&name));
             },
             #[cfg(debug_assertions)]
             Inst::CallNative(name, _, param_count) => {
-                println!("call_native {} params={}", id_map.name(&name), param_count);
+                println!("call_native {} params={}", IdMap::name(&name), param_count);
             },
             #[cfg(not(debug_assertions))]
             Inst::CallNative(_, param_count) => {

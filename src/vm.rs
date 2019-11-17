@@ -5,10 +5,6 @@ use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
 use crate::value::{FromValue, Value};
 
-fn get_id(id_map: &IdMap, s: &str) -> Id {
-    id_map.get(s).unwrap()
-}
-
 macro_rules! pop {
     ($self:ident, $ty:ty) => {
         {
@@ -24,7 +20,6 @@ macro_rules! pop {
 #[derive(Debug)]
 pub struct VM<'a> {
     functions: HashMap<Id, Function>,
-    id_map: IdMap,
 
     ip: usize,
     fp: usize,
@@ -34,10 +29,9 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
-    pub fn new(functions: HashMap<Id, Function>, id_map: IdMap) -> Self {
+    pub fn new(functions: HashMap<Id, Function>) -> Self {
         Self {
             functions,
-            id_map,
             ip: 0,
             fp: 0,
             stack: Vec::new(),
@@ -70,11 +64,12 @@ impl<'a> VM<'a> {
     }
 
     pub fn run(&'a mut self) {
-        if !self.functions.contains_key(&get_id(&self.id_map, "$main")) {
+        let main_id = IdMap::get("$main").unwrap();
+        if !self.functions.contains_key(&main_id) {
             return;
         }
 
-        let main_func = &self.functions[&get_id(&self.id_map, "$main")];
+        let main_func = &self.functions[&main_id];
         self.stack.extend(iter::repeat(Value::Unintialized).take(main_func.stack_size));
         let mut insts = &main_func.insts;
 
