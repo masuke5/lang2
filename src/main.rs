@@ -1,5 +1,3 @@
-#![feature(bind_by_move_pattern_guards)]
-
 mod span;
 mod error;
 mod token;
@@ -151,15 +149,14 @@ fn print_errors(input: &str, errors: Vec<Error>) {
             // Print the error span
             let (start, length) = if line_count == 1 {
                 (es.start_col, es.end_col - es.start_col)
+            } else if i == 0 {
+                (es.start_col, line_len - es.start_col)
+            } else if i == line_count - 1 {
+                (0, line_len - es.end_col)
             } else {
-                if i == 0 {
-                    (es.start_col, line_len - es.start_col)
-                } else if i == line_count - 1 {
-                    (0, line_len - es.end_col)
-                } else {
-                    (0, line_len)
-                }
+                (0, line_len)
             };
+
             let (start, length) = (start as usize, length as usize);
 
             println!("{}\x1b[91m{}\x1b[0m", " ".repeat(start), "~".repeat(length));

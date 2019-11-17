@@ -166,7 +166,7 @@ impl<'a> Lexer<'a> {
 
         if self.peek() == '\0' {
             self.error("unexpected EOF");
-            return None;
+            None
         } else {
             self.read_char();
             Some(Token::String(s))
@@ -234,7 +234,7 @@ impl<'a> Lexer<'a> {
             end_col: 0,
         }));
 
-        if self.errors.len() > 0 {
+        if !self.errors.is_empty() {
             Err(self.errors)
         } else {
             Ok(tokens)

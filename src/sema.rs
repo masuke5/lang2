@@ -92,9 +92,9 @@ impl<'a> Analyzer<'a> {
         loc
     }
 
-    fn find_var(&self, id: &Id) -> Option<&(isize, Type)> {
+    fn find_var(&self, id: Id) -> Option<&(isize, Type)> {
         for variables in self.variables.iter().rev() {
-            if let Some(var) = variables.get(id) {
+            if let Some(var) = variables.get(&id) {
                 return Some(var);
             }
         }
@@ -103,12 +103,9 @@ impl<'a> Analyzer<'a> {
     }
 
     fn temp_var(&mut self) -> isize {
-        match self.find_var(&self.temp_var_id) {
+        match self.find_var(self.temp_var_id) {
             Some((loc, _)) => *loc,
-            None => {
-                let loc = self.new_var(self.temp_var_id, Type::Int);
-                loc
-            },
+            None => self.new_var(self.temp_var_id, Type::Int),
         }
     }
 
@@ -146,9 +143,10 @@ impl<'a> Analyzer<'a> {
             Expr::Field(expr, field) => {
                 match field {
                     Field::Number(i) => {
-                        let (ty, span, mut gen): (Type, Span, Box<dyn FnMut(&mut Vec<Inst>, &Vec<Type>)>) = match expr.kind {
+                        type GenFunc = Box<dyn FnMut(&mut Vec<Inst>, &Vec<Type>)>;
+                        let (ty, span, mut gen): (Type, Span, GenFunc) = match expr.kind {
                             Expr::Variable(name) => {
-                                let (loc, ty) = match self.find_var(&name) {
+                                let (loc, ty) = match self.find_var(name) {
                                     Some(r) => r,
                                     None => {
                                         self.add_error("undefined variable", expr.span.clone());
@@ -204,7 +202,7 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Variable(name) => {
-                let (loc, ty) = match self.find_var(&name) {
+                let (loc, ty) = match self.find_var(name) {
                     Some(r) => r,
                     None => {
                         self.add_error("undefined variable", expr.span.clone());
@@ -276,7 +274,7 @@ impl<'a> Analyzer<'a> {
                         let callee_func = match self.functions.get(&name) {
                             Some(func) => func,
                             None => {
-                                self.add_error(&format!("undefined function"), expr.span.clone());
+                                error!(self, expr.span.clone(), "undefined function");
                                 return (Type::Invalid, expr.span);
                             },
                         };
@@ -432,14 +430,11 @@ impl<'a> Analyzer<'a> {
     }
 
     fn insert_function_header(&mut self, toplevel: &TopLevel) {
-        match toplevel {
-            TopLevel::Function(name, params, return_ty, _) => {
-                let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
-                let func = Function::new(*name, param_types, return_ty.clone());
+        if let TopLevel::Function(name, params, return_ty, _) = toplevel {
+            let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
+            let func = Function::new(*name, param_types, return_ty.clone());
 
-                self.functions.insert(*name, func);
-            },
-            _ => {},
+            self.functions.insert(*name, func);
         }
     }
 
@@ -473,7 +468,7 @@ impl<'a> Analyzer<'a> {
 
         self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
 
-        if self.errors.len() > 0 {
+        if !self.errors.is_empty() {
             Err(self.errors)
         } else {
             Ok(self.functions)

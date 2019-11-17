@@ -104,7 +104,7 @@ impl Parser {
         where F: FnMut(&mut Self,) -> Option<T>
     {
         let res = func(self);
-        if let None = res {
+        if res.is_none() {
             self.skip_to(tokens);
         }
 
@@ -158,7 +158,7 @@ impl Parser {
 
             // Parse other arguments
             while !self.consume(&Token::Rparen) {
-                if let None = self.expect(&Token::Comma, &[Token::Rparen]) {
+                if self.expect(&Token::Comma, &[Token::Rparen]).is_none() {
                     break;
                 }
 
@@ -462,7 +462,7 @@ impl Parser {
             }
         } else {
             None
-        }.map(|stmt| Box::new(stmt));
+        }.map(Box::new);
 
         let span = Span::merge(&if_token_span, &stmt.span);
         Some(spanned(Stmt::If(expr?, Box::new(stmt), else_stmt), span))
@@ -557,7 +557,7 @@ impl Parser {
 
         // Parse other parameters
         while !self.consume(&Token::Rparen) {
-            if let None = self.expect(&Token::Comma, &[Token::Rparen]) {
+            if self.expect(&Token::Comma, &[Token::Rparen]).is_none() {
                 break;
             }
 
@@ -622,7 +622,7 @@ impl Parser {
             }
         }
 
-        if self.errors.len() > 0 {
+        if !self.errors.is_empty() {
             Err(self.errors)
         } else {
             Ok(Program { top: toplevels })

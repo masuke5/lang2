@@ -85,7 +85,7 @@ pub enum Inst {
 
 }
 
-pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
+pub fn dump_insts(insts: &[Inst], id_map: &IdMap) {
     let index_len = format!("{}", insts.len()).len();
 
     for (i, inst) in insts.iter().enumerate() {

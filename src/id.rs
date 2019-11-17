@@ -30,8 +30,7 @@ impl IdMap {
     }
 
     pub fn get(&self, id_str: &str) -> Option<Id> {
-        self.str_map.get(id_str)
-            .map(|id| *id)
+        self.str_map.get(id_str).copied()
     }
 
     pub fn name(&self, id: &Id) -> &str {

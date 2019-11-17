@@ -18,7 +18,7 @@ impl fmt::Display for Type {
             Type::Tuple(inner) => {
                 write!(f, "(")?;
 
-                if inner.len() > 0 {
+                if !inner.is_empty() {
                     let mut iter = inner.iter();
                     write!(f, "{}", iter.next().unwrap())?;   
                     for ty in iter {
