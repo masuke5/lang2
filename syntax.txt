@@ -1,72 +1,80 @@
-<primary>       ::= <number>
-                  | <id>
-                  | <id> "(" <arg-list> ")"
-                  | "true"
-                  | "false"
-                  | "(" <expr> ")"
+arg-list = expr {"," expr} [","]
 
-<arg-list>      ::= <expr>
-                  | <arg-list> "," <expr>
+primary = number
+        | id
+        | id "(" [arg-list] ")"
+        | "true"
+        | "false"
+        | "(" expr ")"
 
-<factor>        ::= <factor> "*" <primary>
-                  | <factor> "/" <primary>
-                  | <factor> "%" <primary>
+field = primary
+      | field "." number
+      | field "." identifier
 
-<term>          ::= <term> "+" <factor>
-                  | <term> "-" <factor>
+factor = factor "*" primary
+       | factor "/" primary
+       | factor "%" primary
 
-<relational>    ::= <term> "<" <term>
-                  | <term> "<=" <term>
-                  | <term> ">" <term>
-                  | <term> ">=" <term>
+term = term "+" factor
+     | term "-" factor
 
-<equality>      ::= <relational> "==" <relational>
-                  | <relational> "!=" <relational>
+relational = term "<" term
+           | term "=" term
+           | term ">" term
+           | term ">=" term
 
-<expr>          ::= <equality>
+equality = relational "==" relational
+         | relational "!=" relational
 
-<bind>          ::= "let" <id> "=" <expr> ";"
-                  | "let" <id> ":" <type> "=" <expr> ";"
+expr = equality
 
-<return>        ::= "return" <expr> ";"
 
-<block>         ::= "{" <comp-stmt> "}"
+bind = "let" id [":" type] "=" expr ";"
 
-<if>            ::= "if" <expr> <block>
-                  | "if" <expr> <block> "else" <block>
-                  | "if" <expr> <block> "else" <if>
+return = "return" [expr] ";"
 
-<while>         ::= "while" <expr> <block>
+block = "{" {stmt} "}"
 
-<for>           ::= "for" <id> "in" <expr> <block>
+if = "if" expr block ["else" (block|if)]
 
-<expr-stmt>     ::= <expr> ";"
+while = "while" expr block
 
-<stmt>          ::= <bind-stmt>
-                  | <return>
-                  | <block>
-                  | <if>
-                  | <while>
-                  | <for>
+for = "for" id "in" expr block
 
-<comp-stmt>     ::= <stmt>
-                  | <comp-stmt> <stmt>
+expr-stmt = expr ";"
 
-<func-def>      ::= "fn" <id> "(" <param-list> ")" <block>
-                  | "fn" <id> "(" <param-list> ")" ":" <type> <block>
+stmt = bind-stmt
+     | return
+     | block
+     | if
+     | while
+     | for
 
-<param-list>    ::= <param>
-                  | <param-list> "," <param>
 
-<param>         ::= <id> ":" <type>
+param = id ":" type
+param-list = param {"," param} [","]
+func-def = "fn" id "(" [param-list] ")" [":" type] block
 
-<type>          ::= <id>
 
-<toplevel>      ::= <stmt>
-                  | <func-def>
+type-list = type {"," type} [","]
+tuple-type = "(" type-list ")"
 
-<toplevel-list> ::= <toplevel>
-                  | <toplevel-list> <toplevel>
+unit-type = "(" ")"
 
-<program>       ::= <toplevel-list>
-                 
+field = identifier ":" type
+field-list = field {"," field} [","]
+struct-type = "struct" "{" [field-list] "}"
+
+type = id
+     | tuple-type
+     | unit-type
+     | struct-type
+
+type-decl = "type" identifier type
+
+
+toplevel = stmt
+         | func-def
+         | type-decl
+
+program = {toplevel}
