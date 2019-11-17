@@ -30,6 +30,7 @@ pub struct VM<'a> {
     fp: usize,
     stack: Vec<Value>,
     insts_stack: Vec<&'a Vec<Inst>>,
+    return_value: Vec<Value>,
 }
 
 impl<'a> VM<'a> {
@@ -41,7 +42,31 @@ impl<'a> VM<'a> {
             fp: 0,
             stack: Vec::new(),
             insts_stack: Vec::new(),
+            return_value: Vec::with_capacity(10),
         }
+    }
+
+    #[allow(dead_code)]
+    fn dump_stack(&self) {
+        fn dump_value(value: &Value) {
+            match value {
+                Value::Int(n) => println!("int {}", n),
+                Value::String(s) => println!("str \"{}\"", s),
+                Value::Bool(true) => println!("bool true"),
+                Value::Bool(false) => println!("bool false"),
+                Value::Unintialized => println!("uninitialized"),
+            }
+        }
+
+        println!("-------- STACK DUMP --------");
+        for (i, value) in self.stack.iter().enumerate() {
+            if i == self.fp {
+                print!("(fp) ");
+            }
+
+            dump_value(value);
+        }
+        println!("-------- END DUMP ----------");
     }
 
     pub fn run(&'a mut self) {
@@ -55,6 +80,7 @@ impl<'a> VM<'a> {
 
         loop {
             if self.ip >= insts.len() {
+                self.stack.truncate(self.fp);
                 break;
             }
 
@@ -113,7 +139,7 @@ impl<'a> VM<'a> {
                     }
                 },
                 Inst::Save(loc, offset) => {
-                    let value = self.stack.pop().unwrap();
+                    let value: Value = pop!(self);
                     let loc = (self.fp as isize + loc) as usize + offset;
 
                     self.stack[loc] = value.clone();
@@ -121,7 +147,8 @@ impl<'a> VM<'a> {
                 Inst::Call(name) => {
                     let func = &self.functions[name];
 
-                    self.stack.push(Value::Int(func.params.len() as i64));
+                    let arg_size = func.params.iter().fold(0, |acc, ty| acc + ty.size() as i64);
+                    self.stack.push(Value::Int(arg_size));
                     self.stack.push(Value::Int(self.ip as i64));
                     self.stack.push(Value::Int(self.fp as i64));
                     self.insts_stack.push(insts);
@@ -157,8 +184,12 @@ impl<'a> VM<'a> {
                 Inst::Pop => {
                     self.stack.pop().unwrap();
                 },
-                Inst::Return => {
-                    let return_value: Value = pop!(self);
+                Inst::Return(size) => {
+                    // Save a return value
+                    self.return_value.resize(*size, Value::Unintialized);
+                    for i in 0..*size {
+                        self.return_value[size - i - 1] = pop!(self);
+                    }
 
                     // Restore
                     self.stack.truncate(self.fp);
@@ -166,12 +197,13 @@ impl<'a> VM<'a> {
                     self.ip = pop!(self, i64) as usize;
                     insts = self.insts_stack.pop().unwrap();
 
-                    let param_count = pop!(self, i64) as usize;
-                    for _ in 0..param_count {
-                        self.stack.pop().unwrap();
-                    }
+                    let arg_size = pop!(self, i64) as usize;
+                    self.stack.truncate(self.stack.len() - arg_size);
 
-                    self.stack.push(return_value);
+                    // Push the return value
+                    for value in self.return_value.drain(..) {
+                        self.stack.push(value);
+                    }
                 }
                 Inst::Jump(loc) => {
                     self.ip = *loc;

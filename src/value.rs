@@ -7,7 +7,6 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     String(String),
-    Tuple(Vec<Value>),
     Unintialized,
 }
 

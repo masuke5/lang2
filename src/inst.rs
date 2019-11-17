@@ -66,7 +66,6 @@ pub enum Inst {
     String(String),
     True,
     False,
-    Tuple(usize),
     Load(isize, usize),
 
     BinOp(BinOp),
@@ -82,7 +81,7 @@ pub enum Inst {
     Jump(usize),
     JumpIfZero(usize),
     JumpIfNonZero(usize),
-    Return,
+    Return(usize),
 
 }
 
@@ -97,7 +96,6 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
             Inst::String(s) => println!("string \"{}\"", s),
             Inst::True => println!("true"),
             Inst::False => println!("false"),
-            Inst::Tuple(n) => println!("tuple {}", n),
             Inst::Load(loc, offset) => {
                 print!("load {}", loc);
                 if *offset > 0 {
@@ -146,7 +144,7 @@ pub fn dump_insts(insts: &Vec<Inst>, id_map: &IdMap) {
             Inst::Jump(i) => println!("jump {}", i),
             Inst::JumpIfZero(i) => println!("jump_if_zero {}", i),
             Inst::JumpIfNonZero(i) => println!("jump_if_non_zero {}", i),
-            Inst::Return => println!("return"),
+            Inst::Return(size) => println!("return size={}", size),
         }
     }
 }

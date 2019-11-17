@@ -38,20 +38,23 @@ pub struct Analyzer<'a> {
     variables: Vec<HashMap<Id, (isize, Type)>>,
     errors: Vec<Error>,
     main_func_id: Id,
+    temp_var_id: Id,
     current_func: Id,
     id_map: &'a IdMap,
 }
 
 impl<'a> Analyzer<'a> {
     pub fn new(stdlib_funcs: &'a NativeFuncMap, id_map: &'a mut IdMap) -> Self {
-        let main_id = id_map.new_id("$main");
+        let main_func_id = id_map.new_id("$main");
+        let temp_var_id = id_map.new_id("$temp");
         Self {
             stdlib_funcs,
             functions: HashMap::new(),
             variables: Vec::new(),
             errors: Vec::new(),
-            main_func_id: main_id,
-            current_func: main_id, 
+            main_func_id,
+            temp_var_id,
+            current_func: main_func_id, 
             id_map,
         }
     }
@@ -72,7 +75,7 @@ impl<'a> Analyzer<'a> {
         let last_map = self.variables.last_mut().unwrap();
         let mut loc = -3isize; // fp, ip
         for (id, ty) in params.iter().rev() {
-            loc -= 1;
+            loc -= ty.size() as isize;
             last_map.insert(*id, (loc, ty.clone()));
         }
     }
@@ -97,6 +100,16 @@ impl<'a> Analyzer<'a> {
         }
 
         None
+    }
+
+    fn temp_var(&mut self) -> isize {
+        match self.find_var(&self.temp_var_id) {
+            Some((loc, _)) => *loc,
+            None => {
+                let loc = self.new_var(self.temp_var_id, Type::Int);
+                loc
+            },
+        }
     }
 
     fn call_native(name: Id, body: NativeFunctionBody, params: usize) -> Inst {
@@ -128,18 +141,54 @@ impl<'a> Analyzer<'a> {
                     types.push(ty);
                 }
 
-                insts.push(Inst::Tuple(types.len()));
-
                 Type::Tuple(types)
             },
             Expr::Field(expr, field) => {
                 match field {
                     Field::Number(i) => {
-                        let (ty, span) = self.walk_expr(insts, *expr);
+                        let (ty, span, mut gen): (Type, Span, Box<dyn FnMut(&mut Vec<Inst>, &Vec<Type>)>) = match expr.kind {
+                            Expr::Variable(name) => {
+                                let (loc, ty) = match self.find_var(&name) {
+                                    Some(r) => r,
+                                    None => {
+                                        self.add_error("undefined variable", expr.span.clone());
+                                        return (Type::Invalid, expr.span);
+                                    },
+                                };
+                                let loc = *loc;
+
+                                (ty.clone(), expr.span.clone(), Box::new(move |insts, _| {
+                                    insts.push(Inst::Load(loc, i));
+                                }))
+                            },
+                            _ => {
+                                let (ty, span) = self.walk_expr(insts, *expr);
+                                let temp_var_loc = self.temp_var();
+
+                                (ty.clone(), span, Box::new(move |insts, types| {
+                                    let pop_count = types.len() - i - 1;
+                                    for _ in 0..pop_count {
+                                        insts.push(Inst::Pop);
+                                    }
+
+                                    if i > 0 {
+                                        insts.push(Inst::Save(temp_var_loc, 0));
+
+                                        let pop_count = i;
+                                        for _ in 0..pop_count {
+                                            insts.push(Inst::Pop);
+                                        }
+
+                                        insts.push(Inst::Load(temp_var_loc, 0));
+                                    }
+                                }))
+                            },
+                        };
                         
                         match ty {
                             Type::Tuple(types) => {
                                 if let Some(ty) = types.get(i) {
+                                    gen(insts, &types);
                                     ty.clone()
                                 } else {
                                     error!(self, span, "error");
@@ -163,7 +212,9 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                insts.push(Inst::Load(*loc, 0));
+                for i in 0..ty.size() {
+                    insts.push(Inst::Load(*loc, i));
+                }
 
                 ty.clone()
             },
@@ -325,7 +376,15 @@ impl<'a> Analyzer<'a> {
 
                 let loc = self.new_var(name, ty.clone());
 
-                insts.push(Inst::Save(loc as isize, 0));
+                match ty {
+                    Type::Tuple(types) => {
+                        for i in 0..types.len() {
+                            let offset = types.len() - i - 1;
+                            insts.push(Inst::Save(loc as isize, offset));
+                        }
+                    },
+                    _ => insts.push(Inst::Save(loc as isize, 0)),
+                };
             },
             Stmt::Return(expr) => {
                 let main_id = self.main_func_id;
@@ -343,7 +402,7 @@ impl<'a> Analyzer<'a> {
                 // Check type
                 check_type!(self, current_func.return_ty, ty, "expected `{expected}` type, but got `{actual}` type", span);
 
-                insts.push(Inst::Return);
+                insts.push(Inst::Return(current_func.return_ty.size()));
             },
         }
     }
