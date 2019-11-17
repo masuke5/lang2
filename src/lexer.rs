@@ -284,7 +284,9 @@ mod tests {
         }
 
         let mut id_map = IdMap::new();
-        let lexer = Lexer::new("let b = 1 + 2\n678 * (345 - 10005) /123 + abc", &mut id_map);
+        let lexer = Lexer::new(r#"let b = 1 + 2
+678 * (345 - 10005) /123 + abc
+"abcあいうえお\n\t""#, &mut id_map);
         let tokens = lexer.lex().unwrap();
         let expected = vec![
             new(Token::Let,                 0,  0, 0,  3),
@@ -304,6 +306,7 @@ mod tests {
             new(Token::Number(123),         1, 21, 1, 24),
             new(Token::Add,                 1, 25, 1, 26),
             new(Token::Identifier(id_map.new_id("abc")), 1, 27, 1, 30),
+            new(Token::String(String::from("abcあいうえお\n\t")), 2, 0, 2, 14),
             new(Token::EOF,                 0, 0, 0, 0),
         ];
 
