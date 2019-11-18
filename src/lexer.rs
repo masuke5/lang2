@@ -171,6 +171,25 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn skip_comment(&mut self) {
+        if self.peek() == '#' {
+            // multi-line comment
+            self.read_char();
+            while self.read_char() != '#' || self.read_char() != '#' {
+                if self.peek() == '\0' {
+                    break;
+                }
+            }
+        } else {
+            // single-line comment
+            while self.read_char() != '\n' {
+                if self.peek() == '\0' {
+                    break;
+                }
+            }
+        }
+    }
+
     fn next_token(&mut self) -> Option<Token> {
         match self.read_char() {
             c if c.is_digit(10) => Some(self.lex_number(c)),
@@ -197,6 +216,10 @@ impl<'a> Lexer<'a> {
             '|' if self.next_is('|') => self.two_char(Token::Or),
             '!' if self.next_is('=') => self.two_char(Token::NotEqual),
             '.' => Some(Token::Dot),
+            '#' => {
+                self.skip_comment();
+                None
+            },
             c => {
                 self.error(&format!("Invalid character `{}`", c));
                 None
