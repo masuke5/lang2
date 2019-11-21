@@ -64,14 +64,14 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
 
             dump_expr(*expr, depth + 1);
         },
-        Expr::Variable(name) => println!("{} {}", IdMap::name(&name), span_to_string(&expr.span)),
+        Expr::Variable(name) => println!("{} {}", IdMap::name(name), span_to_string(&expr.span)),
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
             dump_expr(*lhs, depth + 1);
             dump_expr(*rhs, depth + 1);
         },
         Expr::Call(name, args) => {
-            println!("{} {}", IdMap::name(&name), span_to_string(&expr.span));
+            println!("{} {}", IdMap::name(name), span_to_string(&expr.span));
             for arg in args {
                 dump_expr(arg, depth + 1);
             }
@@ -85,7 +85,7 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
 
     match stmt.kind {
         Stmt::Bind(name, expr) => {
-            println!("let {} =", IdMap::name(&name));
+            println!("let {} =", IdMap::name(name));
             dump_expr(expr, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {
@@ -126,7 +126,7 @@ fn dump_toplevel(toplevel: Spanned<TopLevel>) {
     match toplevel.kind {
         TopLevel::Stmt(stmt) => dump_stmt(stmt, 0),
         TopLevel::Function(name, params, return_ty, body) => {
-            println!("fn {}({}): {:?} {}", IdMap::name(&name), params.len(), return_ty, span_to_string(&toplevel.span));
+            println!("fn {}({}): {:?} {}", IdMap::name(name), params.len(), return_ty, span_to_string(&toplevel.span));
             dump_stmt(body, 1);
         },
     }
@@ -199,7 +199,7 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
 
     if matches.is_present("dump-insts") {
         for (name, func) in functions {
-            println!("{}:", IdMap::name(&name));
+            println!("{}:", IdMap::name(name));
             inst::dump_insts(&func.insts);
         }
         exit(0);

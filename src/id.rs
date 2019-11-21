@@ -39,8 +39,8 @@ impl IdMap {
         str_map.get(id_str).copied()
     }
 
-    pub fn name(id: &Id) -> String {
+    pub fn name(id: Id) -> String {
         let id_map = ID_MAP.read().expect("ID_MAP poisoned");
-        id_map[id].clone()
+        id_map[&id].clone()
     }
 }

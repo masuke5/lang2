@@ -134,11 +134,11 @@ pub fn dump_insts(insts: &[Inst]) {
                 }
             },
             Inst::Call(name) => {
-                println!("call {}", IdMap::name(&name));
+                println!("call {}", IdMap::name(*name));
             },
             #[cfg(debug_assertions)]
             Inst::CallNative(name, _, param_count) => {
-                println!("call_native {} params={}", IdMap::name(&name), param_count);
+                println!("call_native {} params={}", IdMap::name(*name), param_count);
             },
             #[cfg(not(debug_assertions))]
             Inst::CallNative(_, param_count) => {

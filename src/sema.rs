@@ -216,7 +216,7 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Call(name, args) => {
-                let name_str = IdMap::name(&name);
+                let name_str = IdMap::name(name);
 
                 let (return_ty, params, inst) = match self.stdlib_funcs.get(&*name_str) {
                     Some(func) => {
