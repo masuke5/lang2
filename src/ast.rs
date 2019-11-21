@@ -68,6 +68,7 @@ pub enum Stmt {
     Return(Spanned<Expr>),
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
+    Assign(Spanned<Expr>, Spanned<Expr>),
 }
 
 #[derive(Debug, PartialEq, Clone)]

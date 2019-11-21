@@ -38,7 +38,6 @@ pub struct Analyzer<'a> {
     variables: Vec<HashMap<Id, (isize, Type)>>,
     errors: Vec<Error>,
     main_func_id: Id,
-    temp_var_id: Id,
     current_func: Id,
 
     tuple_var_id: Option<Id>,
@@ -49,7 +48,6 @@ pub struct Analyzer<'a> {
 impl<'a> Analyzer<'a> {
     pub fn new(stdlib_funcs: &'a NativeFuncMap) -> Self {
         let main_func_id = IdMap::new_id("$main");
-        let temp_var_id = IdMap::new_id("$temp");
 
         Self {
             stdlib_funcs,
@@ -57,7 +55,6 @@ impl<'a> Analyzer<'a> {
             variables: Vec::new(),
             errors: Vec::new(),
             main_func_id,
-            temp_var_id,
             current_func: main_func_id, 
             tuple_var_id: None,
             next_tuple_id_num: 0,
@@ -441,6 +438,54 @@ impl<'a> Analyzer<'a> {
                         insts.push(Inst::Save(loc as isize, 0));
                     }
                 };
+            },
+            Stmt::Assign(Spanned { kind: Expr::Variable(id), span: var_span }, rhs) => {
+                let (loc, var_ty) = match self.find_var(id) {
+                    Some(t) => t.clone(),
+                    None => {
+                        error!(self, var_span, "undefined variable");
+                        return;
+                    },
+                };
+
+                self.tuple_var_id = Some(id);
+                self.should_push_tuple = false;
+                let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);
+
+                check_type!(self, var_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
+
+                match rhs_ty {
+                    Type::Tuple(_) => {},
+                    ty => {
+                        for offset in (0..ty.size()).rev() {
+                            insts.push(Inst::Save(loc, offset));
+                        }
+                    },
+                }
+            },
+            Stmt::Assign(Spanned { kind: Expr::Field(expr, Field::Number(i)), .. }, rhs) => {
+                // insert instructions and get field offset
+                let (var_ty, offset) = match self.field_offset(insts, *expr, i) {
+                    Some(t) => t,
+                    None => return,
+                };
+
+                let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);
+
+                check_type!(self, var_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
+
+                match rhs_ty {
+                    Type::Tuple(_) => {},
+                    ty => {
+                        let (loc, _) = self.find_var(self.tuple_var_id.unwrap()).unwrap();
+                        for offset in offset..offset + ty.size() {
+                            insts.push(Inst::Save(*loc, offset));
+                        }
+                    },
+                }
+            }
+            Stmt::Assign(Spanned { span, .. }, _) => {
+                error!(self, span, "unassignable expression");
             },
             Stmt::Return(expr) => {
                 let main_id = self.main_func_id;

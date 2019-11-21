@@ -206,6 +206,7 @@ impl<'a> Lexer<'a> {
             '=' => Some(Token::Equal),
             ';' => Some(Token::Semicolon),
             ',' => Some(Token::Comma),
+            ':' if self.next_is('=') => self.two_char(Token::Assign),
             ':' => Some(Token::Colon),
             '<' if self.next_is('=') => self.two_char(Token::LessThanOrEqual),
             '<' => Some(Token::LessThan),

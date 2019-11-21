@@ -88,6 +88,11 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
             println!("let {} =", IdMap::name(&name));
             dump_expr(expr, depth + 1);
         },
+        Stmt::Assign(lhs, rhs) => {
+            println!(":= {}", span_to_string(&stmt.span));
+            dump_expr(lhs, depth + 1);
+            dump_expr(rhs, depth + 1);
+        },
         Stmt::Expr(expr) => {
             dump_expr(expr, depth);
         },

@@ -364,20 +364,25 @@ impl Parser {
     }
 
     fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt>> {
-        let expr = match self.parse_expr() {
-            Some(expr) => expr,
-            None => {
-                self.skip_to(&[Token::Semicolon]);
-                return None;
-            },
-        };
+        let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
-        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
-        let semicolon_span = &self.prev().span;
+        if self.consume(&Token::Assign) {
+            let rhs = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
-        let span = Span::merge(&expr.span, semicolon_span);
+            self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+            let semicolon_span = &self.prev().span;
 
-        Some(spanned(Stmt::Expr(expr), span))
+            let span = Span::merge(&expr.span, semicolon_span);
+
+            Some(spanned(Stmt::Assign(expr, rhs), span))
+        } else {
+            self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+            let semicolon_span = &self.prev().span;
+
+            let span = Span::merge(&expr.span, semicolon_span);
+
+            Some(spanned(Stmt::Expr(expr), span))
+        }
     }
 
     // Return None if reach EOF
