@@ -144,7 +144,13 @@ fn print_errors(input: &str, errors: Vec<Error>) {
     for error in errors {
         // Print the error position and message
         let es = error.span;
-        println!("\x1b[91merror\x1b[0m:{}:{}-{}:{}: \x1b[97m{}\x1b[0m", es.start_line, es.start_col, es.end_line, es.end_col, error.msg);
+        println!(
+            "\x1b[91merror\x1b[0m:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
+            es.start_line + 1,
+            es.start_col,
+            es.end_line + 1,
+            es.end_col,
+            error.msg);
 
         // Print the lines
         let line_count = es.end_line - es.start_line + 1;

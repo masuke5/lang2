@@ -7,6 +7,7 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     String(String),
+    Record(Vec<Value>),
     Unintialized,
 }
 
@@ -42,4 +43,3 @@ impl FromValue for Value {
         value.clone()
     }
 }
-

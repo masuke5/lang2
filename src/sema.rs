@@ -39,10 +39,6 @@ pub struct Analyzer<'a> {
     errors: Vec<Error>,
     main_func_id: Id,
     current_func: Id,
-
-    tuple_var_id: Option<Id>,
-    should_push_tuple: bool,
-    next_tuple_id_num: u32,
 }
 
 impl<'a> Analyzer<'a> {
@@ -56,9 +52,6 @@ impl<'a> Analyzer<'a> {
             errors: Vec::new(),
             main_func_id,
             current_func: main_func_id, 
-            tuple_var_id: None,
-            next_tuple_id_num: 0,
-            should_push_tuple: false,
         }
     }
 
@@ -74,12 +67,6 @@ impl<'a> Analyzer<'a> {
         self.variables.pop().unwrap();
     }
 
-    fn gen_tuple_id(&mut self) -> Id {
-        let id = IdMap::new_id(&format!("$tuple{}", self.next_tuple_id_num));
-        self.next_tuple_id_num += 1;
-        id
-    }
-    
     fn insert_params(&mut self, params: Vec<(Id, Type)>) {
         let last_map = self.variables.last_mut().unwrap();
         let mut loc = -3isize; // fp, ip
@@ -115,86 +102,6 @@ impl<'a> Analyzer<'a> {
         Inst::CallNative(name, body, params)
     }
 
-    fn expect_tuple<'b>(&mut self, ty: &'b Type, span: &Span) -> Option<&'b [Type]> {
-        match ty {
-            Type::Tuple(types) => Some(types),
-            ty => {
-                error!(self, span.clone(), "expected type `tuple` but got type `{}`", ty);
-                None
-            },
-        }
-    }
-
-    fn check_tuple_index<'b>(&mut self, types: &'b [Type], i: usize, span: &Span) -> Option<&'b Type> {
-        if let Some(ty) = types.get(i) {
-            Some(ty)
-        } else {
-            error!(self, span.clone(), "error");
-            None
-        }
-    }
-
-    fn field_offset(&mut self, insts: &mut Vec<Inst>, tuple_expr: Spanned<Expr>, i: usize) -> Option<(Type, usize)> {
-        let span = tuple_expr.span.clone();
-        let (ty, offset) = match tuple_expr.kind {
-            Expr::Field(expr, Field::Number(j)) => {
-                self.field_offset(insts, *expr, j)?
-            },
-            Expr::Variable(name) => {
-                self.tuple_var_id = Some(name);
-
-                let (_, ty) = match self.find_var(name) {
-                    Some(r) => r,
-                    None => {
-                        self.add_error("undefined variable", span);
-                        return None;
-                    },
-                };
-
-                (ty.clone(), 0)
-            },
-            _ => {
-                self.should_push_tuple = false;
-                self.tuple_var_id = None;
-                let (ty, _) = self.walk_expr(insts, tuple_expr);
-                (ty, 0)
-            }
-        };
-        
-        let types = self.expect_tuple(&ty, &span)?; // TODO: Fix span
-        let ty = self.check_tuple_index(types, i, &span)?;
-
-        let next_offset = types.iter().take(i).fold(0, |acc, ty| acc + ty.size());
-        Some((ty.clone(), offset + next_offset))
-    }
-
-    // Convert tuple expression to instructions and return save count
-    fn tuple(
-        &mut self,
-        insts: &mut Vec<Inst>,
-        types: &mut Vec<Type>,
-        exprs: Vec<Spanned<Expr>>,
-    ) -> usize {
-        let mut save_count = 0;
-
-        for expr in exprs {
-            match expr.kind {
-                Expr::Tuple(exprs) => {
-                    let mut tuple_types = Vec::new();
-                    save_count += self.tuple(insts, &mut tuple_types, exprs);
-                    types.push(Type::Tuple(tuple_types));
-                },
-                _ => {
-                    let (ty, _) = self.walk_expr(insts, expr);
-                    save_count += ty.size();
-                    types.push(ty);
-                },
-            }
-        }
-
-        save_count
-    }
-
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
@@ -215,43 +122,39 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Tuple(exprs) => {
                 let mut types = Vec::new();
-                let save_count = self.tuple(insts, &mut types, exprs);
-                let ty = Type::Tuple(types);
-
-                if !self.should_push_tuple {
-                    // save to memory
-                    let id = self.tuple_var_id.unwrap_or(self.gen_tuple_id());
-                    let loc = self.find_var(id)
-                        .map(|(loc, _)| *loc)
-                        .unwrap_or_else(|| self.new_var(id, ty.clone()));
-
-                    for offset in (0..save_count).rev() {
-                        insts.push(Inst::Save(loc, offset));
-                    }
-
-                    self.tuple_var_id = Some(id);
+                for expr in exprs {
+                    let (ty, _) = self.walk_expr(insts, expr);
+                    types.push(ty);
                 }
 
-                ty
+                insts.push(Inst::Record(types.len()));
+
+                Type::Tuple(types)
             },
             Expr::Field(tuple_expr, Field::Number(i)) => {
-                // insert instructions and get field offset
-                let (ty, offset) = match self.field_offset(insts, *tuple_expr, i) {
-                    Some(t) => t,
-                    None => return (Type::Invalid, expr.span),
+                let (ty, tuple_span) = self.walk_expr(insts, *tuple_expr);
+
+                let types = match ty {
+                    Type::Tuple(types) => types,
+                    ty => {
+                        error!(self, tuple_span.clone(), "expected type `tuple` but got type `{}`", ty);
+                        return (Type::Invalid, expr.span);
+                    },
                 };
 
-                // read from memory
-                let (loc, _) = self.find_var(self.tuple_var_id.unwrap()).unwrap();
-                for offset in offset..offset + ty.size() {
-                    insts.push(Inst::Load(*loc, offset));
-                }
+                let ty = match types.get(i) {
+                    Some(ty) => ty,
+                    None => {
+                        error!(self, tuple_span.clone(), "error");
+                        return (Type::Invalid, expr.span);
+                    },
+                };
 
-                ty
+                insts.push(Inst::Field(i));
+
+                ty.clone()
             },
             Expr::Variable(name) => {
-                self.tuple_var_id = Some(name);
-
                 let (loc, ty) = match self.find_var(name) {
                     Some(r) => r,
                     None => {
@@ -344,7 +247,6 @@ impl<'a> Analyzer<'a> {
 
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
-                    self.should_push_tuple = true;
                     let (arg_ty, span) = self.walk_expr(insts, arg);
                     check_type!(self, *param_ty, arg_ty, "the parameter type is `{expected}`. but got `{actual}` type", span.clone()); 
                 }
@@ -362,7 +264,6 @@ impl<'a> Analyzer<'a> {
     fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Stmt) {
         match stmt {
             Stmt::Expr(expr) => {
-                self.should_push_tuple = true;
                 let (ty, _) = self.walk_expr(insts, expr);
 
                 let pop_count = ty.size();
@@ -426,18 +327,10 @@ impl<'a> Analyzer<'a> {
                 self.pop_scope();
             },
             Stmt::Bind(name, expr) => {
-                self.tuple_var_id = Some(name);
-                self.should_push_tuple = false;
                 let (ty, _) = self.walk_expr(insts, expr);
-                self.tuple_var_id = None;
 
-                match ty {
-                    Type::Tuple(_) => {},
-                    _ => {
-                        let loc = self.new_var(name, ty.clone());
-                        insts.push(Inst::Save(loc as isize, 0));
-                    }
-                };
+                let loc = self.new_var(name, ty.clone());
+                insts.push(Inst::Save(loc as isize, 0));
             },
             Stmt::Assign(Spanned { kind: Expr::Variable(id), span: var_span }, rhs) => {
                 let (loc, var_ty) = match self.find_var(id) {
@@ -448,8 +341,6 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                self.tuple_var_id = Some(id);
-                self.should_push_tuple = false;
                 let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);
 
                 check_type!(self, var_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
@@ -463,34 +354,13 @@ impl<'a> Analyzer<'a> {
                     },
                 }
             },
-            Stmt::Assign(Spanned { kind: Expr::Field(expr, Field::Number(i)), .. }, rhs) => {
-                // insert instructions and get field offset
-                let (var_ty, offset) = match self.field_offset(insts, *expr, i) {
-                    Some(t) => t,
-                    None => return,
-                };
-
-                let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);
-
-                check_type!(self, var_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
-
-                match rhs_ty {
-                    Type::Tuple(_) => {},
-                    ty => {
-                        let (loc, _) = self.find_var(self.tuple_var_id.unwrap()).unwrap();
-                        for offset in offset..offset + ty.size() {
-                            insts.push(Inst::Save(*loc, offset));
-                        }
-                    },
-                }
-            }
+            // TODO: Stmt::Assign(Spanned { kind: Expr::Field(expr, Field::Number(i)), .. }, rhs) => {
             Stmt::Assign(Spanned { span, .. }, _) => {
                 error!(self, span, "unassignable expression");
             },
             Stmt::Return(expr) => {
                 let main_id = self.main_func_id;
 
-                self.should_push_tuple = true;
                 let (ty, span) = self.walk_expr(insts, expr);
 
                 let current_func = &self.functions[&self.current_func];

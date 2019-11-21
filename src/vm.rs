@@ -42,12 +42,18 @@ impl<'a> VM<'a> {
 
     #[allow(dead_code)]
     fn dump_stack(&self) {
-        fn dump_value(value: &Value) {
+        fn dump_value(value: &Value, depth: usize) {
+            print!("{}", "  ".repeat(depth));
             match value {
                 Value::Int(n) => println!("int {}", n),
                 Value::String(s) => println!("str \"{}\"", s),
                 Value::Bool(true) => println!("bool true"),
                 Value::Bool(false) => println!("bool false"),
+                Value::Record(values) => {
+                    for value in values {
+                        dump_value(value, depth + 1);
+                    }
+                },
                 Value::Unintialized => println!("uninitialized"),
             }
         }
@@ -58,7 +64,7 @@ impl<'a> VM<'a> {
                 print!("(fp) ");
             }
 
-            dump_value(value);
+            dump_value(value, 0);
         }
         println!("-------- END DUMP ----------");
     }
@@ -97,6 +103,25 @@ impl<'a> VM<'a> {
                 Inst::Load(loc, offset) => {
                     let value = self.stack[(self.fp as isize + *loc) as usize + offset].clone();
                     self.stack.push(value);
+                },
+                Inst::Record(size) => {
+                    let mut values = Vec::with_capacity(*size);
+                    values.resize(*size, Value::Unintialized);
+
+                    for i in (0..*size).rev() {
+                        let v: Value = pop!(self);
+                        values[i] = v;
+                    }
+
+                    self.stack.push(Value::Record(values));
+                },
+                Inst::Field(i) => {
+                    let values = match self.stack.pop().unwrap() {
+                        Value::Record(values) => values,
+                        _ => panic!("record expected"),
+                    };
+
+                    self.stack.push(values[*i].clone());
                 },
                 Inst::BinOp(binop) => {
                     match binop {

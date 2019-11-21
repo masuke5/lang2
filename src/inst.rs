@@ -67,6 +67,8 @@ pub enum Inst {
     True,
     False,
     Load(isize, usize),
+    Record(usize),
+    Field(usize),
 
     BinOp(BinOp),
     Save(isize, usize),
@@ -104,6 +106,8 @@ pub fn dump_insts(insts: &[Inst]) {
                     println!();
                 }
             },
+            Inst::Record(size) => println!("record size={}", size),
+            Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
                 match binop {
                     BinOp::Add => println!("add"),
