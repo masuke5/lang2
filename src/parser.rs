@@ -344,7 +344,7 @@ impl Parser {
         // Bind name
         let name = self.expect_identifier(&[Token::Semicolon])?;
 
-        self.expect(&Token::Assign, &[Token::Semicolon])?;
+        self.expect(&Token::Equal, &[Token::Semicolon])?;
 
         // Initial expression
         let expr = match self.parse_expr() {
