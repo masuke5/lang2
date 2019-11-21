@@ -75,6 +75,8 @@ impl<'a> VM<'a> {
 
         loop {
             if self.ip >= insts.len() {
+                assert!(self.insts_stack.is_empty());
+                assert_eq!(self.stack.len(), main_func.stack_size);
                 self.stack.truncate(self.fp);
                 break;
             }
