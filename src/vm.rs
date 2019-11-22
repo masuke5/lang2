@@ -8,12 +8,12 @@ use crate::value::{FromValue, Value};
 macro_rules! pop {
     ($self:ident, $ty:ty) => {
         {
-            let v: $ty = FromValue::from_value(&$self.stack.pop().unwrap());
+            let v: $ty = FromValue::from_value($self.stack.pop().unwrap());
             v
         }
     };
     ($self:ident) => {
-        FromValue::from_value(&$self.stack.pop().unwrap())
+        FromValue::from_value($self.stack.pop().unwrap())
     };
 }
 
@@ -187,7 +187,7 @@ impl<'a> VM<'a> {
                 Inst::CallNative(_, func, param_count) => {
                     let start = self.stack.len() - param_count;
                     let end = start + param_count;
-                    let return_value = func.0(&self.stack[start..end]);
+                    let return_value = func.0(self.stack.drain(start..end));
 
                     self.stack.truncate(start);
 

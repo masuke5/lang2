@@ -1,4 +1,5 @@
 use std::fmt;
+use std::vec;
 
 use crate::ty::Type;
 use crate::id::{Id, IdMap};
@@ -32,7 +33,7 @@ pub struct Function {
 }
 
 #[derive(Clone)]
-pub struct NativeFunctionBody(pub fn(&[Value]) -> Value);
+pub struct NativeFunctionBody(pub fn(vec::Drain<Value>) -> Value);
 
 impl fmt::Debug for NativeFunctionBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

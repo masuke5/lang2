@@ -1,5 +1,6 @@
 pub trait FromValue {
-    fn from_value(value: &Value) -> Self;
+    fn from_value_ref(value: &Value) -> &Self;
+    fn from_value(value: Value) -> Self;
 }
 
 #[derive(Debug, Clone)]
@@ -11,35 +12,40 @@ pub enum Value {
     Unintialized,
 }
 
-impl FromValue for i64 {
-    fn from_value(value: &Value) -> Self {
-        match value {
-            Value::Int(n) => *n,
-            _ => panic!("expected int"),
+macro_rules! impl_from_value {
+    ($ty:ty, $($pat:pat => $expr:expr),* $(,)*) => {
+        impl FromValue for $ty {
+            #[allow(unreachable_patterns)]
+            fn from_value_ref(value: &Value) -> &Self {
+                match value {
+                    $($pat => $expr,)*
+                    _ => panic!(),
+                }
+            }
+
+            #[allow(unreachable_patterns)]
+            fn from_value(value: Value) -> Self {
+                match value {
+                    $($pat => $expr,)*
+                    _ => panic!(),
+                }
+            }
         }
     }
 }
 
-impl FromValue for bool {
-    fn from_value(value: &Value) -> Self {
-        match value {
-            Value::Bool(b) => *b,
-            _ => panic!("expected bool"),
-        }
-    }
+impl_from_value! {i64,
+    Value::Int(n) => n,
 }
 
-impl FromValue for String {
-    fn from_value(value: &Value) -> Self {
-        match value {
-            Value::String(s) => s.clone(),
-            _ => panic!("expected string"),
-        }
-    }
+impl_from_value! {bool,
+    Value::Bool(b) => b,
 }
 
-impl FromValue for Value {
-    fn from_value(value: &Value) -> Value {
-        value.clone()
-    }
+impl_from_value! {String,
+    Value::String(s) => s,
+}
+
+impl_from_value! {Value,
+    value => value,
 }
