@@ -172,7 +172,7 @@ fn print_errors(input: &str, errors: Vec<Error>) {
 
             let (start, length) = (start as usize, length as usize);
 
-            println!("{}\x1b[91m{}\x1b[0m", " ".repeat(start), "~".repeat(length));
+            println!("{}\x1b[91m{}\x1b[0m", " ".repeat(start), "^".repeat(length));
         }
     }
 }
