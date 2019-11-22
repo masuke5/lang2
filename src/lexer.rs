@@ -94,11 +94,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_number(&mut self, start_char: char) -> Token {
-        let mut n = start_char.to_digit(10).unwrap() as i64;
+        let mut n = i64::from(start_char.to_digit(10).unwrap());
         loop {
             match self.peek() {
                 c if c.is_digit(10) => {
-                    n = n * 10 + c.to_digit(10).unwrap() as i64;
+                    n = n * 10 + i64::from(c.to_digit(10).unwrap());
                     self.read_char();
                 },
                 _ => {
