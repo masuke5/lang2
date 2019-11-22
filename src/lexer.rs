@@ -3,13 +3,14 @@ use std::iter::Peekable;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::token::*;
-use crate::id::IdMap;
+use crate::id::{Id, IdMap};
 
 fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
 pub struct Lexer<'a> {
+    file: Id,
     raw: &'a str,
     input: Peekable<Chars<'a>>,
     errors: Vec<Error>,
@@ -22,8 +23,9 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(s: &'a str) -> Lexer<'a> {
+    pub fn new(s: &'a str, file: Id) -> Lexer<'a> {
         Self {
+            file,
             raw: s,
             input: s.chars().peekable(),
             errors: Vec::new(),
@@ -37,6 +39,7 @@ impl<'a> Lexer<'a> {
 
     fn error(&mut self, msg: &str) {
         let error = Error::new(msg, Span {
+            file: self.file,
             start_line: self.start_line,
             start_col: self.start_col,
             end_line: self.line,
@@ -238,6 +241,7 @@ impl<'a> Lexer<'a> {
 
             if let Some(token) = self.next_token() {
                 tokens.push(Spanned::<Token>::new(token, Span {
+                    file: self.file,
                     start_line: self.start_line,
                     end_line: self.line,
                     start_col: self.start_col,
@@ -249,6 +253,7 @@ impl<'a> Lexer<'a> {
         }
 
         tokens.push(Spanned::<Token>::new(Token::EOF, Span {
+            file: self.file,
             start_line: 0,
             end_line: 0,
             start_col: 0,
@@ -270,16 +275,19 @@ mod tests {
 
     #[test]
     fn invalid_character() {
-        let lexer = Lexer::new("あ あ");
+        let file = IdMap::new_id("test.lang2");
+        let lexer = Lexer::new("あ あ", file);
         let errors = lexer.lex().unwrap_err();
         let expected = vec![
             Error::new("Invalid character `あ`", Span {
+                file,
                 start_line: 0,
                 start_col: 0,
                 end_line: 0,
                 end_col: 1,
             }),
             Error::new("Invalid character `あ`", Span {
+                file,
                 start_line: 0,
                 start_col: 2,
                 end_line: 0,
@@ -296,6 +304,7 @@ mod tests {
     fn lex() {
         fn new(kind: Token, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> Spanned<Token> {
             Spanned::<Token>::new(kind, Span {
+                file: IdMap::new_id("test.lang2"),
                 start_line,
                 start_col,
                 end_line,
@@ -305,7 +314,7 @@ mod tests {
 
         let lexer = Lexer::new(r#"let b = 1 + 2
 678 * (345 - 10005) /123 + abc
-"abcあいうえお\n\t""#);
+"abcあいうえお\n\t""#, IdMap::new_id("test.lang2"));
         let tokens = lexer.lex().unwrap();
         let expected = vec![
             new(Token::Let,                 0,  0, 0,  3),

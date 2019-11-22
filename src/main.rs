@@ -25,9 +25,8 @@ use token::Token;
 use error::Error;
 use parser::Parser;
 use ast::*;
-// use executor::Executor;
 use sema::Analyzer;
-use id::IdMap;
+use id::{Id, IdMap};
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
@@ -145,7 +144,8 @@ fn print_errors(input: &str, errors: Vec<Error>) {
         // Print the error position and message
         let es = error.span;
         println!(
-            "\x1b[91merror\x1b[0m:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
+            "\x1b[91merror\x1b[0m: {}:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
+            IdMap::name(es.file),
             es.start_line + 1,
             es.start_col,
             es.end_line + 1,
@@ -177,8 +177,8 @@ fn print_errors(input: &str, errors: Vec<Error>) {
     }
 }
 
-fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
-    let lexer = Lexer::new(input);
+fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>> {
+    let lexer = Lexer::new(input, file);
     let tokens = lexer.lex()?;
     if matches.is_present("dump-token") {
         dump_token(tokens);
@@ -211,15 +211,17 @@ fn execute(matches: &ArgMatches, input: &str) -> Result<(), Vec<Error>> {
     Ok(())
 }
 
-fn get_input<'a>(matches: &'a ArgMatches) -> Result<Cow<'a, str>, String> {
+fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>), String> {
     if let Some(filepath) = matches.value_of("file") {
         let mut file = File::open(filepath).map_err(|err| format!("{}", err))?;
         let mut input = String::new();
         file.read_to_string(&mut input).map_err(|err| format!("{}", err))?;
 
-        Ok(input.into())
+        let filepath = IdMap::new_id(&filepath);
+
+        Ok((filepath, input.into()))
     } else if let Some(input) = matches.value_of("cmd") {
-        Ok(input.into())
+        Ok((IdMap::new_id("cmd"), input.into()))
     } else {
         Err(String::from("Not specified file or cmd"))
     }
@@ -249,15 +251,15 @@ fn main() {
              .help("Dumps instructions"))
         .get_matches();
 
-    let input = match get_input(&matches) {
-        Ok(input) => input,
+    let (file, input) = match get_input(&matches) {
+        Ok(t) => t,
         Err(err) => {
             eprintln!("Unable to load input: {}", err);
             exit(1);
         },
     };
 
-    if let Err(errors) = execute(&matches, &input) {
+    if let Err(errors) = execute(&matches, &input, file) {
         print_errors(&input, errors);
         exit(1);
     }

@@ -1,5 +1,8 @@
+use crate::id::Id;
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Span {
+    pub file: Id,
     pub start_line: u32,
     pub start_col: u32,
     pub end_line: u32,
@@ -9,6 +12,7 @@ pub struct Span {
 impl Span {
     pub fn merge(left: &Span, right: &Span) -> Span {
         Span {
+            file: left.file,
             start_line: left.start_line,
             start_col: left.start_col,
             end_line: right.end_line,
