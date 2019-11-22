@@ -275,7 +275,7 @@ impl Parser {
                             return None;
                         }
 
-                        let span = Span::merge(&expr.span, &self.peek().span);
+                        let span = Span::merge(&expr.span, &self.prev().span);
                         expr = spanned(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
                     },
                     _ => {
@@ -364,7 +364,7 @@ impl Parser {
     }
 
     fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt>> {
-        let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
+        let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon, Token::Assign])?;
 
         if self.consume(&Token::Assign) {
             let rhs = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
