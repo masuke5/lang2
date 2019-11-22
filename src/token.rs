@@ -39,6 +39,7 @@ pub enum Token {
     Or,
     Dot,
     Assign,
+    Ampersand,
 }
 
 impl fmt::Display for Token {
@@ -80,6 +81,7 @@ impl fmt::Display for Token {
             Token::Or => write!(f, "||"),
             Token::Dot => write!(f, "."),
             Token::Assign => write!(f, ":="),
+            Token::Ampersand => write!(f, "&"),
         }
     }
 }

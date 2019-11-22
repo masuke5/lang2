@@ -58,6 +58,8 @@ pub enum Expr {
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
     Call(Id, Vec<Spanned<Expr>>),
+    Dereference(Box<Spanned<Expr>>),
+    Address(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]

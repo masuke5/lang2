@@ -290,8 +290,32 @@ impl Parser {
         Some(expr)
     }
 
+    fn parse_unary(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_field;
+
+        match self.peek().kind {
+            Token::Ampersand => {
+                let ampersand_span = self.peek().span.clone();
+                self.next();
+
+                let expr = parse(self)?;
+                let span = Span::merge(&ampersand_span, &expr.span);
+                Some(spanned(Expr::Address(Box::new(expr)), span))
+            },
+            Token::Asterisk => {
+                let asterisk_span = self.peek().span.clone();
+                self.next();
+
+                let expr = parse(self)?;
+                let span = Span::merge(&asterisk_span, &expr.span);
+                Some(spanned(Expr::Dereference(Box::new(expr)), span))
+            },
+            _ => parse(self),
+        }
+    }
+
     fn parse_mul(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(true, Self::parse_field, &[
+        self.parse_binop(true, Self::parse_unary, &[
             (&Token::Asterisk, &BinOp::Mul),
             (&Token::Div, &BinOp::Div),
         ])
@@ -504,6 +528,10 @@ impl Parser {
             Token::Int => Some(Type::Int),
             Token::Bool => Some(Type::Bool),
             Token::StringType => Some(Type::String),
+            Token::Asterisk => {
+                let ty = self.parse_type()?;
+                Some(Type::Pointer(Box::new(ty)))
+            },
             Token::Lparen => {
                 self.next();
 

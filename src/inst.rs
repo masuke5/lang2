@@ -66,8 +66,9 @@ pub enum Inst {
     String(String),
     True,
     False,
-    Load(isize, usize),
     Record(usize),
+
+    Load(isize, usize),
     Field(usize),
 
     BinOp(BinOp),

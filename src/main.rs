@@ -75,6 +75,14 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
                 dump_expr(arg, depth + 1);
             }
         },
+        Expr::Address(expr) => {
+            println!("& {}", span_to_string(&expr.span));
+            dump_expr(*expr, depth + 1);
+        },
+        Expr::Dereference(expr) => {
+            println!("* {}", span_to_string(&expr.span));
+            dump_expr(*expr, depth + 1);
+        },
     }
 }
 

@@ -256,6 +256,12 @@ impl<'a> Analyzer<'a> {
 
                 return_ty
             },
+            Expr::Address(_) => {
+                unimplemented!();
+            },
+            Expr::Dereference(_) => {
+                unimplemented!();
+            },
         };
 
         (ty, expr.span)
