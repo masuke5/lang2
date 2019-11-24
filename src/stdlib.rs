@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::vec::Drain;
 
 use crate::ty::Type;
 use crate::inst::{NativeFunction, NativeFunctionBody as FuncBody};
@@ -7,28 +6,28 @@ use crate::value::{Value, FromValue};
 
 pub type NativeFuncMap = HashMap<&'static str, NativeFunction>;
 
-fn param<T: FromValue>(args: &mut Drain<Value>) -> T {
-    FromValue::from_value(args.next().unwrap())
+fn param<T: FromValue>(arg: &Value) -> T {
+    FromValue::from_value(arg.clone())
 }
 
-fn printnln(mut args: Drain<Value>) -> Value {
-    let n: i64 = param(&mut args);
+fn printnln(args: &[Value]) -> Value {
+    let n: i64 = param(&args[0]);
 
     println!("{}", n);
 
     Value::Int(0)
 }
 
-fn printn(mut args: Drain<Value>) -> Value {
-    let n: i64 = param(&mut args);
+fn printn(args: &[Value]) -> Value {
+    let n: i64 = param(&args[0]);
 
     print!("{}", n);
 
     Value::Int(0)
 }
 
-fn print(mut args: Drain<Value>) -> Value {
-    let s: String = param(&mut args);
+fn print(args: &[Value]) -> Value {
+    let s: String = param(&args[0]);
 
     print!("{}", s);
 
@@ -36,8 +35,8 @@ fn print(mut args: Drain<Value>) -> Value {
 }
 
 
-fn println(mut args: Drain<Value>) -> Value {
-    let s: String = param(&mut args);
+fn println(args: &[Value]) -> Value {
+    let s: String = param(&args[0]);
 
     println!("{}", s);
 

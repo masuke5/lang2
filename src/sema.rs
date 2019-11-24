@@ -69,7 +69,7 @@ impl<'a> Analyzer<'a> {
 
     fn insert_params(&mut self, params: Vec<(Id, Type)>) {
         let last_map = self.variables.last_mut().unwrap();
-        let mut loc = -3isize; // fp, ip
+        let mut loc = -2isize; // fp, ip
         for (id, ty) in params.iter().rev() {
             loc -= ty.size() as isize;
             last_map.insert(*id, (loc, ty.clone()));
@@ -80,10 +80,10 @@ impl<'a> Analyzer<'a> {
         let last_map = self.variables.last_mut().unwrap();
         let current_func = self.functions.get_mut(&self.current_func).unwrap();
 
+        current_func.stack_size += ty.size();
+
         let loc = current_func.stack_size as isize;
         last_map.insert(id, (loc, ty.clone()));
-
-        current_func.stack_size += ty.size();
 
         loc
     }
