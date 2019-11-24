@@ -98,8 +98,16 @@ impl<'a> Analyzer<'a> {
         None
     }
 
+    #[allow(unused_variables)]
     fn call_native(name: Id, body: NativeFunctionBody, params: usize) -> Inst {
-        Inst::CallNative(name, body, params)
+        #[cfg(debug_assertions)]
+        {
+            Inst::CallNative(name, body, params)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            Inst::CallNative(body, params)
+        }
     }
 
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {

@@ -25,7 +25,6 @@ pub struct VM<'a> {
     fp: usize,
     stack: Vec<Value>,
     insts_stack: Vec<&'a Vec<Inst>>,
-    return_value: Vec<Value>,
 }
 
 impl<'a> VM<'a> {
@@ -34,9 +33,8 @@ impl<'a> VM<'a> {
             functions,
             ip: 0,
             fp: 0,
-            stack: Vec::new(),
+            stack: Vec::with_capacity(50),
             insts_stack: Vec::new(),
-            return_value: Vec::with_capacity(10),
         }
     }
 
@@ -116,12 +114,13 @@ impl<'a> VM<'a> {
                     self.stack.push(Value::Record(values));
                 },
                 Inst::Field(i) => {
-                    let values = match self.stack.pop().unwrap() {
-                        Value::Record(values) => values,
-                        _ => panic!("record expected"),
+                    match self.stack.pop().unwrap() {
+                        Value::Record(mut values) => {
+                            let value = values.drain(*i..*i + 1).next().unwrap();
+                            self.stack.push(value);
+                        },
+                        _ => panic!(),
                     };
-
-                    self.stack.push(values[*i].clone());
                 },
                 Inst::BinOp(binop) => {
                     match binop {
@@ -164,7 +163,7 @@ impl<'a> VM<'a> {
                     let value: Value = pop!(self);
                     let loc = (self.fp as isize + loc) as usize + offset;
 
-                    self.stack[loc] = value.clone();
+                    self.stack[loc] = value;
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];
@@ -197,7 +196,7 @@ impl<'a> VM<'a> {
                 Inst::CallNative(func, param_count) => {
                     let start = self.stack.len() - param_count;
                     let end = start + param_count;
-                    let return_value = func.0(&self.stack[start..end]);
+                    let return_value = func.0(self.stack.drain(start..end));
 
                     self.stack.truncate(start);
 
@@ -206,12 +205,9 @@ impl<'a> VM<'a> {
                 Inst::Pop => {
                     self.stack.pop().unwrap();
                 },
-                Inst::Return(size) => {
+                Inst::Return(_) => {
                     // Save a return value
-                    self.return_value.resize(*size, Value::Unintialized);
-                    for i in 0..*size {
-                        self.return_value[size - i - 1] = pop!(self);
-                    }
+                    let value: Value = pop!(self);
 
                     // Restore
                     self.stack.truncate(self.fp);
@@ -223,9 +219,7 @@ impl<'a> VM<'a> {
                     self.stack.truncate(self.stack.len() - arg_size);
 
                     // Push the return value
-                    for value in self.return_value.drain(..) {
-                        self.stack.push(value);
-                    }
+                    self.stack.push(value);
                 }
                 Inst::Jump(loc) => {
                     self.ip = *loc;
