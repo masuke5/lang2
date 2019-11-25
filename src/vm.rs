@@ -128,8 +128,8 @@ impl<'a> VM<'a> {
                 Inst::False => {
                     push!(self, Value::Bool(false));
                 },
-                Inst::Load(loc, offset) => {
-                    let value = &mut self.stack[(self.fp as isize + *loc) as usize + offset];
+                Inst::Load(loc) => {
+                    let value = &mut self.stack[(self.fp as isize + *loc) as usize];
                     if value.should_clone() {
                         push!(self, value.clone());
                     } else {
@@ -190,17 +190,16 @@ impl<'a> VM<'a> {
                         },
                     }
                 },
-                Inst::Save(loc, offset) => {
+                Inst::Save(loc) => {
                     let value: Value = pop!(self);
-                    let loc = (self.fp as isize + loc) as usize + offset;
+                    let loc = (self.fp as isize + loc) as usize;
 
                     self.stack[loc] = value;
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];
 
-                    let arg_size = func.params.iter().fold(0, |acc, ty| acc + ty.size() as i64);
-                    push!(self, Value::Int(arg_size));
+                    push!(self, Value::Int(func.param_count as i64));
                     push!(self, Value::Int(self.ip as i64));
                     push!(self, Value::Int(self.fp as i64));
                     self.insts_stack.push(insts);
@@ -235,19 +234,19 @@ impl<'a> VM<'a> {
                 Inst::Pop => {
                     pop!(self, Value);
                 },
-                Inst::Return(_) => {
+                Inst::Return => {
                     // Save a return value
                     let value: Value = pop!(self);
 
-                    // Restore
+                    // Restore stack frame
                     self.sp = self.fp;
                     self.fp = pop!(self, i64) as usize;
                     self.ip = pop!(self, i64) as usize;
                     insts = self.insts_stack.pop().unwrap();
 
                     // Pop arguments
-                    let arg_size = pop!(self, i64) as usize;
-                    self.sp -= arg_size;
+                    let param_count = pop!(self, i64) as usize;
+                    self.sp -= param_count;
 
                     // Push the return value
                     push!(self, value);

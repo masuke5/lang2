@@ -32,9 +32,16 @@ macro_rules! check_type {
 }
 
 #[derive(Debug)]
+struct FunctionHeader {
+    pub params: Vec<Type>,
+    pub return_ty: Type,
+}
+
+#[derive(Debug)]
 pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
+    function_headers: HashMap<Id, FunctionHeader>,
     variables: Vec<HashMap<Id, (isize, Type)>>,
     errors: Vec<Error>,
     main_func_id: Id,
@@ -48,7 +55,8 @@ impl<'a> Analyzer<'a> {
         Self {
             stdlib_funcs,
             functions: HashMap::new(),
-            variables: Vec::new(),
+            function_headers: HashMap::new(),
+            variables: Vec::with_capacity(5),
             errors: Vec::new(),
             main_func_id,
             current_func: main_func_id, 
@@ -171,9 +179,7 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                for i in 0..ty.size() {
-                    insts.push(Inst::Load(*loc, i));
-                }
+                insts.push(Inst::Load(*loc));
 
                 ty.clone()
             },
@@ -232,7 +238,7 @@ impl<'a> Analyzer<'a> {
                     },
                     None => {
                         // Get the callee function
-                        let callee_func = match self.functions.get(&name) {
+                        let callee_func = match self.function_headers.get(&name) {
                             Some(func) => func,
                             None => {
                                 error!(self, expr.span.clone(), "undefined function");
@@ -344,7 +350,7 @@ impl<'a> Analyzer<'a> {
                 let (ty, _) = self.walk_expr(insts, expr);
 
                 let loc = self.new_var(name, ty.clone());
-                insts.push(Inst::Save(loc as isize, 0));
+                insts.push(Inst::Save(loc as isize));
             },
             Stmt::Assign(Spanned { kind: Expr::Variable(id), span: var_span }, rhs) => {
                 let (loc, var_ty) = match self.find_var(id) {
@@ -359,14 +365,7 @@ impl<'a> Analyzer<'a> {
 
                 check_type!(self, var_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
 
-                match rhs_ty {
-                    Type::Tuple(_) => {},
-                    ty => {
-                        for offset in (0..ty.size()).rev() {
-                            insts.push(Inst::Save(loc, offset));
-                        }
-                    },
-                }
+                insts.push(Inst::Save(loc));
             },
             // TODO: Stmt::Assign(Spanned { kind: Expr::Field(expr, Field::Number(i)), .. }, rhs) => {
             Stmt::Assign(Spanned { span, .. }, _) => {
@@ -377,18 +376,19 @@ impl<'a> Analyzer<'a> {
 
                 let (ty, span) = self.walk_expr(insts, expr);
 
-                let current_func = &self.functions[&self.current_func];
+                let func_name = self.functions[&self.current_func].name;
+                let return_ty = &self.function_headers[&self.current_func].return_ty;
 
                 // Check if is outside function
-                if current_func.name == main_id {
+                if func_name == main_id {
                     error!(self, span, "return statement outside function");
                     return;
                 }
 
                 // Check type
-                check_type!(self, current_func.return_ty, ty, "expected `{expected}` type, but got `{actual}` type", span);
+                check_type!(self, *return_ty, ty, "expected `{expected}` type, but got `{actual}` type", span);
 
-                insts.push(Inst::Return(current_func.return_ty.size()));
+                insts.push(Inst::Return);
             },
         }
     }
@@ -419,17 +419,33 @@ impl<'a> Analyzer<'a> {
 
     fn insert_function_header(&mut self, toplevel: &TopLevel) {
         if let TopLevel::Function(name, params, return_ty, _) = toplevel {
-            let param_types = params.iter().map(|(_, ty)| ty.clone()).collect();
-            let func = Function::new(*name, param_types, return_ty.clone());
+            let param_types: Vec<Type> = params.iter().map(|(_, ty)| ty.clone()).collect();
+            let param_count = param_types.len();
 
+            // Insert a header of the function
+            let header = FunctionHeader {
+                params: param_types,
+                return_ty: return_ty.clone(),
+            };
+            self.function_headers.insert(*name, header);
+
+            // Insert function
+            let func = Function::new(*name, param_count);
             self.functions.insert(*name, func);
         }
     }
 
     pub fn analyze(mut self, program: Program) -> Result<HashMap<Id, Function>, Vec<Error>> {
         // Insert main function header
-        let main_func = Function::new(self.main_func_id, Vec::new(), Type::Int);
-        self.functions.insert(self.main_func_id, main_func);
+        let header = FunctionHeader {
+            params: Vec::new(),
+            return_ty: Type::Int, // TODO: Type::Unit
+        };
+        self.function_headers.insert(self.main_func_id, header);
+
+        // Insert main function
+        let func = Function::new(self.main_func_id, 0);
+        self.functions.insert(self.main_func_id, func);
 
         // Insert function headers
         for toplevel in program.top.iter() {

@@ -26,9 +26,8 @@ pub enum BinOp {
 pub struct Function {
     pub name: Id,
     pub stack_size: usize,
-    pub params: Vec<Type>,
+    pub param_count: usize,
     pub insts: Vec<Inst>,
-    pub return_ty: Type,
 }
 
 #[derive(Clone)]
@@ -48,13 +47,12 @@ pub struct NativeFunction {
 }
 
 impl Function {
-    pub fn new(name: Id, params: Vec<Type>, return_ty: Type) -> Self {
+    pub fn new(name: Id, param_count: usize) -> Self {
         Self {
             name,
-            params,
+            param_count,
             stack_size: 0,
             insts: Vec::new(),
-            return_ty,
         }
     }
 }
@@ -68,11 +66,11 @@ pub enum Inst {
     False,
     Record(usize),
 
-    Load(isize, usize),
+    Load(isize),
     Field(usize),
 
     BinOp(BinOp),
-    Save(isize, usize),
+    Save(isize),
     Call(Id),
     Pop,
 
@@ -84,7 +82,7 @@ pub enum Inst {
     Jump(usize),
     JumpIfZero(usize),
     JumpIfNonZero(usize),
-    Return(usize),
+    Return,
 
 }
 
@@ -99,14 +97,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::String(s) => println!("string \"{}\"", s),
             Inst::True => println!("true"),
             Inst::False => println!("false"),
-            Inst::Load(loc, offset) => {
-                print!("load {}", loc);
-                if *offset > 0 {
-                    println!(" offset={}", offset);
-                } else {
-                    println!();
-                }
-            },
+            Inst::Load(loc) => println!("load {}", loc),
             Inst::Record(size) => println!("record size={}", size),
             Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
@@ -126,14 +117,7 @@ pub fn dump_insts(insts: &[Inst]) {
                     BinOp::Or => println!("or"),
                 };
             },
-            Inst::Save(loc, offset) => {
-                print!("save {}", loc);
-                if *offset > 0 {
-                    println!(" offset={}", offset);
-                } else {
-                    println!();
-                }
-            },
+            Inst::Save(loc) => println!("save {}", loc),
             Inst::Call(name) => {
                 println!("call {}", IdMap::name(*name));
             },
@@ -149,7 +133,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::Jump(i) => println!("jump {}", i),
             Inst::JumpIfZero(i) => println!("jump_if_zero {}", i),
             Inst::JumpIfNonZero(i) => println!("jump_if_non_zero {}", i),
-            Inst::Return(size) => println!("return size={}", size),
+            Inst::Return => println!("return"),
         }
     }
 }
