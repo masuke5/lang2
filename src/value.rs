@@ -15,15 +15,6 @@ pub enum Value {
     Ref(NonNull<Value>),
 }
 
-impl Value {
-    pub fn should_clone(&self) -> bool {
-        match self {
-            Value::String(_) | Value::Record(_) => false,
-            _ => true,
-        }
-    }
-}
-
 macro_rules! impl_from_value {
     ($ty:ty, $mess:tt, $($pat:pat => $expr:expr),* $(,)*) => {
         impl FromValue for $ty {

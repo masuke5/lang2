@@ -58,28 +58,29 @@ impl<'a> VM<'a> {
         }
     }
 
+    fn dump_value(value: &Value, depth: usize) {
+        print!("{}", "  ".repeat(depth));
+        match value {
+            Value::Int(n) => println!("int {}", n),
+            Value::String(s) => println!("str \"{}\"", s),
+            Value::Bool(true) => println!("bool true"),
+            Value::Bool(false) => println!("bool false"),
+            Value::Record(values) => {
+                for value in values {
+                    Self::dump_value(value, depth + 1);
+                }
+            },
+            Value::Ref(ptr) => {
+                println!("ref");
+                let value = unsafe { ptr.as_ref() };
+                Self::dump_value(value, depth + 1);
+            },
+            Value::Unintialized => println!("uninitialized"),
+        }
+    }
+
     #[allow(dead_code)]
     fn dump_stack(&self, stop: usize) {
-        fn dump_value(value: &Value, depth: usize) {
-            print!("{}", "  ".repeat(depth));
-            match value {
-                Value::Int(n) => println!("int {}", n),
-                Value::String(s) => println!("str \"{}\"", s),
-                Value::Bool(true) => println!("bool true"),
-                Value::Bool(false) => println!("bool false"),
-                Value::Record(values) => {
-                    for value in values {
-                        dump_value(value, depth + 1);
-                    }
-                },
-                Value::Ref(ptr) => {
-                    let value = unsafe { ptr.as_ref() };
-                    dump_value(value, depth + 1);
-                },
-                Value::Unintialized => println!("uninitialized"),
-            }
-        }
-
         println!("-------- STACK DUMP --------");
         for (i, value) in self.stack.iter().enumerate() {
             if i > stop {
@@ -90,9 +91,17 @@ impl<'a> VM<'a> {
                 print!("(fp) ");
             }
 
-            dump_value(value, 0);
+            Self::dump_value(value, 0);
         }
         println!("-------- END DUMP ----------");
+    }
+
+    // Copy if the value is a reference
+    fn dereference(value: &mut Value) {
+        if let Value::Ref(ptr) = value {
+            let new_value = unsafe { ptr.as_ref() }.clone();
+            *value = new_value;
+        }
     }
 
     pub fn run(&'a mut self) {
@@ -130,12 +139,8 @@ impl<'a> VM<'a> {
                 },
                 Inst::Load(loc) => {
                     let value = &mut self.stack[(self.fp as isize + *loc) as usize];
-                    if value.should_clone() {
-                        push!(self, value.clone());
-                    } else {
-                        let ptr = NonNull::new(value as *mut _).unwrap();
-                        push!(self, Value::Ref(ptr));
-                    }
+                    let ptr = NonNull::new(value as *mut _).unwrap();
+                    push!(self, Value::Ref(ptr));
                 },
                 Inst::Record(size) => {
                     let mut values = Vec::with_capacity(*size);
@@ -149,8 +154,28 @@ impl<'a> VM<'a> {
                     push!(self, Value::Record(values));
                 },
                 Inst::Field(i) => {
-                    let mut values: Vec<Value> = pop!(self);
-                    let value = values.drain(*i..*i + 1).next().unwrap();
+                    fn field(value: &mut Value, i: usize, needs_ref: bool) -> Value {
+                        match value {
+                            Value::Ref(ptr) => {
+                                let mut value = unsafe { ptr.as_mut() };
+                                field(&mut value, i, true)
+                            },
+                            Value::Record(ref mut values) => {
+                                let value = &mut values[i];
+
+                                if needs_ref {
+                                    Value::Ref(NonNull::new(value as *mut _).unwrap())
+                                } else {
+                                    value.clone()
+                                }
+                            },
+                            _ => panic!(),
+                        }
+                    }
+
+                    let mut record: Value = pop!(self);
+                    let value = field(&mut record, *i, false);
+
                     push!(self, value);
                 },
                 Inst::BinOp(binop) => {
@@ -191,13 +216,20 @@ impl<'a> VM<'a> {
                     }
                 },
                 Inst::Save(loc) => {
-                    let value: Value = pop!(self);
+                    let mut value: Value = pop!(self);
+                    Self::dereference(&mut value);
+
                     let loc = (self.fp as isize + loc) as usize;
 
                     self.stack[loc] = value;
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];
+
+                    // Dereference arguments because Inst::Load make very deep Value::Ref in recursive functions
+                    for value in &mut self.stack[self.sp - func.param_count + 1..self.sp + 1] {
+                        Self::dereference(value);
+                    }
 
                     push!(self, Value::Int(func.param_count as i64));
                     push!(self, Value::Int(self.ip as i64));
@@ -236,7 +268,9 @@ impl<'a> VM<'a> {
                 },
                 Inst::Return => {
                     // Save a return value
-                    let value: Value = pop!(self);
+                    let mut value: Value = pop!(self);
+                    // Dereference if the value is a reference because is an invalid reference to a local variable
+                    Self::dereference(&mut value);
 
                     // Restore stack frame
                     self.sp = self.fp;

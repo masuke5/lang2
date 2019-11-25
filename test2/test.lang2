@@ -56,6 +56,9 @@ test("or", false || true);
 let a = 3 + 35;
 test_eq("binding", 38, a);
 
+let c = a;
+test_eq("copy", 38, c);
+
 let b = 10;
 {
     let b = 13;
