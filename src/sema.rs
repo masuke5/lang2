@@ -350,26 +350,24 @@ impl<'a> Analyzer<'a> {
                 let (ty, _) = self.walk_expr(insts, expr);
 
                 let loc = self.new_var(name, ty.clone());
-                insts.push(Inst::Save(loc as isize));
+                insts.push(Inst::Load(loc as isize));
+                insts.push(Inst::Store);
             },
-            Stmt::Assign(Spanned { kind: Expr::Variable(id), span: var_span }, rhs) => {
-                let (loc, var_ty) = match self.find_var(id) {
-                    Some(t) => t.clone(),
-                    None => {
-                        error!(self, var_span, "undefined variable");
+            Stmt::Assign(lhs, rhs) => {
+                match lhs.kind {
+                    Expr::Variable(_) | Expr::Field(_, _) => {},
+                    _ => {
+                        error!(self, lhs.span, "unassignable expression");
                         return;
-                    },
-                };
+                    }
+                }
 
                 let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);
+                let (lhs_ty, _) = self.walk_expr(insts, lhs);
 
-                check_type!(self, var_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
+                check_type!(self, lhs_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
 
-                insts.push(Inst::Save(loc));
-            },
-            // TODO: Stmt::Assign(Spanned { kind: Expr::Field(expr, Field::Number(i)), .. }, rhs) => {
-            Stmt::Assign(Spanned { span, .. }, _) => {
-                error!(self, span, "unassignable expression");
+                insts.push(Inst::Store);
             },
             Stmt::Return(expr) => {
                 let main_id = self.main_func_id;

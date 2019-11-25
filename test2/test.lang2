@@ -66,8 +66,10 @@ let b = 10;
 test_eq("scope", 10, b);
 
 let b = 30;
-
 test_eq("shadowing", 30, b);
+
+b := 931;
+test_eq("assign", 931, b);
 
 ## function ##
 
@@ -100,6 +102,12 @@ fn fib(n: int): int {
 test_eq("tuple indexing 1", 3, (3, 8, 4, 9).0);
 test_eq("tuple indexing 2", 9, (3, 8, 4, 9).3);
 test_eq("tuple indexing 3", 8, (3, 8, 4, 9).1);
+
+let tuple = (4314, (901, 149));
+tuple.0 := 344;
+tuple.1 := (63, 13490);
+test_eq("assign by tuple indexing 1", 344, tuple.0);
+test_eq("assign by tuple indexing 2", 13490, tuple.1.1);
 
 test_eq("nested tuple indexing", 132, ((52, 93012, 341), (5, 132), 63).1.1);
 let tuple = ((52, 93012, 341), (5, 132, 9), 63);

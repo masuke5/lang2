@@ -215,13 +215,17 @@ impl<'a> VM<'a> {
                         },
                     }
                 },
-                Inst::Save(loc) => {
+                Inst::Store => {
+                    let mut ptr = match pop!(self, Value) {
+                        Value::Ref(ptr) => ptr,
+                        _ => panic!("expected reference"),
+                    };
+
                     let mut value: Value = pop!(self);
                     Self::dereference(&mut value);
 
-                    let loc = (self.fp as isize + loc) as usize;
-
-                    self.stack[loc] = value;
+                    let value_ref = unsafe { ptr.as_mut() };
+                    *value_ref = value;
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];

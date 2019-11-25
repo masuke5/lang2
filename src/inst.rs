@@ -67,10 +67,10 @@ pub enum Inst {
     Record(usize),
 
     Load(isize),
-    Field(usize),
+    Store,
 
+    Field(usize),
     BinOp(BinOp),
-    Save(isize),
     Call(Id),
     Pop,
 
@@ -97,7 +97,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::String(s) => println!("string \"{}\"", s),
             Inst::True => println!("true"),
             Inst::False => println!("false"),
-            Inst::Load(loc) => println!("load {}", loc),
+            Inst::Load(loc) => println!("load_ref {}", loc),
             Inst::Record(size) => println!("record size={}", size),
             Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
@@ -117,7 +117,7 @@ pub fn dump_insts(insts: &[Inst]) {
                     BinOp::Or => println!("or"),
                 };
             },
-            Inst::Save(loc) => println!("save {}", loc),
+            Inst::Store => println!("store"),
             Inst::Call(name) => {
                 println!("call {}", IdMap::name(*name));
             },
