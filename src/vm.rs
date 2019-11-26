@@ -168,6 +168,14 @@ impl<'a> VM<'a> {
                     let ptr: NonNull<Value> = pop!(self);
                     push!(self, Value::Ref(ptr));
                 },
+                Inst::Negative => {
+                    let n = match self.stack[self.sp] {
+                        Value::Int(ref mut n) => n,
+                        _ => panic!("expected int"),
+                    };
+
+                    *n = -(*n);
+                },
                 Inst::Field(i) => {
                     fn field(value: &mut Value, i: usize, needs_ref: bool) -> Value {
                         match value {

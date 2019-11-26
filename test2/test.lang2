@@ -163,3 +163,7 @@ fn add_2(n: *int): () {
     *n := *n + 2;
     return;
 }
+
+## other expressions ##
+
+test_eq("negative", -39, -15 - 24);

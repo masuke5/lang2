@@ -298,21 +298,29 @@ impl Parser {
 
         match self.peek().kind {
             Token::Ampersand => {
-                let ampersand_span = self.peek().span.clone();
+                let symbol_span = self.peek().span.clone();
                 self.next();
 
                 let expr = parse(self)?;
-                let span = Span::merge(&ampersand_span, &expr.span);
+                let span = Span::merge(&symbol_span, &expr.span);
                 Some(spanned(Expr::Address(Box::new(expr)), span))
             },
             Token::Asterisk => {
-                let asterisk_span = self.peek().span.clone();
+                let symbol_span = self.peek().span.clone();
                 self.next();
 
                 let expr = parse(self)?;
-                let span = Span::merge(&asterisk_span, &expr.span);
+                let span = Span::merge(&symbol_span, &expr.span);
                 Some(spanned(Expr::Dereference(Box::new(expr)), span))
             },
+            Token::Sub => {
+                let symbol_span = self.peek().span.clone();
+                self.next();
+
+                let expr = parse(self)?;
+                let span = Span::merge(&symbol_span, &expr.span);
+                Some(spanned(Expr::Negative(Box::new(expr)), span))
+            }
             _ => parse(self),
         }
     }

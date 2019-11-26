@@ -369,6 +369,19 @@ impl<'a> Analyzer<'a> {
                     }
                 }
             },
+            Expr::Negative(expr) => {
+                let (ty, span) = self.walk_expr(insts, *expr);
+                match ty {
+                    Type::Int /* | Type::Float */ => {
+                        insts.push(Inst::Negative);
+                        ty
+                    },
+                    ty => {
+                        error!(self, span, "expected type `int` or `float` but got type `{}`", ty);
+                        Type::Invalid
+                    },
+                }
+            },
         };
 
         (ty, expr.span)

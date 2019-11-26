@@ -61,6 +61,7 @@ pub enum Expr {
     Call(Id, Vec<Spanned<Expr>>),
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>),
+    Negative(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]

@@ -77,13 +77,17 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
                 dump_expr(arg, depth + 1);
             }
         },
-        Expr::Address(expr) => {
+        Expr::Address(expr_) => {
             println!("& {}", span_to_string(&expr.span));
-            dump_expr(*expr, depth + 1);
+            dump_expr(*expr_, depth + 1);
         },
-        Expr::Dereference(expr) => {
+        Expr::Dereference(expr_) => {
             println!("* {}", span_to_string(&expr.span));
-            dump_expr(*expr, depth + 1);
+            dump_expr(*expr_, depth + 1);
+        },
+        Expr::Negative(expr_) => {
+            println!("neg {}", span_to_string(&expr.span));
+            dump_expr(*expr_, depth + 1);
         },
     }
 }

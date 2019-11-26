@@ -68,6 +68,7 @@ pub enum Inst {
     Pointer,
     // dereference a pointer
     Dereference,
+    Negative,
 
     Load(isize),
     Store,
@@ -104,6 +105,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::Record(size) => println!("record size={}", size),
             Inst::Pointer => println!("pointer"),
             Inst::Dereference => println!("deref"),
+            Inst::Negative => println!("neg"),
             Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
                 match binop {
