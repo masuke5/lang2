@@ -3,12 +3,14 @@ fn test_eq(name: string, expected: int, actual: int) {
     print(" => ");
 
     if expected = actual {
-        printnln(actual);
+        println("\x1b[92msucceed\x1b[0m");
     } else {
+        print("\x1b[91m");
         print("expected:");
         printn(expected);
         print(", actual:");
         printnln(actual);
+        print("\x1b[0m");
     }
 
     return 0;
@@ -19,9 +21,9 @@ fn test(name: string, ok: bool) {
     print(" => ");
 
     if ok {
-        println("succeed");
+        println("\x1b[92msucceed\x1b[0m");
     } else {
-        println("failed");
+        println("\x1b[91mfailed\x1b[0m");
     }
 
     return 0;

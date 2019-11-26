@@ -154,6 +154,22 @@ impl<'a> Lexer<'a> {
                     'n' => s.push('\n'),
                     'r' => s.push('\r'),
                     't' => s.push('\t'),
+                    // ASCII 7-bit character code
+                    'x' => {
+                        let mut n = 0u32;
+                        let mut count = 0;
+                        while self.peek().is_digit(16) && count < 2 {
+                            n = n * 16 + self.peek().to_digit(16).unwrap();
+                            count += 1;
+                            self.read_char();
+                        }
+
+                        if count == 2 && n <= 0x7f {
+                            s.push(std::char::from_u32(n as u32).unwrap());
+                        } else {
+                            self.error(&format!("invalid character code '{:x}'", n));
+                        }
+                    },
                     ch => {
                         self.error(&format!("unknown escape sequence '\\{}'", ch));
                         return None;
