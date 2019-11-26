@@ -584,6 +584,10 @@ impl Parser {
     fn parse_param_list(&mut self) -> Option<Vec<(Id, Type)>> {
         let mut params = Vec::new();
 
+        if self.consume(&Token::Rparen) {
+            return Some(params);
+        }
+
         // Parse the first parameter
         if let Some(param) = self.parse_param() {
             params.push(param);
