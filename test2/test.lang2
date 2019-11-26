@@ -51,6 +51,18 @@ test("greater than or equal", 93 >= 31);
 test("and", true && true);
 test("or", false || true);
 
+let a = 384123;
+a = 83901 && add_3(&a) = 5312;
+test_eq("short-circuit evalution in &&", 384123, a);
+
+a = 384123 || add_3(&a) = 5312;
+test_eq("short-circuit evalution in ||", 384123, a);
+
+fn add_3(n: *int): int {
+    *n := 3095;
+    return 5312;
+}
+
 ## variable ##
 
 let a = 3 + 35;
@@ -137,8 +149,10 @@ let ptr = &tuple.1;
 *ptr := 923;
 test_eq("pointer to a field", 923, tuple.1);
 
-test_eq("function passed a pointer", 7, add_2(&tuple.2));
+add_2(&tuple.2);
+test_eq("function passed a pointer", 7, tuple.2);
 
-fn add_2(n: *int): int {
-    return *n + 2;
+fn add_2(n: *int) {
+    *n := *n + 2;
+    return 0; # remove later
 }

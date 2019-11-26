@@ -190,6 +190,72 @@ impl<'a> Analyzer<'a> {
 
                 ty.clone()
             },
+            Expr::BinOp(BinOp::And, lhs, rhs) => {
+                let (lty, _) = self.walk_expr(insts, *lhs);
+
+                let jump1 = insts.len();
+                insts.push(Inst::Int(0));
+
+                let (rty, _) = self.walk_expr(insts, *rhs);
+
+                let jump2 = insts.len();
+                insts.push(Inst::Int(0));
+
+                // push true
+                insts.push(Inst::True);
+                let jump_to_end = insts.len();
+                insts.push(Inst::Int(0));
+
+                // push false
+                insts[jump1] = Inst::JumpIfZero(insts.len());
+                insts[jump2] = Inst::JumpIfZero(insts.len());
+                insts.push(Inst::False);
+
+                insts[jump_to_end] = Inst::Jump(insts.len());
+
+                match (lty, rty) {
+                    (Type::Bool, Type::Bool) => {},
+                    (Type::Invalid, _) | (_, Type::Invalid) => {},
+                    (lty, rty) => {
+                        error!(self, expr.span.clone(), "{} && {}", lty, rty);
+                    },
+                }
+
+                Type::Bool
+            },
+            Expr::BinOp(BinOp::Or, lhs, rhs) => {
+                let (lty, _) = self.walk_expr(insts, *lhs);
+
+                let jump1 = insts.len();
+                insts.push(Inst::Int(0));
+
+                let (rty, _) = self.walk_expr(insts, *rhs);
+
+                let jump2 = insts.len();
+                insts.push(Inst::Int(0));
+
+                // push false
+                insts.push(Inst::False);
+                let jump_to_end = insts.len();
+                insts.push(Inst::Int(0));
+
+                // push true
+                insts[jump1] = Inst::JumpIfNonZero(insts.len());
+                insts[jump2] = Inst::JumpIfNonZero(insts.len());
+                insts.push(Inst::True);
+
+                insts[jump_to_end] = Inst::Jump(insts.len());
+
+                match (lty, rty) {
+                    (Type::Bool, Type::Bool) => {},
+                    (Type::Invalid, _) | (_, Type::Invalid) => {},
+                    (lty, rty) => {
+                        error!(self, expr.span.clone(), "{} || {}", lty, rty);
+                    },
+                }
+
+                Type::Bool
+            },
             Expr::BinOp(binop, lhs, rhs) => {
                 let (lty, _) = self.walk_expr(insts, *lhs);
                 let (rty, _) = self.walk_expr(insts, *rhs);
@@ -206,8 +272,7 @@ impl<'a> Analyzer<'a> {
                     BinOp::GreaterThanOrEqual => IBinOp::GreaterThanOrEqual,
                     BinOp::Equal => IBinOp::Equal,
                     BinOp::NotEqual => IBinOp::NotEqual,
-                    BinOp::And => IBinOp::And,
-                    BinOp::Or => IBinOp::Or,
+                    _ => panic!(),
                 };
                 insts.push(Inst::BinOp(ibinop));
 
@@ -228,8 +293,6 @@ impl<'a> Analyzer<'a> {
                     (BinOp::LessThanOrEqual, Type::Int) => Type::Bool,
                     (BinOp::GreaterThan, Type::Int) => Type::Bool,
                     (BinOp::GreaterThanOrEqual, Type::Int) => Type::Bool,
-                    (BinOp::And, Type::Bool) => Type::Bool,
-                    (BinOp::Or, Type::Bool) => Type::Bool,
                     _ => {
                         self.add_error(&format!("`{} {} {}` is not possible", lty, binop_symbol, rty), expr.span.clone());
                         Type::Invalid

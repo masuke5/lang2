@@ -193,41 +193,24 @@ impl<'a> VM<'a> {
                     push!(self, value);
                 },
                 Inst::BinOp(binop) => {
-                    match binop {
-                        BinOp::And | BinOp::Or => {
-                            let rhs: bool = pop!(self);
-                            let lhs: bool = pop!(self);
+                    let rhs: i64 = pop!(self);
+                    let lhs: i64 = pop!(self);
 
-                            let result = match binop {
-                                BinOp::And => Value::Bool(lhs && rhs),
-                                BinOp::Or => Value::Bool(lhs || rhs),
-                                _ => panic!(),
-                            };
+                    let result = match binop {
+                        BinOp::Add => Value::Int(lhs + rhs),
+                        BinOp::Sub => Value::Int(lhs - rhs),
+                        BinOp::Mul => Value::Int(lhs * rhs),
+                        BinOp::Div => Value::Int(lhs / rhs),
+                        BinOp::Mod => Value::Int(lhs % rhs),
+                        BinOp::LessThan => Value::Bool(lhs < rhs),
+                        BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
+                        BinOp::GreaterThan => Value::Bool(lhs > rhs),
+                        BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
+                        BinOp::Equal => Value::Bool(lhs == rhs),
+                        BinOp::NotEqual => Value::Bool(lhs != rhs),
+                    };
 
-                            push!(self, result);
-                        },
-                        binop => {
-                            let rhs: i64 = pop!(self);
-                            let lhs: i64 = pop!(self);
-
-                            let result = match binop {
-                                BinOp::Add => Value::Int(lhs + rhs),
-                                BinOp::Sub => Value::Int(lhs - rhs),
-                                BinOp::Mul => Value::Int(lhs * rhs),
-                                BinOp::Div => Value::Int(lhs / rhs),
-                                BinOp::Mod => Value::Int(lhs % rhs),
-                                BinOp::LessThan => Value::Bool(lhs < rhs),
-                                BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
-                                BinOp::GreaterThan => Value::Bool(lhs > rhs),
-                                BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
-                                BinOp::Equal => Value::Bool(lhs == rhs),
-                                BinOp::NotEqual => Value::Bool(lhs != rhs),
-                                _ => panic!(),
-                            };
-
-                            push!(self, result);
-                        },
-                    }
+                    push!(self, result);
                 },
                 Inst::Store => {
                     let mut ptr = match pop!(self, Value) {

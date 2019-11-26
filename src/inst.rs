@@ -18,8 +18,6 @@ pub enum BinOp {
     GreaterThanOrEqual,
     Equal,
     NotEqual,
-    And,
-    Or,
 }
 
 #[derive(Debug, Clone)]
@@ -119,8 +117,6 @@ pub fn dump_insts(insts: &[Inst]) {
                     BinOp::GreaterThanOrEqual => println!("greater_than_or_equal"),
                     BinOp::Equal => println!("equal"),
                     BinOp::NotEqual => println!("not_equal"),
-                    BinOp::And => println!("and"),
-                    BinOp::Or => println!("or"),
                 };
             },
             Inst::Store => println!("store"),
