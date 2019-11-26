@@ -227,6 +227,7 @@ impl<'a> Lexer<'a> {
             ',' => Some(Token::Comma),
             ':' if self.next_is('=') => self.two_char(Token::Assign),
             ':' => Some(Token::Colon),
+            '<' if self.next_is('>') => self.two_char(Token::NotEqual),
             '<' if self.next_is('=') => self.two_char(Token::LessThanOrEqual),
             '<' => Some(Token::LessThan),
             '>' if self.next_is('=') => self.two_char(Token::GreaterThanOrEqual),
@@ -234,7 +235,6 @@ impl<'a> Lexer<'a> {
             '&' if self.next_is('&') => self.two_char(Token::And),
             '&' => Some(Token::Ampersand),
             '|' if self.next_is('|') => self.two_char(Token::Or),
-            '!' if self.next_is('=') => self.two_char(Token::NotEqual),
             '.' => Some(Token::Dot),
             '#' => {
                 self.skip_comment();

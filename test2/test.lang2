@@ -41,7 +41,7 @@ test_eq("priority", 18, 3 + 7 * 4 - 13);
 
 let a = 3 + 35;
 test("equal", 38 = 38);
-test("not equal", 38 != 39);
+test("not equal", 38 <> 39);
 test("less than", 35 < 39);
 test("less than or equal", 38 <= 38);
 test("greater than", 33 > 30);

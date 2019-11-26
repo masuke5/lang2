@@ -72,7 +72,7 @@ impl fmt::Display for Token {
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
             Token::Equal => write!(f, "="),
-            Token::NotEqual => write!(f, "!="),
+            Token::NotEqual => write!(f, "<>"),
             Token::LessThan => write!(f, "<"),
             Token::LessThanOrEqual => write!(f, "<="),
             Token::GreaterThan => write!(f, ">"),
