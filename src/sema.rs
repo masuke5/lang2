@@ -135,6 +135,10 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::String(s));
                 Type::String
             },
+            Expr::Literal(Literal::Unit) => {
+                insts.push(Inst::Int(0));
+                Type::Unit
+            },
             Expr::Literal(Literal::True) => {
                 insts.push(Inst::True);
                 Type::Bool
@@ -370,8 +374,8 @@ impl<'a> Analyzer<'a> {
         (ty, expr.span)
     }
 
-    fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Stmt) {
-        match stmt {
+    fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Spanned<Stmt>) {
+        match stmt.kind {
             Stmt::Expr(expr) => {
                 let (ty, _) = self.walk_expr(insts, expr);
 
@@ -390,7 +394,7 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::Int(0));
 
                 // Then-clause
-                self.walk_stmt(insts, stmt.kind);
+                self.walk_stmt(insts, *stmt);
 
                 if let Some(else_stmt) = else_stmt {
                     // Insert dummy instruction to jump to end
@@ -400,7 +404,7 @@ impl<'a> Analyzer<'a> {
                     insts[jump_to_else] = Inst::JumpIfZero(insts.len());
 
                     // Insert else-clause instructions
-                    self.walk_stmt(insts, else_stmt.kind);
+                    self.walk_stmt(insts, *else_stmt);
 
                     insts[jump_to_end] = Inst::Jump(insts.len());
                 } else {
@@ -420,7 +424,7 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::Int(0));
 
                 // Insert body statement instruction
-                self.walk_stmt(insts, stmt.kind);
+                self.walk_stmt(insts, *stmt);
 
                 // Jump to begin
                 insts.push(Inst::Jump(begin));
@@ -431,7 +435,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Block(stmts) => {
                 self.push_scope();
                 for stmt in stmts {
-                    self.walk_stmt(insts, stmt.kind);
+                    self.walk_stmt(insts, stmt);
                 }
                 self.pop_scope();
             },
@@ -456,20 +460,24 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::Store);
             },
             Stmt::Return(expr) => {
-                let main_id = self.main_func_id;
-
-                let (ty, span) = self.walk_expr(insts, expr);
-
                 let func_name = self.functions[&self.current_func].name;
-                let return_ty = &self.function_headers[&self.current_func].return_ty;
 
                 // Check if is outside function
-                if func_name == main_id {
-                    error!(self, span, "return statement outside function");
+                if func_name == self.main_func_id {
+                    error!(self, stmt.span, "return statement outside function");
                     return;
                 }
 
+                let (ty, span) = match expr {
+                    Some(expr) => self.walk_expr(insts, expr),
+                    None => {
+                        insts.push(Inst::Int(0));
+                        (Type::Unit, stmt.span)
+                    }
+                };
+
                 // Check type
+                let return_ty = &self.function_headers[&self.current_func].return_ty;
                 check_type!(self, *return_ty, ty, "expected `{expected}` type, but got `{actual}` type", span);
 
                 insts.push(Inst::Return);
@@ -481,7 +489,7 @@ impl<'a> Analyzer<'a> {
         match toplevel {
             TopLevel::Stmt(stmt) => {
                 self.current_func = self.main_func_id;
-                self.walk_stmt(main_insts, stmt.kind);
+                self.walk_stmt(main_insts, stmt);
             },
             TopLevel::Function(name, params, _, stmt) => {
                 self.current_func = name;
@@ -493,7 +501,14 @@ impl<'a> Analyzer<'a> {
 
                 // body
                 let mut insts = Vec::new();
-                self.walk_stmt(&mut insts, stmt.kind);
+                self.walk_stmt(&mut insts, stmt);
+
+                // insert a return instruction if the return value type is unit
+                if let Type::Unit = &self.function_headers[&self.current_func].return_ty {
+                    insts.push(Inst::Int(0));
+                    insts.push(Inst::Return);
+                }
+
                 self.functions.get_mut(&name).unwrap().insts = insts;
 
                 self.pop_scope();
@@ -523,7 +538,7 @@ impl<'a> Analyzer<'a> {
         // Insert main function header
         let header = FunctionHeader {
             params: Vec::new(),
-            return_ty: Type::Int, // TODO: Type::Unit
+            return_ty: Type::Unit,
         };
         self.function_headers.insert(self.main_func_id, header);
 

@@ -237,17 +237,23 @@ impl Parser {
                 let lparen_span = self.peek().span.clone();
                 self.next();
 
-                let mut expr = self.parse_expr()?;
-
-                if self.peek().kind == Token::Comma {
-                    self.parse_tuple(&lparen_span, expr)
+                if self.consume(&Token::Rparen) {
+                    // Unit literal
+                    let span = Span::merge(&lparen_span, &self.prev().span);
+                    Some(spanned(Expr::Literal(Literal::Unit), span))
                 } else {
-                    self.expect(&Token::Rparen, &[Token::Rparen])?;
-                    let rparen_span = &self.prev().span;
+                    let mut expr = self.parse_expr()?;
 
-                    expr.span = Span::merge(&lparen_span, rparen_span);
+                    if self.peek().kind == Token::Comma {
+                        self.parse_tuple(&lparen_span, expr)
+                    } else {
+                        self.expect(&Token::Rparen, &[Token::Rparen])?;
+                        let rparen_span = &self.prev().span;
 
-                    Some(expr)
+                        expr.span = Span::merge(&lparen_span, rparen_span);
+
+                        Some(expr)
+                    }
                 }
             },
             _ => {
@@ -460,14 +466,19 @@ impl Parser {
         let return_token_span = self.peek().span.clone();
         self.next();
 
-        let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
+        if self.consume(&Token::Semicolon) {
+            let span = Span::merge(&return_token_span, &self.prev().span);
+            Some(spanned(Stmt::Return(None), span))
+        } else {
+            let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
-        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
-        let semicolon_span = &self.prev().span;
+            self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+            let semicolon_span = &self.prev().span;
 
-        let span = Span::merge(&return_token_span, &semicolon_span);
+            let span = Span::merge(&return_token_span, &semicolon_span);
 
-        Some(spanned(Stmt::Return(expr),span))
+            Some(spanned(Stmt::Return(Some(expr)), span))
+        }
     }
 
     fn parse_if_stmt(&mut self) -> Option<Spanned<Stmt>> {
@@ -534,8 +545,7 @@ impl Parser {
                 self.next();
 
                 if self.consume(&Token::Rparen) {
-                    error!(self, self.prev().span.clone(), "tuple has to one type at least");
-                    None
+                    return Some(Type::Unit);
                 } else {
                     let mut inner = Vec::new();
 
@@ -621,8 +631,8 @@ impl Parser {
         let return_ty = if self.consume(&Token::Colon) {
             self.parse_skip(Self::parse_type, &[Token::Lbrace])
         } else {
-            // If omit type, the return type is void
-            Some(Type::Int) // TODO: Void
+            // return unit if omit a type
+            Some(Type::Unit)
         };
 
         let body = self.expect_block()?;

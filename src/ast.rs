@@ -41,6 +41,7 @@ impl BinOp {
 pub enum Literal {
     Number(i64),
     String(String),
+    Unit,
     True,
     False,
 }
@@ -67,7 +68,7 @@ pub enum Stmt {
     Bind(Id, Spanned<Expr>),
     Expr(Spanned<Expr>),
     Block(Vec<Spanned<Stmt>>),
-    Return(Spanned<Expr>),
+    Return(Option<Spanned<Expr>>),
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Spanned<Expr>),

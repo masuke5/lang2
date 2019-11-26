@@ -48,6 +48,7 @@ fn dump_expr(expr: Spanned<Expr>, depth: usize) {
     match expr.kind {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
         Expr::Literal(Literal::String(s)) => println!("\"{}\" {}", s, span_to_string(&expr.span)),
+        Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
         Expr::Tuple(exprs) => {
@@ -111,7 +112,9 @@ fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
         },
         Stmt::Return(expr) => {
             println!("return {}", span_to_string(&stmt.span));
-            dump_expr(expr, depth + 1);
+            if let Some(expr) = expr {
+                dump_expr(expr, depth + 1);
+            }
         },
         Stmt::If(cond, body, else_stmt) => {
             println!("if {}", span_to_string(&stmt.span));

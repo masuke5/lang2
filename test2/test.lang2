@@ -12,8 +12,6 @@ fn test_eq(name: string, expected: int, actual: int) {
         printnln(actual);
         print("\x1b[0m");
     }
-
-    return 0;
 }
 
 fn test(name: string, ok: bool) {
@@ -25,8 +23,6 @@ fn test(name: string, ok: bool) {
     } else {
         println("\x1b[91mfailed\x1b[0m");
     }
-
-    return 0;
 }
 
 ## literals ##
@@ -91,13 +87,17 @@ test_eq("simple function", 30, add(14, 16,));
 test_eq("no parameter", 33019, no_param());
 test_eq("early return", 1000, early_return(3));
 test_eq("fibonacci", 55, fib(10));
+no_return(51633);
 
 fn add(a: int, b: int,): int {
     return a + b;
 }
 
 fn no_param(): int {
-    return 33019; # remove later
+    return 33019;
+}
+
+fn no_return(a: int) {
 }
 
 fn early_return(a: int): int {
@@ -159,7 +159,7 @@ test_eq("pointer to a field", 923, tuple.1);
 add_2(&tuple.2);
 test_eq("function passed a pointer", 7, tuple.2);
 
-fn add_2(n: *int) {
+fn add_2(n: *int): () {
     *n := *n + 2;
-    return 0; # remove later
+    return;
 }
