@@ -118,6 +118,13 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn expr_is_lvalue(expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(_) | Expr::Dereference(_) | Expr::Field(_, _) => true,
+            _ => false,
+        }
+    }
+
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
@@ -270,11 +277,30 @@ impl<'a> Analyzer<'a> {
 
                 return_ty
             },
-            Expr::Address(_) => {
-                unimplemented!();
+            Expr::Address(expr) => {
+                if !Self::expr_is_lvalue(&expr.kind) {
+                    error!(self, expr.span, "this expression is not lvalue");
+                    Type::Invalid
+                } else {
+                    let (ty, _) = self.walk_expr(insts, *expr);
+                    insts.push(Inst::Pointer);
+
+                    Type::Pointer(Box::new(ty))
+                }
             },
-            Expr::Dereference(_) => {
-                unimplemented!();
+            Expr::Dereference(expr) => {
+                let (ty, span) = self.walk_expr(insts, *expr);
+                match ty {
+                    Type::Pointer(ty) => {
+                        insts.push(Inst::Dereference);
+                        *ty
+                    }
+                    Type::Invalid => Type::Invalid,
+                    ty => {
+                        error!(self, span, "expected type `pointer` but got type `{}`", ty);
+                        Type::Invalid
+                    }
+                }
             },
         };
 
@@ -354,12 +380,9 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::Store);
             },
             Stmt::Assign(lhs, rhs) => {
-                match lhs.kind {
-                    Expr::Variable(_) | Expr::Field(_, _) => {},
-                    _ => {
-                        error!(self, lhs.span, "unassignable expression");
-                        return;
-                    }
+                if !Self::expr_is_lvalue(&lhs.kind) {
+                    error!(self, lhs.span, "unassignable expression");
+                    return;
                 }
 
                 let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);

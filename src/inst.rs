@@ -65,6 +65,10 @@ pub enum Inst {
     True,
     False,
     Record(usize),
+    // make a pointer from a reference
+    Pointer,
+    // dereference a pointer
+    Dereference,
 
     Load(isize),
     Store,
@@ -99,6 +103,8 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::False => println!("false"),
             Inst::Load(loc) => println!("load_ref {}", loc),
             Inst::Record(size) => println!("record size={}", size),
+            Inst::Pointer => println!("pointer"),
+            Inst::Dereference => println!("deref"),
             Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
                 match binop {

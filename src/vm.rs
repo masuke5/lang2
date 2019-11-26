@@ -75,6 +75,7 @@ impl<'a> VM<'a> {
                 let value = unsafe { ptr.as_ref() };
                 Self::dump_value(value, depth + 1);
             },
+            Value::Pointer(ptr) => println!("ptr {:p}", ptr),
             Value::Unintialized => println!("uninitialized"),
         }
     }
@@ -152,6 +153,19 @@ impl<'a> VM<'a> {
                     }
 
                     push!(self, Value::Record(values));
+                },
+                Inst::Pointer => {
+                    let value_ref: Value = pop!(self);
+                    match value_ref {
+                        Value::Ref(ptr) => {
+                            push!(self, Value::Pointer(ptr));
+                        },
+                        _ => panic!("expected ref"),
+                    }
+                },
+                Inst::Dereference => {
+                    let ptr: NonNull<Value> = pop!(self);
+                    push!(self, Value::Ref(ptr));
                 },
                 Inst::Field(i) => {
                     fn field(value: &mut Value, i: usize, needs_ref: bool) -> Value {

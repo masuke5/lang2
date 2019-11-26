@@ -13,6 +13,7 @@ pub enum Value {
     String(String),
     Record(Vec<Value>),
     Ref(NonNull<Value>),
+    Pointer(NonNull<Value>),
 }
 
 macro_rules! impl_from_value {
@@ -56,6 +57,10 @@ impl_from_value! {String, "expected string",
 
 impl_from_value! {Vec<Value>, "expected record",
     Value::Record(values) => values,
+}
+
+impl_from_value! {NonNull<Value>, "expected pointer",
+    Value::Pointer(ptr) => ptr,
 }
 
 impl_from_value! {Value, "",

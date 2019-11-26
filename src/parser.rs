@@ -529,8 +529,9 @@ impl Parser {
             Token::Bool => Some(Type::Bool),
             Token::StringType => Some(Type::String),
             Token::Asterisk => {
+                self.next(); // eat '*'
                 let ty = self.parse_type()?;
-                Some(Type::Pointer(Box::new(ty)))
+                return Some(Type::Pointer(Box::new(ty)));
             },
             Token::Lparen => {
                 self.next();
