@@ -5,6 +5,7 @@ use std::mem;
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
 use crate::value::{FromValue, Value};
+use crate::utils;
 
 const STACK_SIZE: usize = 10000;
 
@@ -62,7 +63,7 @@ impl<'a> VM<'a> {
         print!("{}", "  ".repeat(depth));
         match value {
             Value::Int(n) => println!("int {}", n),
-            Value::String(s) => println!("str \"{}\"", s),
+            Value::String(s) => println!("str \"{}\"", utils::escape_string(s)),
             Value::Bool(true) => println!("bool true"),
             Value::Bool(false) => println!("bool false"),
             Value::Record(values) => {

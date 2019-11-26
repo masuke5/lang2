@@ -3,6 +3,7 @@ use std::fmt;
 use crate::ty::Type;
 use crate::id::{Id, IdMap};
 use crate::value::Value;
+use crate::utils;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -96,7 +97,7 @@ pub fn dump_insts(insts: &[Inst]) {
 
         match inst {
             Inst::Int(n) => println!("int {}", n),
-            Inst::String(s) => println!("string \"{}\"", s),
+            Inst::String(s) => println!("string \"{}\"", utils::escape_string(s)),
             Inst::True => println!("true"),
             Inst::False => println!("false"),
             Inst::Load(loc) => println!("load_ref {}", loc),
