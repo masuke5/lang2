@@ -157,8 +157,8 @@ impl Parser {
             };
 
             // Parse other arguments
-            while !self.consume(&Token::Rparen) {
-                if self.expect(&Token::Comma, &[Token::Rparen]).is_none() {
+            while self.peek().kind != Token::Rparen && self.consume(&Token::Comma) {
+                if self.peek().kind == Token::Rparen {
                     break;
                 }
 
@@ -168,11 +168,8 @@ impl Parser {
                 };
             }
 
-            if self.peek().kind == Token::EOF {
-                None
-            } else {
-                Some(args)
-            }
+            self.expect(&Token::Rparen, &[Token::Rparen])?;
+            Some(args)
         } else {
             Some(Vec::new())
         }
@@ -594,8 +591,8 @@ impl Parser {
         }
 
         // Parse other parameters
-        while !self.consume(&Token::Rparen) {
-            if self.expect(&Token::Comma, &[Token::Rparen]).is_none() {
+        while self.peek().kind != Token::Rparen && self.consume(&Token::Comma) {
+            if self.peek().kind == Token::Rparen {
                 break;
             }
 
@@ -604,11 +601,8 @@ impl Parser {
             }
         }
 
-        if self.peek().kind == Token::EOF {
-            None
-        } else {
-            Some(params)
-        }
+        self.expect(&Token::Rparen, &[Token::Rparen])?;
+        Some(params)
     }
 
     fn parse_fn_decl(&mut self) -> Option<Spanned<TopLevel>> {
