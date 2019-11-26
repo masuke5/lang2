@@ -237,7 +237,7 @@ impl<'a> VM<'a> {
                     let func = &self.functions[name];
 
                     // Dereference arguments because Inst::Load make very deep Value::Ref in recursive functions
-                    for value in &mut self.stack[self.sp - func.param_count + 1..self.sp + 1] {
+                    for value in &mut self.stack[self.sp - func.param_count + 1..=self.sp] {
                         Self::dereference(value);
                     }
 
@@ -257,7 +257,7 @@ impl<'a> VM<'a> {
                 },
                 #[cfg(debug_assertions)]
                 Inst::CallNative(_, func, param_count) => {
-                    let return_value = func.0(&self.stack[self.sp - param_count + 1..self.sp + 1]);
+                    let return_value = func.0(&self.stack[self.sp - param_count + 1..=self.sp]);
 
                     // Pop arguments
                     self.sp -= param_count;
