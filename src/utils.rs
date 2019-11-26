@@ -1,3 +1,5 @@
+use crate::span::Span;
+
 pub fn escape_string(raw: &str) -> String {
     let mut s = String::new();
     for ch in raw.chars() {
@@ -15,4 +17,8 @@ pub fn escape_string(raw: &str) -> String {
     }
 
     s
+}
+
+pub fn span_to_string(span: &Span) -> String {
+    format!("\x1b[33m{}:{}-{}:{}\x1b[0m", span.start_line, span.start_col, span.end_line, span.end_col)
 }

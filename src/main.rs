@@ -21,8 +21,7 @@ use std::io::Read;
 use std::borrow::Cow;
 
 use lexer::Lexer;
-use span::{Span, Spanned};
-use token::Token;
+use token::dump_token;
 use error::Error;
 use parser::Parser;
 use ast::*;
@@ -31,127 +30,6 @@ use id::{Id, IdMap};
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
-
-fn span_to_string(span: &Span) -> String {
-    format!("\x1b[33m{}:{}-{}:{}\x1b[0m", span.start_line, span.start_col, span.end_line, span.end_col)
-}
-
-fn dump_token(tokens: Vec<Spanned<Token>>) {
-    for token in tokens {
-        println!("{} {}:{}-{}:{}", token.kind, token.span.start_line, token.span.start_col, token.span.end_line, token.span.end_col);
-    }
-}
-
-fn dump_expr(expr: Spanned<Expr>, depth: usize) {
-    // Print indent
-    print!("{}", "  ".repeat(depth));
-
-    match expr.kind {
-        Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
-        Expr::Literal(Literal::String(s)) => println!("\"{}\" {}", utils::escape_string(&s), span_to_string(&expr.span)),
-        Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
-        Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
-        Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
-        Expr::Tuple(exprs) => {
-            println!("tuple {}", span_to_string(&expr.span));
-            for expr in exprs {
-                dump_expr(expr, depth + 1);
-            }
-        },
-        Expr::Field(expr, field) => {
-            match field {
-                Field::Number(i) => println!(".{} {}", i, span_to_string(&expr.span)),
-            };
-
-            dump_expr(*expr, depth + 1);
-        },
-        Expr::Variable(name) => println!("{} {}", IdMap::name(name), span_to_string(&expr.span)),
-        Expr::BinOp(binop, lhs, rhs) => {
-            println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
-            dump_expr(*lhs, depth + 1);
-            dump_expr(*rhs, depth + 1);
-        },
-        Expr::Call(name, args) => {
-            println!("{} {}", IdMap::name(name), span_to_string(&expr.span));
-            for arg in args {
-                dump_expr(arg, depth + 1);
-            }
-        },
-        Expr::Address(expr_) => {
-            println!("& {}", span_to_string(&expr.span));
-            dump_expr(*expr_, depth + 1);
-        },
-        Expr::Dereference(expr_) => {
-            println!("* {}", span_to_string(&expr.span));
-            dump_expr(*expr_, depth + 1);
-        },
-        Expr::Negative(expr_) => {
-            println!("neg {}", span_to_string(&expr.span));
-            dump_expr(*expr_, depth + 1);
-        },
-    }
-}
-
-fn dump_stmt(stmt: Spanned<Stmt>, depth: usize) {
-    // Print indent
-    print!("{}", "  ".repeat(depth));
-
-    match stmt.kind {
-        Stmt::Bind(name, expr) => {
-            println!("let {} =", IdMap::name(name));
-            dump_expr(expr, depth + 1);
-        },
-        Stmt::Assign(lhs, rhs) => {
-            println!(":= {}", span_to_string(&stmt.span));
-            dump_expr(lhs, depth + 1);
-            dump_expr(rhs, depth + 1);
-        },
-        Stmt::Expr(expr) => {
-            dump_expr(expr, depth);
-        },
-        Stmt::Block(stmts) => {
-            println!("block {}", span_to_string(&stmt.span));
-            for stmt in stmts {
-                dump_stmt(stmt, depth + 1);
-            }
-        },
-        Stmt::Return(expr) => {
-            println!("return {}", span_to_string(&stmt.span));
-            if let Some(expr) = expr {
-                dump_expr(expr, depth + 1);
-            }
-        },
-        Stmt::If(cond, body, else_stmt) => {
-            println!("if {}", span_to_string(&stmt.span));
-            dump_expr(cond, depth + 1);
-            dump_stmt(*body, depth + 1);
-            if let Some(else_stmt) = else_stmt {
-                dump_stmt(*else_stmt, depth + 1);
-            }
-        },
-        Stmt::While(cond, body) => {
-            println!("while {}", span_to_string(&stmt.span));
-            dump_expr(cond, depth + 1);
-            dump_stmt(*body, depth + 1);
-        },
-    }
-}
-
-fn dump_toplevel(toplevel: Spanned<TopLevel>) {
-    match toplevel.kind {
-        TopLevel::Stmt(stmt) => dump_stmt(stmt, 0),
-        TopLevel::Function(name, params, return_ty, body) => {
-            println!("fn {}({}): {:?} {}", IdMap::name(name), params.len(), return_ty, span_to_string(&toplevel.span));
-            dump_stmt(body, 1);
-        },
-    }
-}
-
-fn dump_ast(program: Program) {
-    for toplevel in program.top {
-        dump_toplevel(toplevel);
-    }
-}
 
 fn print_errors(input: &str, errors: Vec<Error>) {
     let input: Vec<&str> = input.lines().collect();
@@ -194,6 +72,7 @@ fn print_errors(input: &str, errors: Vec<Error>) {
 }
 
 fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>> {
+    // Lex
     let lexer = Lexer::new(input, file);
     let tokens = lexer.lex()?;
     if matches.is_present("dump-token") {
@@ -201,15 +80,17 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
         exit(0);
     }
 
+    // Parse
     let parser = Parser::new(tokens);
     let program = parser.parse()?;
     if matches.is_present("dump-ast") {
-        dump_ast(program);
+        dump_ast(&program);
         exit(0);
     }
 
     let stdlib_funcs = stdlib::functions();
 
+    // Semantic analysis and translate to instructions
     let analyzer = Analyzer::new(&stdlib_funcs);
     let functions = analyzer.analyze(program)?;
 
@@ -221,6 +102,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
         exit(0);
     }
 
+    // Execute
     let mut vm = VM::new(functions);
     vm.run();
 
