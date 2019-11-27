@@ -1,4 +1,4 @@
-#![feature(box_patterns, bind_by_move_pattern_guards)]
+#![feature(box_patterns)]
 
 mod span;
 mod error;

@@ -29,6 +29,9 @@ fn test(name: string, ok: bool) {
 
 test_eq("zero", 0, 0);
 test_eq("one", 1, 1);
+test_eq("binary number", 5, 0b101);
+test_eq("octal number", 27, 033);
+test_eq("hex number", 127, 0x7f);
 
 ## binary operators ##
 

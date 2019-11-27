@@ -96,12 +96,12 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_number(&mut self, start_char: char) -> Token {
-        let mut n = i64::from(start_char.to_digit(10).unwrap());
+    fn lex_number_with_radix(&mut self, initial: i64, radix: u32) -> Token {
+        let mut n = initial;
         loop {
             match self.peek() {
-                c if c.is_digit(10) => {
-                    n = n * 10 + i64::from(c.to_digit(10).unwrap());
+                c if c.is_digit(radix) => {
+                    n = n * radix as i64 + i64::from(c.to_digit(radix).unwrap());
                     self.read_char();
                 },
                 _ => {
@@ -111,6 +111,21 @@ impl<'a> Lexer<'a> {
         }
 
         Token::Number(n)
+    }
+
+    fn lex_number(&mut self, start_char: char) -> Token {
+        match start_char {
+            '0' if self.next_is('x') => {
+                self.read_char();
+                self.lex_number_with_radix(0, 16)
+            },
+            '0' if self.next_is('b') => {
+                self.read_char();
+                self.lex_number_with_radix(0, 2)
+            },
+            '0' => self.lex_number_with_radix(0, 8),
+            ch => self.lex_number_with_radix(ch.to_digit(10).unwrap() as i64, 10),
+        }
     }
 
     fn lex_identifier(&mut self, c: char) -> Token {
