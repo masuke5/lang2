@@ -67,7 +67,7 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
-    Bind(Id, Spanned<Expr>),
+    Bind(Id, Spanned<Expr>, bool),
     Expr(Spanned<Expr>),
     Block(Vec<Spanned<Stmt>>),
     Return(Option<Spanned<Expr>>),
@@ -79,7 +79,7 @@ pub enum Stmt {
 #[derive(Debug, PartialEq, Clone)]
 pub enum TopLevel {
     Stmt(Spanned<Stmt>),
-    Function(Id, Vec<(Id, Type)>, Type, Spanned<Stmt>),
+    Function(Id, Vec<(Id, Type, bool)>, Type, Spanned<Stmt>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -142,8 +142,8 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, depth: usize) {
     print!("{}", "  ".repeat(depth));
 
     match &stmt.kind {
-        Stmt::Bind(name, expr) => {
-            println!("let {} =", IdMap::name(*name));
+        Stmt::Bind(name, expr, is_mutable) => {
+            println!("let{}{} =", if *is_mutable { " mut " } else { "" }, IdMap::name(*name));
             dump_expr(&expr, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {

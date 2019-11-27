@@ -141,6 +141,7 @@ impl<'a> Lexer<'a> {
 
         match &self.raw[start_pos..self.pos] {
             "let" => Token::Let,
+            "mut" => Token::Mut,
             "fn" => Token::Fn,
             "int" => Token::Int,
             "bool" => Token::Bool,

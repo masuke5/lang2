@@ -376,6 +376,8 @@ impl Parser {
         let let_span = self.peek().span.clone();
         self.next();
 
+        let is_mutable = self.consume(&Token::Mut);
+
         // Bind name
         let name = self.expect_identifier(&[Token::Semicolon])?;
 
@@ -395,7 +397,7 @@ impl Parser {
 
         let span = Span::merge(&let_span, semicolon_span);
 
-        Some(spanned(Stmt::Bind(name, expr), span))
+        Some(spanned(Stmt::Bind(name, expr, is_mutable), span))
     }
 
     fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt>> {
@@ -583,8 +585,10 @@ impl Parser {
         result
     }
 
-    fn parse_param(&mut self) -> Option<(Id, Type)> {
+    fn parse_param(&mut self) -> Option<(Id, Type, bool)> {
         let tokens_to_skip = [Token::Comma, Token::Rparen];
+
+        let is_mutable = self.consume(&Token::Mut);
 
         // Parse the parameter name
         let name = self.expect_identifier(&tokens_to_skip)?;
@@ -593,10 +597,10 @@ impl Parser {
         self.expect(&Token::Colon, &tokens_to_skip)?;
         let ty = self.parse_skip(Self::parse_type, &tokens_to_skip)?;
 
-        Some((name, ty))
+        Some((name, ty, is_mutable))
     }
 
-    fn parse_param_list(&mut self) -> Option<Vec<(Id, Type)>> {
+    fn parse_param_list(&mut self) -> Option<Vec<(Id, Type, bool)>> {
         let mut params = Vec::new();
 
         if self.consume(&Token::Rparen) {

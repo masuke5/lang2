@@ -42,7 +42,7 @@ pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
     function_headers: HashMap<Id, FunctionHeader>,
-    variables: Vec<HashMap<Id, (isize, Type)>>,
+    variables: Vec<HashMap<Id, (isize, Type, bool)>>,
     errors: Vec<Error>,
     main_func_id: Id,
     current_func: Id,
@@ -75,28 +75,28 @@ impl<'a> Analyzer<'a> {
         self.variables.pop().unwrap();
     }
 
-    fn insert_params(&mut self, params: Vec<(Id, Type)>) {
+    fn insert_params(&mut self, params: Vec<(Id, Type, bool)>) {
         let last_map = self.variables.last_mut().unwrap();
         let mut loc = -2isize; // fp, ip
-        for (id, ty) in params.iter().rev() {
+        for (id, ty, is_mutable) in params.iter().rev() {
             loc -= ty.size() as isize;
-            last_map.insert(*id, (loc, ty.clone()));
+            last_map.insert(*id, (loc, ty.clone(), *is_mutable));
         }
     }
 
-    fn new_var(&mut self, id: Id, ty: Type) -> isize {
+    fn new_var(&mut self, id: Id, ty: Type, is_mutable: bool) -> isize {
         let last_map = self.variables.last_mut().unwrap();
         let current_func = self.functions.get_mut(&self.current_func).unwrap();
 
         current_func.stack_size += ty.size();
 
         let loc = current_func.stack_size as isize;
-        last_map.insert(id, (loc, ty.clone()));
+        last_map.insert(id, (loc, ty.clone(), is_mutable));
 
         loc
     }
 
-    fn find_var(&self, id: Id) -> Option<&(isize, Type)> {
+    fn find_var(&self, id: Id) -> Option<&(isize, Type, bool)> {
         for variables in self.variables.iter().rev() {
             if let Some(var) = variables.get(&id) {
                 return Some(var);
@@ -120,8 +120,29 @@ impl<'a> Analyzer<'a> {
 
     fn expr_is_lvalue(expr: &Expr) -> bool {
         match expr {
-            Expr::Variable(_) | Expr::Dereference(_) | Expr::Field(_, _) => true,
+            Expr::Variable(_) | Expr::Dereference(_) => true,
+            Expr::Field(expr, _) => Self::expr_is_lvalue(&expr.kind),
             _ => false,
+        }
+    }
+
+    // return true if expr specified is mutable. this function doesn't check if a variable exists
+    fn expr_is_mutable(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(name) => {
+                match self.find_var(*name) {
+                    Some((_, _, is_mutable)) => *is_mutable,
+                    None => false,
+                }
+            },
+            Expr::Dereference(_) => {
+                // TODO: return true if the expr type is `mut pointer`
+                true
+            },
+            Expr::Field(expr, _) => {
+                self.expr_is_mutable(&expr.kind)
+            },
+            _ => false, // expr is not lvalue
         }
     }
 
@@ -182,7 +203,7 @@ impl<'a> Analyzer<'a> {
                 ty.clone()
             },
             Expr::Variable(name) => {
-                let (loc, ty) = match self.find_var(name) {
+                let (loc, ty, _) = match self.find_var(name) {
                     Some(r) => r,
                     None => {
                         self.add_error("undefined variable", expr.span.clone());
@@ -452,16 +473,21 @@ impl<'a> Analyzer<'a> {
                 }
                 self.pop_scope();
             },
-            Stmt::Bind(name, expr) => {
+            Stmt::Bind(name, expr, is_mutable) => {
                 let (ty, _) = self.walk_expr(insts, expr);
 
-                let loc = self.new_var(name, ty.clone());
+                let loc = self.new_var(name, ty.clone(), is_mutable);
                 insts.push(Inst::Load(loc as isize));
                 insts.push(Inst::Store);
             },
             Stmt::Assign(lhs, rhs) => {
                 if !Self::expr_is_lvalue(&lhs.kind) {
                     error!(self, lhs.span, "unassignable expression");
+                    return;
+                }
+
+                if !self.expr_is_mutable(&lhs.kind) {
+                    error!(self, lhs.span, "immutable expression");
                     return;
                 }
 
@@ -531,7 +557,7 @@ impl<'a> Analyzer<'a> {
 
     fn insert_function_header(&mut self, toplevel: &TopLevel) {
         if let TopLevel::Function(name, params, return_ty, _) = toplevel {
-            let param_types: Vec<Type> = params.iter().map(|(_, ty)| ty.clone()).collect();
+            let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
             let param_count = param_types.len();
 
             // Insert a header of the function
