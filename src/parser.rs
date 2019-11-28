@@ -293,34 +293,26 @@ impl Parser {
         Some(expr)
     }
 
+    #[inline]
+    fn parse_unary_op<P, F>(&mut self, mut parse: P, f: F) -> Option<Spanned<Expr>>
+        where P: FnMut(&mut Self) -> Option<Spanned<Expr>>,
+              F: Fn(Box<Spanned<Expr>>) -> Expr
+    {
+        let symbol_span = self.peek().span.clone();
+        self.next();
+
+        let expr = parse(self)?;
+        let span = Span::merge(&symbol_span, &expr.span);
+        Some(spanned(f(Box::new(expr)), span))
+    }
+
     fn parse_unary(&mut self) -> Option<Spanned<Expr>> {
         let parse = Self::parse_field;
 
         match self.peek().kind {
-            Token::Ampersand => {
-                let symbol_span = self.peek().span.clone();
-                self.next();
-
-                let expr = parse(self)?;
-                let span = Span::merge(&symbol_span, &expr.span);
-                Some(spanned(Expr::Address(Box::new(expr)), span))
-            },
-            Token::Asterisk => {
-                let symbol_span = self.peek().span.clone();
-                self.next();
-
-                let expr = parse(self)?;
-                let span = Span::merge(&symbol_span, &expr.span);
-                Some(spanned(Expr::Dereference(Box::new(expr)), span))
-            },
-            Token::Sub => {
-                let symbol_span = self.peek().span.clone();
-                self.next();
-
-                let expr = parse(self)?;
-                let span = Span::merge(&symbol_span, &expr.span);
-                Some(spanned(Expr::Negative(Box::new(expr)), span))
-            }
+            Token::Ampersand => self.parse_unary_op(parse, |expr| Expr::Address(expr)),
+            Token::Asterisk => self.parse_unary_op(parse, |expr| Expr::Dereference(expr)),
+            Token::Sub => self.parse_unary_op(parse, |expr| Expr::Negative(expr)),
             _ => parse(self),
         }
     }
@@ -544,7 +536,11 @@ impl Parser {
     fn parse_type_pointer(&mut self) -> Option<Type> {
         self.next(); // eat '*'
         let ty = self.parse_type()?;
-        return Some(Type::Pointer(Box::new(ty)));
+
+        // FIXME: remove later
+        self.pos -= 1;
+
+        Some(Type::Pointer(Box::new(ty)))
     }
 
     fn parse_type_tuple(&mut self) -> Option<Type> {
@@ -623,7 +619,11 @@ impl Parser {
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
             _ => {
-                error!(self, self.peek().span.clone(), "expected `int`, `bool`, `string` or `(` but got `{}`", self.peek().kind);
+                error!(self,
+                    self.peek().span.clone(),
+                    "expected `int`, `bool`, `string`, `(`, `struct` or `identifier` but got `{}`",
+                    self.peek().kind
+                );
                 None
             },
         };
