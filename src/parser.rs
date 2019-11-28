@@ -31,9 +31,16 @@ impl Parser {
         }
     }
 
+    #[inline]
     fn next(&mut self) -> &Spanned<Token> {
         self.pos += 1;
         &self.tokens[self.pos]
+    }
+
+    #[inline]
+    fn next_and<T>(&mut self, value: T) -> T {
+        self.next();
+        value
     }
 
     #[inline]
@@ -537,31 +544,34 @@ impl Parser {
         self.next(); // eat '*'
         let ty = self.parse_type()?;
 
-        // FIXME: remove later
-        self.pos -= 1;
-
         Some(Type::Pointer(Box::new(ty)))
     }
 
     fn parse_type_tuple(&mut self) -> Option<Type> {
         self.next(); // eat "("
 
-        if self.peek().kind == Token::Rparen {
+        if self.consume(&Token::Rparen) {
             Some(Type::Unit)
         } else {
             let mut inner = Vec::new();
 
-            let ty = self.parse_skip(Self::parse_type, &[Token::Rparen])?;
-            inner.push(ty);
+            let ty = self.parse_skip(Self::parse_type, &[Token::Comma, Token::Rparen]);
+            if let Some(ty) = ty {
+                inner.push(ty);
+            }
 
-            while self.consume(&Token::Comma) && !self.consume(&Token::Rparen) {
-                if self.consume(&Token::Rparen) {
+            while self.peek().kind != Token::Rparen && self.consume(&Token::Comma) {
+                if self.peek().kind == Token::Rparen {
                     break;
                 }
 
-                let ty = self.parse_skip(Self::parse_type, &[Token::Comma, Token::Rparen])?;
-                inner.push(ty);
+                let ty = self.parse_skip(Self::parse_type, &[Token::Comma, Token::Rparen]);
+                if let Some(ty) = ty {
+                    inner.push(ty);
+                }
             }
+
+            self.expect(&Token::Rparen, &[Token::Rparen]);
 
             Some(Type::Tuple(inner))
         }
@@ -594,7 +604,7 @@ impl Parser {
                 fields.push(first);
             }
 
-            while self.consume(&Token::Comma) && self.peek().kind != Token::Rbrace {
+            while self.peek().kind != Token::Rbrace && self.consume(&Token::Comma) {
                 if self.peek().kind == Token::Rbrace {
                     break;
                 }
@@ -605,16 +615,18 @@ impl Parser {
                 }
             }
 
+            self.expect(&Token::Rbrace, &[Token::Rbrace]);
+
             Some(Type::Struct(fields))
         }
     }
 
     fn parse_type(&mut self) -> Option<Type> {
-        let result = match self.peek().kind {
-            Token::Int => Some(Type::Int),
-            Token::Bool => Some(Type::Bool),
-            Token::StringType => Some(Type::String),
-            Token::Identifier(name) => Some(Type::Named(name)),
+        match self.peek().kind {
+            Token::Int => self.next_and(Some(Type::Int)),
+            Token::Bool => self.next_and(Some(Type::Bool)),
+            Token::StringType => self.next_and(Some(Type::String)),
+            Token::Identifier(name) => self.next_and(Some(Type::Named(name))),
             Token::Asterisk => self.parse_type_pointer(),
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
@@ -624,13 +636,10 @@ impl Parser {
                     "expected `int`, `bool`, `string`, `(`, `struct` or `identifier` but got `{}`",
                     self.peek().kind
                 );
+                self.next();
                 None
             },
-        };
-
-        self.next();
-
-        result
+        }
     }
 
     fn parse_param(&mut self) -> Option<(Id, Type, bool)> {
@@ -671,7 +680,8 @@ impl Parser {
             }
         }
 
-        self.expect(&Token::Rparen, &[Token::Rparen])?;
+        self.expect(&Token::Rparen, &[Token::Rparen]);
+
         Some(params)
     }
 

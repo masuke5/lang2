@@ -139,7 +139,7 @@ test_eq("variable tuple indexing", 9, tuple.1.2);
 test("function passed a tuple", tuple((5, 3, 8)));
 test_eq("function returning a tuple", 12, double((3, 6)).1);
 
-fn tuple(t: (int, int, int)): bool {
+fn tuple(t: (int, int, int,)): bool {
     return t.0 = 5 && t.1 = 3 && t.2 = 8;
 }
 
