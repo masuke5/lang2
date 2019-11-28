@@ -42,6 +42,7 @@ pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
     function_headers: HashMap<Id, FunctionHeader>,
+    types: HashMap<Id, Option<Type>>,
     variables: Vec<HashMap<Id, (isize, Type, bool)>>,
     errors: Vec<Error>,
     main_func_id: Id,
@@ -57,6 +58,7 @@ impl<'a> Analyzer<'a> {
             functions: HashMap::new(),
             function_headers: HashMap::new(),
             variables: Vec::with_capacity(5),
+            types: HashMap::new(),
             errors: Vec::new(),
             main_func_id,
             current_func: main_func_id, 
@@ -524,8 +526,30 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_toplevel(&mut self, main_insts: &mut Vec<Inst>, toplevel: TopLevel) {
-        match toplevel {
+    fn walk_type(&mut self, ty: &Type, span: &Span) {
+        match ty {
+            Type::Named(name) => {
+                if !self.types.contains_key(name) {
+                    error!(self, span.clone(), "undefined type `{}`", IdMap::name(*name));
+                }
+            },
+            Type::Struct(fields) => {
+                for (_, ty) in fields {
+                    self.walk_type(ty, span);
+                }
+            },
+            Type::Tuple(types) => {
+                for ty in types {
+                    self.walk_type(ty, span);
+                }
+            },
+            Type::Pointer(ty) => self.walk_type(ty, span),
+            Type::Int | Type::Bool | Type::String | Type::Unit | Type::Invalid => {},
+        }
+    }
+
+    fn walk_toplevel(&mut self, main_insts: &mut Vec<Inst>, toplevel: Spanned<TopLevel>) {
+        match toplevel.kind {
             TopLevel::Stmt(stmt) => {
                 self.current_func = self.main_func_id;
                 self.walk_stmt(main_insts, stmt);
@@ -552,24 +576,34 @@ impl<'a> Analyzer<'a> {
 
                 self.pop_scope();
             },
+            TopLevel::Type(name, ty) => {
+                self.walk_type(&ty, &toplevel.span);
+                self.types.insert(name, Some(ty));
+            },
         }
     }
 
     fn insert_function_header(&mut self, toplevel: &TopLevel) {
-        if let TopLevel::Function(name, params, return_ty, _) = toplevel {
-            let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
-            let param_count = param_types.len();
+        match toplevel {
+            TopLevel::Function(name, params, return_ty, _) => {
+                let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
+                let param_count = param_types.len();
 
-            // Insert a header of the function
-            let header = FunctionHeader {
-                params: param_types,
-                return_ty: return_ty.clone(),
-            };
-            self.function_headers.insert(*name, header);
+                // Insert a header of the function
+                let header = FunctionHeader {
+                    params: param_types,
+                    return_ty: return_ty.clone(),
+                };
+                self.function_headers.insert(*name, header);
 
-            // Insert function
-            let func = Function::new(*name, param_count);
-            self.functions.insert(*name, func);
+                // Insert function
+                let func = Function::new(*name, param_count);
+                self.functions.insert(*name, func);
+            },
+            TopLevel::Type(name, _) => {
+                self.types.insert(*name, None);
+            },
+            _ => {},
         }
     }
 
@@ -594,12 +628,16 @@ impl<'a> Analyzer<'a> {
 
         let mut main_insts = Vec::new();
         for toplevel in program.top {
-            self.walk_toplevel(&mut main_insts, toplevel.kind);
+            self.walk_toplevel(&mut main_insts, toplevel);
         }
 
         self.pop_scope();
 
         self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
+
+        for (name, ty) in &self.types {
+            println!("type {} {};", IdMap::name(*name), ty.as_ref().unwrap());
+        }
 
         if !self.errors.is_empty() {
             Err(self.errors)

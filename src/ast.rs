@@ -80,6 +80,7 @@ pub enum Stmt {
 pub enum TopLevel {
     Stmt(Spanned<Stmt>),
     Function(Id, Vec<(Id, Type, bool)>, Type, Spanned<Stmt>),
+    Type(Id, Type),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -188,6 +189,14 @@ pub fn dump_toplevel(toplevel: &Spanned<TopLevel>) {
         TopLevel::Function(name, params, return_ty, body) => {
             println!("fn {}({}): {:?} {}", IdMap::name(*name), params.len(), return_ty, span_to_string(&toplevel.span));
             dump_stmt(&body, 1);
+        },
+        TopLevel::Type(name, ty) => {
+            println!(
+                "type {} {} {}",
+                IdMap::name(*name),
+                ty,
+                span_to_string(&toplevel.span)
+            );
         },
     }
 }

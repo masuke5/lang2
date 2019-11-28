@@ -541,39 +541,87 @@ impl Parser {
         }
     }
 
+    fn parse_type_pointer(&mut self) -> Option<Type> {
+        self.next(); // eat '*'
+        let ty = self.parse_type()?;
+        return Some(Type::Pointer(Box::new(ty)));
+    }
+
+    fn parse_type_tuple(&mut self) -> Option<Type> {
+        self.next(); // eat "("
+
+        if self.peek().kind == Token::Rparen {
+            Some(Type::Unit)
+        } else {
+            let mut inner = Vec::new();
+
+            let ty = self.parse_skip(Self::parse_type, &[Token::Rparen])?;
+            inner.push(ty);
+
+            while self.consume(&Token::Comma) && !self.consume(&Token::Rparen) {
+                if self.consume(&Token::Rparen) {
+                    break;
+                }
+
+                let ty = self.parse_skip(Self::parse_type, &[Token::Comma, Token::Rparen])?;
+                inner.push(ty);
+            }
+
+            Some(Type::Tuple(inner))
+        }
+    }
+
+    fn parse_struct_field(&mut self) -> Option<(Id, Type)> {
+        let tokens_to_skip = &[Token::Comma, Token::Rbrace];
+
+        // name: ty
+        let name = self.expect_identifier(tokens_to_skip)?;
+        self.expect(&Token::Colon, tokens_to_skip)?;
+        let ty = self.parse_skip(Self::parse_type, tokens_to_skip)?;
+
+        Some((name, ty))
+    }
+
+    fn parse_type_struct(&mut self) -> Option<Type> {
+        // Eat "struct"
+        self.next();
+
+        self.expect(&Token::Lbrace, &[Token::Rbrace])?;
+
+        if self.consume(&Token::Rbrace) {
+            Some(Type::Struct(Vec::new()))
+        } else {
+            let mut fields = Vec::new();
+
+            let first = self.parse_struct_field();
+            if let Some(first) = first {
+                fields.push(first);
+            }
+
+            while self.consume(&Token::Comma) && self.peek().kind != Token::Rbrace {
+                if self.peek().kind == Token::Rbrace {
+                    break;
+                }
+
+                let field = self.parse_struct_field();
+                if let Some(field) = field {
+                    fields.push(field);
+                }
+            }
+
+            Some(Type::Struct(fields))
+        }
+    }
+
     fn parse_type(&mut self) -> Option<Type> {
         let result = match self.peek().kind {
             Token::Int => Some(Type::Int),
             Token::Bool => Some(Type::Bool),
             Token::StringType => Some(Type::String),
-            Token::Asterisk => {
-                self.next(); // eat '*'
-                let ty = self.parse_type()?;
-                return Some(Type::Pointer(Box::new(ty)));
-            },
-            Token::Lparen => {
-                self.next();
-
-                if self.consume(&Token::Rparen) {
-                    return Some(Type::Unit);
-                } else {
-                    let mut inner = Vec::new();
-
-                    let ty = self.parse_skip(Self::parse_type, &[Token::Rparen])?;
-                    inner.push(ty);
-
-                    while self.consume(&Token::Comma) && !self.consume(&Token::Rparen) {
-                        if self.consume(&Token::Rparen) {
-                            break;
-                        }
-
-                        let ty = self.parse_skip(Self::parse_type, &[Token::Comma, Token::Rparen])?;
-                        inner.push(ty);
-                    }
-
-                    Some(Type::Tuple(inner))
-                }
-            },
+            Token::Identifier(name) => Some(Type::Named(name)),
+            Token::Asterisk => self.parse_type_pointer(),
+            Token::Lparen => self.parse_type_tuple(), // tuple
+            Token::Struct => self.parse_type_struct(), // struct
             _ => {
                 error!(self, self.peek().span.clone(), "expected `int`, `bool`, `string` or `(` but got `{}`", self.peek().kind);
                 None
@@ -653,9 +701,23 @@ impl Parser {
         Some(spanned(TopLevel::Function(name?, params, return_ty?, body), span))
     }
 
+    fn parse_def_type(&mut self) -> Option<Spanned<TopLevel>> {
+        let type_span = self.peek().span.clone();
+        self.next(); // eat "type"
+
+        let name = self.expect_identifier(&[Token::Semicolon])?;
+        let ty = self.parse_skip(Self::parse_type, &[Token::Semicolon])?;
+
+        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+
+        let span = Span::merge(&type_span, &self.prev().span);
+        Some(spanned(TopLevel::Type(name, ty), span))
+    }
+
     fn parse_toplevel(&mut self) -> Option<Spanned<TopLevel>> {
         match self.peek().kind {
             Token::Fn => self.parse_fn_decl(),
+            Token::Type => self.parse_def_type(),
             _ => self.parse_stmt().map(|stmt| {
                 let span = stmt.span.clone();
                 spanned(TopLevel::Stmt(stmt), span)

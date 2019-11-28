@@ -152,6 +152,8 @@ impl<'a> Lexer<'a> {
             "while" => Token::While,
             "true" => Token::True,
             "false" => Token::False,
+            "type" => Token::Type,
+            "struct" => Token::Struct,
             s => {
                 let id = IdMap::new_id(s);
                 Token::Identifier(id)

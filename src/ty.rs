@@ -1,4 +1,5 @@
 use std::fmt;
+use crate::id::{Id, IdMap};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -8,6 +9,8 @@ pub enum Type {
     Unit,
     Pointer(Box<Type>),
     Tuple(Vec<Type>),
+    Struct(Vec<(Id, Type)>),
+    Named(Id),
     Invalid,
 }
 
@@ -31,7 +34,24 @@ impl fmt::Display for Type {
                 }
 
                 write!(f, ")")
-            }
+            },
+            Type::Struct(fields) => {
+                write!(f, "struct {{")?;
+
+                let mut iter = fields.iter();
+
+                if let Some((id, ty)) = iter.next() {
+                    write!(f, " {}: {}", IdMap::name(*id), ty)?;
+                    for (id, ty) in iter {
+                        write!(f, ", {}: {}", IdMap::name(*id), ty)?;
+                    }
+                }
+
+                write!(f, " }}")
+            },
+            Type::Named(name) => {
+                write!(f, "{}", IdMap::name(*name))
+            },
             Type::Invalid => write!(f, "invalid"),
         }
     }
