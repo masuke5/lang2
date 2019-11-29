@@ -189,11 +189,57 @@ impl Parser {
         Some(spanned(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
     }
 
+    fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {
+        let tokens_to_skip = &[Token::Comma, Token::Rbrace];
+
+        let name = self.expect_identifier(tokens_to_skip)?;
+        let name = spanned(name, self.prev().span.clone());
+
+        self.expect(&Token::Colon, tokens_to_skip)?;
+
+        let expr = self.parse_skip(Self::parse_expr, tokens_to_skip)?;
+
+        Some((name, expr))
+    }
+
+    fn parse_struct(&mut self, name: Id, name_span: Span) -> Option<Spanned<Expr>> {
+        if self.consume(&Token::Rbrace) {
+            let span = Span::merge(&name_span, &self.prev().span);
+            Some(spanned(Expr::Struct(name, Vec::new()), span))
+        } else {
+            let mut fields = Vec::new();
+
+            match self.parse_field_init() {
+                Some(field) => fields.push(field),
+                None => self.skip_to(&[Token::Comma, Token::Rbrace]),
+            };
+
+            while self.peek().kind != Token::Rbrace && self.consume(&Token::Comma) {
+                if self.peek().kind == Token::Rbrace {
+                    break;
+                }
+
+                match self.parse_field_init() {
+                    Some(field) => fields.push(field),
+                    None => self.skip_to(&[Token::Comma, Token::Rbrace]),
+                };
+            }
+
+            self.expect(&Token::Rbrace, &[Token::Rbrace])?;
+            
+
+            let span = Span::merge(&name_span, &self.prev().span);
+            Some(spanned(Expr::Struct(name, fields), span))
+        }
+    }
+
     fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<Spanned<Expr>> {
         self.next();
 
         if self.consume(&Token::Lparen) {
             self.parse_call(ident, ident_span)
+        } else if self.consume(&Token::Lbrace) {
+            self.parse_struct(ident, ident_span)
         } else {
             Some(spanned(Expr::Variable(ident), ident_span.clone()))
         }

@@ -56,6 +56,7 @@ pub enum Field {
 pub enum Expr {
     Literal(Literal),
     Tuple(Vec<Spanned<Expr>>),
+    Struct(Id, Vec<(Spanned<Id>, Spanned<Expr>)>),
     Field(Box<Spanned<Expr>>, Field),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
@@ -102,6 +103,14 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
             println!("tuple {}", span_to_string(&expr.span));
             for expr in exprs {
                 dump_expr(&expr, depth + 1);
+            }
+        },
+        Expr::Struct(id, fields) => {
+            println!("struct {} {}", IdMap::name(*id), span_to_string(&expr.span));
+            for (name, expr) in fields {
+                print!("{}", "  ".repeat(depth + 1));
+                println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
+                dump_expr(expr, depth + 2);
             }
         },
         Expr::Field(expr, field) => {

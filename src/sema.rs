@@ -42,7 +42,7 @@ pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
     function_headers: HashMap<Id, FunctionHeader>,
-    types: HashMap<Id, Option<Type>>,
+    types: HashMap<Id, Type>,
     variables: Vec<HashMap<Id, (isize, Type, bool)>>,
     errors: Vec<Error>,
     main_func_id: Id,
@@ -180,6 +180,43 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::Record(types.len()));
 
                 Type::Tuple(types)
+            },
+            Expr::Struct(name, fields) => {
+                let ty = match self.types.get(&name) {
+                    Some(ty) => ty,
+                    None => {
+                        error!(self, expr.span.clone(), "undefined type `{}`", IdMap::name(name));
+                        return (Type::Invalid, expr.span);
+                    },
+                };
+
+                match ty.clone() {
+                    Type::Struct(ty_fields) => {
+                        if fields.len() < ty_fields.len() {
+                            error!(self, expr.span.clone(), "not enough fields");
+                        }
+
+                        for (field_name, field_expr) in fields {
+                            let (ty, expr_span) = self.walk_expr(insts, field_expr);
+                            match ty_fields.iter().find(|(name, _)| *name == field_name.kind) {
+                                Some((_, expected_ty)) => {
+                                    check_type!(self, *expected_ty, ty, "expected type `{expected}` but got `{actual}`", expr_span);
+                                },
+                                None => {
+                                    error!(self, field_name.span, "field `{}` does not exists", IdMap::name(field_name.kind));
+                                },
+                            }
+                        }
+
+                        insts.push(Inst::Record(ty_fields.len()));
+                        
+                        Type::Named(name)
+                    },
+                    ty => {
+                        error!(self, expr.span.clone(), "expected struct but got `{}`", ty);
+                        Type::Invalid
+                    }
+                }
             },
             Expr::Field(tuple_expr, Field::Number(i)) => {
                 let (ty, tuple_span) = self.walk_expr(insts, *tuple_expr);
@@ -576,9 +613,8 @@ impl<'a> Analyzer<'a> {
 
                 self.pop_scope();
             },
-            TopLevel::Type(name, ty) => {
+            TopLevel::Type(_, ty) => {
                 self.walk_type(&ty, &toplevel.span);
-                self.types.insert(name, Some(ty));
             },
         }
     }
@@ -600,8 +636,8 @@ impl<'a> Analyzer<'a> {
                 let func = Function::new(*name, param_count);
                 self.functions.insert(*name, func);
             },
-            TopLevel::Type(name, _) => {
-                self.types.insert(*name, None);
+            TopLevel::Type(name, ty) => {
+                self.types.insert(*name, ty.clone());
             },
             _ => {},
         }
@@ -636,7 +672,7 @@ impl<'a> Analyzer<'a> {
         self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
 
         for (name, ty) in &self.types {
-            println!("type {} {};", IdMap::name(*name), ty.as_ref().unwrap());
+            println!("type {} {};", IdMap::name(*name), ty);
         }
 
         if !self.errors.is_empty() {
