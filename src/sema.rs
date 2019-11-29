@@ -192,11 +192,7 @@ impl<'a> Analyzer<'a> {
 
                 match ty.clone() {
                     Type::Struct(ty_fields) => {
-                        if fields.len() < ty_fields.len() {
-                            error!(self, expr.span.clone(), "not enough fields");
-                        }
-
-                        for (field_name, field_expr) in fields {
+                        /*for (field_name, field_expr) in fields {
                             let (ty, expr_span) = self.walk_expr(insts, field_expr);
                             match ty_fields.iter().find(|(name, _)| *name == field_name.kind) {
                                 Some((_, expected_ty)) => {
@@ -206,9 +202,33 @@ impl<'a> Analyzer<'a> {
                                     error!(self, field_name.span, "field `{}` does not exists", IdMap::name(field_name.kind));
                                 },
                             }
+                        }*/
+
+                        // Push fields in order
+                        let mut not_enough_fields = Vec::new();
+                        for (name, ty) in ty_fields {
+                            match fields.iter().find(|(field_name, _)| field_name.kind == name) {
+                                Some((_, field_expr)) => {
+                                    // TODO: remove clone() if possible
+                                    let (expr_ty, expr_span) = self.walk_expr(insts, field_expr.clone());
+                                    check_type!(self, ty, expr_ty, "expected type `{expected}` but got `{actual}`", expr_span);
+                                },
+                                None => {
+                                    not_enough_fields.push(name);
+                                },
+                            }
                         }
 
-                        insts.push(Inst::Record(ty_fields.len()));
+                        if !not_enough_fields.is_empty() {
+                            let mut fields = not_enough_fields
+                                .into_iter()
+                                .map(|id| IdMap::name(id))
+                                .fold(String::new(), |acc, s| acc + &s + ", ");
+                            fields.truncate(fields.len() - 2);
+                            error!(self, expr.span.clone(), "not enough fields: {}", fields);
+                        }
+
+                        insts.push(Inst::Record(fields.len()));
                         
                         Type::Named(name)
                     },
@@ -240,6 +260,47 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::Field(i));
 
                 ty.clone()
+            },
+            Expr::Field(struct_expr, Field::Id(id)) => {
+                let (ty, struct_span) = self.walk_expr(insts, *struct_expr);
+
+                let fields = match &ty {
+                    Type::Named(id) => {
+                        let ty = match self.types.get(&id) {
+                            Some(ty) => ty,
+                            None => {
+                                error!(self, struct_span, "type `{}` does not exist", IdMap::name(*id));
+                                return (Type::Invalid, expr.span);
+                            },
+                        };
+
+                        match ty {
+                            Type::Struct(fields) => fields,
+                            ty => {
+                                error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
+                                return (Type::Invalid, expr.span);
+                            },
+                        }
+                    },
+                    Type::Struct(fields) => fields,
+                    ty => {
+                        error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
+                        return (Type::Invalid, expr.span);
+                    },
+                };
+
+                let i = match fields.iter().position(|(name, _)| *name == id) {
+                    Some(i) => i,
+                    None => {
+                        error!(self, expr.span.clone(), "field does not exists");
+                        return (Type::Invalid, expr.span);
+                    },
+                };
+                let (_, field_ty) = &fields[i];
+
+                insts.push(Inst::Field(i));
+
+                field_ty.clone()
             },
             Expr::Variable(name) => {
                 let (loc, ty, _) = match self.find_var(name) {
@@ -670,10 +731,6 @@ impl<'a> Analyzer<'a> {
         self.pop_scope();
 
         self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
-
-        for (name, ty) in &self.types {
-            println!("type {} {};", IdMap::name(*name), ty);
-        }
 
         if !self.errors.is_empty() {
             Err(self.errors)

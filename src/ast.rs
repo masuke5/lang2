@@ -50,6 +50,7 @@ pub enum Literal {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Field {
     Number(usize),
+    Id(Id),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -116,6 +117,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
         Expr::Field(expr, field) => {
             match field {
                 Field::Number(i) => println!(".{} {}", i, span_to_string(&expr.span)),
+                Field::Id(id) => println!(".{} {}", IdMap::name(*id), span_to_string(&expr.span)),
             };
 
             dump_expr(&expr, depth + 1);
@@ -153,7 +155,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, depth: usize) {
 
     match &stmt.kind {
         Stmt::Bind(name, expr, is_mutable) => {
-            println!("let{}{} =", if *is_mutable { " mut " } else { "" }, IdMap::name(*name));
+            println!("let {}{} =", if *is_mutable { " mut " } else { "" }, IdMap::name(*name));
             dump_expr(&expr, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {

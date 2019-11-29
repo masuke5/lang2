@@ -334,6 +334,11 @@ impl Parser {
                         let span = Span::merge(&expr.span, &self.prev().span);
                         expr = spanned(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
                     },
+                    Token::Identifier(id) => {
+                        self.next();
+                        let span = Span::merge(&expr.span, &self.prev().span);
+                        expr = spanned(Expr::Field(Box::new(expr), Field::Id(id)), span);
+                    },
                     _ => {
                         error!(self, self.peek().span.clone(), "expected `number` but got `{}`", self.peek().kind);
                     }

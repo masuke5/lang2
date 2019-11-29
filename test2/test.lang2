@@ -168,6 +168,42 @@ fn add_2(n: *int): () {
     return;
 }
 
+## structure ##
+
+type Value struct {
+    n: int,
+    next: Node,
+};
+
+type Node struct {
+    value: Value,
+};
+
+type Child struct {
+    age: int,
+    age_in_months: int,
+};
+
+type Person struct {
+    name: string,
+    age: int,
+    child: Child,
+};
+
+let name = "Tarou";
+let person = Person {
+    age: 234,
+    name: name,
+    child: Child {
+        age: 0,
+        age_in_months: 8, 
+    },
+};
+
+test_eq("struct field 1", 234, person.age);
+test_eq("struct field 2", 0, person.child.age);
+test_eq("struct field 3", 8, person.child.age_in_months);
+
 ## other expressions ##
 
 test_eq("negative", -39, -15 - 24);

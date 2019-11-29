@@ -1,4 +1,4 @@
-#![feature(box_patterns)]
+#![feature(box_patterns, slice_concat_trait)]
 
 mod span;
 mod error;
