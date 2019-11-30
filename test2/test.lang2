@@ -191,10 +191,10 @@ type Person struct {
 };
 
 let name = "Tarou";
-let person = Person {
+let person = Person:{
     age: 234,
     name: name,
-    child: Child {
+    child: Child:{
         age: 0,
         age_in_months: 8, 
     },

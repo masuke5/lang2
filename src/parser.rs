@@ -203,6 +203,8 @@ impl Parser {
     }
 
     fn parse_struct(&mut self, name: Id, name_span: Span) -> Option<Spanned<Expr>> {
+        self.expect(&Token::Lbrace, &[Token::Lbrace]);
+
         if self.consume(&Token::Rbrace) {
             let span = Span::merge(&name_span, &self.prev().span);
             Some(spanned(Expr::Struct(name, Vec::new()), span))
@@ -238,7 +240,7 @@ impl Parser {
 
         if self.consume(&Token::Lparen) {
             self.parse_call(ident, ident_span)
-        } else if self.consume(&Token::Lbrace) {
+        } else if self.consume(&Token::Colon) {
             self.parse_struct(ident, ident_span)
         } else {
             Some(spanned(Expr::Variable(ident), ident_span.clone()))
