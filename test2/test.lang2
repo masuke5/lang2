@@ -168,6 +168,14 @@ fn add_2(n: *int): () {
     return;
 }
 
+let tuple = (3141, 1314, 939);
+let ptr = &tuple;
+test_eq("dereference tuple field", 1314, ptr.1);
+
+let person = Person:{ name: "aa", age: 34, child: Child:{ age: 1, age_in_months: 0 } };
+let ptr = &person;
+test_eq("dereference struct field", 34, ptr.age);
+
 ## structure ##
 
 type Value struct {

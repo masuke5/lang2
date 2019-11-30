@@ -219,6 +219,7 @@ impl<'a> Analyzer<'a> {
                             }
                         }
 
+                        // Add an error if there are not enough fields
                         if !not_enough_fields.is_empty() {
                             let mut fields = not_enough_fields
                                 .into_iter()
@@ -243,6 +244,16 @@ impl<'a> Analyzer<'a> {
 
                 let types = match ty {
                     Type::Tuple(types) => types,
+                    Type::Pointer(ty) => {
+                        insts.push(Inst::Dereference);
+                        match ty {
+                            box Type::Tuple(types) => types,
+                            ty => {
+                                error!(self, tuple_span.clone(), "expected type `tuple` but got type `{}`", ty);
+                                return (Type::Invalid, expr.span);
+                            },
+                        }
+                    },
                     ty => {
                         error!(self, tuple_span.clone(), "expected type `tuple` but got type `{}`", ty);
                         return (Type::Invalid, expr.span);
@@ -276,6 +287,35 @@ impl<'a> Analyzer<'a> {
 
                         match ty {
                             Type::Struct(fields) => fields,
+                            ty => {
+                                error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
+                                return (Type::Invalid, expr.span);
+                            },
+                        }
+                    },
+                    Type::Pointer(ty) => {
+                        insts.push(Inst::Dereference);
+                        match &ty {
+                            box Type::Struct(fields) => {
+                                fields
+                            },
+                            box Type::Named(id) => {
+                                let ty = match self.types.get(&id) {
+                                    Some(ty) => ty,
+                                    None => {
+                                        error!(self, struct_span, "type `{}` does not exist", IdMap::name(*id));
+                                        return (Type::Invalid, expr.span);
+                                    },
+                                };
+
+                                match ty {
+                                    Type::Struct(fields) => fields,
+                                    ty => {
+                                        error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
+                                        return (Type::Invalid, expr.span);
+                                    },
+                                }
+                            },
                             ty => {
                                 error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
                                 return (Type::Invalid, expr.span);
