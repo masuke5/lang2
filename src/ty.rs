@@ -60,6 +60,8 @@ impl fmt::Display for Type {
 impl Type {
     pub fn size(&self) -> usize {
         match self {
+            Type::Tuple(types) => types.iter().fold(0, |acc, ty| acc + ty.size()),
+            Type::Struct(fields) => fields.iter().fold(0, |acc, (_, ty)| acc + ty.size()),
             Type::Invalid => 0,
             _ => 1,
         }

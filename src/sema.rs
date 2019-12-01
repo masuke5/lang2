@@ -41,6 +41,9 @@ struct FunctionHeader {
 struct ExprInfo {
     pub ty: Type,
     pub span: Span,
+    // Variable offset of compound data such as tuple and structure
+    // Set only when type of expression passed to walk_expr is tuple or struct.
+    pub loc: Option<isize>,
 }
 
 impl ExprInfo {
@@ -48,6 +51,15 @@ impl ExprInfo {
         Self {
             ty,
             span,
+            loc: None,
+        }
+    }
+
+    fn with_loc(ty: Type, span: Span, loc: isize) -> Self {
+        Self {
+            ty,
+            span,
+            loc: Some(loc),
         }
     }
 
@@ -55,6 +67,7 @@ impl ExprInfo {
         Self {
             ty: Type::Invalid,
             span,
+            loc: None,
         }
     }
 }
@@ -69,6 +82,7 @@ pub struct Analyzer<'a> {
     errors: Vec<Error>,
     main_func_id: Id,
     current_func: Id,
+    next_temp_num: u32,
 }
 
 impl<'a> Analyzer<'a> {
@@ -84,6 +98,7 @@ impl<'a> Analyzer<'a> {
             errors: Vec::new(),
             main_func_id,
             current_func: main_func_id, 
+            next_temp_num: 0,
         }
     }
 
@@ -108,16 +123,26 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    // ====================================
+    //  Variable
+    // ====================================
+
     fn new_var(&mut self, id: Id, ty: Type, is_mutable: bool) -> isize {
         let last_map = self.variables.last_mut().unwrap();
         let current_func = self.functions.get_mut(&self.current_func).unwrap();
 
-        current_func.stack_size += ty.size();
-
         let loc = current_func.stack_size as isize;
         last_map.insert(id, (loc, ty.clone(), is_mutable));
 
+        current_func.stack_size += ty.size();
+
         loc
+    }
+
+    fn gen_temp_id(&mut self) -> Id {
+        let id = IdMap::new_id(&format!("$comp{}", self.next_temp_num));
+        self.next_temp_num += 1;
+        id
     }
 
     fn find_var(&self, id: Id) -> Option<&(isize, Type, bool)> {
@@ -133,14 +158,14 @@ impl<'a> Analyzer<'a> {
     #[allow(unused_variables)]
     fn call_native(name: Id, body: NativeFunctionBody, params: usize) -> Inst {
         #[cfg(debug_assertions)]
-        {
-            Inst::CallNative(name, body, params)
-        }
+        { Inst::CallNative(name, body, params) }
         #[cfg(not(debug_assertions))]
-        {
-            Inst::CallNative(body, params)
-        }
+        { Inst::CallNative(body, params) }
     }
+
+    // ====================================
+    //  Lvalue
+    // ====================================
 
     fn expr_is_lvalue(expr: &Expr) -> bool {
         match expr {
@@ -170,6 +195,107 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    // ====================================
+    //  Tuple
+    // ====================================
+
+    fn walk_tuple(&mut self, insts: &mut Vec<Inst>, exprs: Vec<Spanned<Expr>>) -> (Type, usize) {
+        let mut types = Vec::new();
+        let mut size = 0;
+
+        for expr in exprs {
+            match expr.kind {
+                Expr::Tuple(exprs) => {
+                    let (tuple_types, tuple_size) = self.walk_tuple(insts, exprs);
+                    size += tuple_size;
+                    types.push(tuple_types);
+                },
+                // Expr::Struct
+                _ => {
+                    let expr = self.walk_expr(insts, expr);
+                    size += expr.ty.size();
+                    types.push(expr.ty);
+                },
+            }
+        }
+
+        (Type::Tuple(types), size)
+    }
+
+    fn store_tuple(
+        &mut self,
+        insts: &mut Vec<Inst>,
+        id: Id,
+        exprs: Vec<Spanned<Expr>>,
+        force_create: bool,
+        is_mutable: bool
+    ) -> (Type, isize) {
+        let (ty, size) = self.walk_tuple(insts, exprs);
+
+        // Create a variable if variable `id` does not exists or `force_create` is true
+        let loc = match self.find_var(id) {
+            Some((loc, _, _)) if !force_create => *loc,
+            _ => self.new_var(id, ty.clone(), is_mutable),
+        };
+
+        insts.push(Inst::Load(loc));
+        insts.push(Inst::StoreWithSize(size));
+
+        (ty, loc)
+    }
+
+    // ====================================
+    //  Field
+    // ====================================
+
+    fn walk_field(&mut self, insts: &mut Vec<Inst>, field: usize, expr: Spanned<Expr>) -> Option<(ExprInfo, usize)> {
+        let (expr, offset) = match expr.kind {
+            Expr::Field(expr, Field::Number(i)) => {
+                self.walk_field(insts, i, *expr)?
+            },
+            // TODO: Expr::Field(expr, Field::Id(id)) =>
+            _ => {
+                let expr = self.walk_expr(insts, expr);
+
+                // Pop because walk_expr push a reference to a tuple
+                insts.pop().unwrap();
+
+                (expr, 0)
+            },
+        };
+
+        // Return if tuple_expr type is not tuple
+        let types = match &expr.ty {
+            Type::Tuple(types) => types,
+            ty => {
+                error!(self, expr.span.clone(), "expected tuple but got `{}`", ty);
+                return None;
+            },
+        };
+
+        // Get the field type
+        let field_ty = match types.get(field) {
+            Some(ty) => ty,
+            None => {
+                // FIXME: error
+                return None;
+            },
+        };
+
+        // Calculate additional offset
+        let offset_add = types
+            .iter()
+            .take(field)
+            .fold(0, |acc, ty| acc + ty.size());
+
+        let info = ExprInfo::with_loc(field_ty.clone(), expr.span, expr.loc.unwrap());
+        Some((info, offset + offset_add))
+    }
+
+    // ====================================
+    //  Expression
+    // ====================================
+
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> ExprInfo {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
@@ -193,15 +319,12 @@ impl<'a> Analyzer<'a> {
                 Type::Bool
             },
             Expr::Tuple(exprs) => {
-                let mut types = Vec::new();
-                for expr in exprs {
-                    let e = self.walk_expr(insts, expr);
-                    types.push(e.ty);
-                }
+                let id = self.gen_temp_id();
+                let (ty, loc) = self.store_tuple(insts, id, exprs, true, false);
 
-                insts.push(Inst::Record(types.len()));
+                insts.push(Inst::Load(loc));
 
-                Type::Tuple(types)
+                return ExprInfo::with_loc(ty, expr.span, loc);
             },
             Expr::Struct(name, fields) => {
                 let ty = match self.types.get(&name) {
@@ -250,40 +373,30 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Field(tuple_expr, Field::Number(i)) => {
-                let tuple_expr = self.walk_expr(insts, *tuple_expr);
-
-                let types = match tuple_expr.ty {
-                    Type::Tuple(types) => types,
-                    Type::Pointer(ty) => {
-                        insts.push(Inst::Dereference);
-                        match ty {
-                            box Type::Tuple(types) => types,
-                            ty => {
-                                error!(self, tuple_expr.span.clone(), "expected type `tuple` but got type `{}`", ty);
-                                return ExprInfo::invalid(expr.span);
-                            },
-                        }
-                    },
-                    ty => {
-                        error!(self, tuple_expr.span.clone(), "expected type `tuple` but got type `{}`", ty);
-                        return ExprInfo::invalid(expr.span);
-                    },
+                let (field_expr, offset) = match self.walk_field(insts, i, *tuple_expr) {
+                    Some(t) => t,
+                    None => return ExprInfo::invalid(expr.span),
                 };
 
-                let ty = match types.get(i) {
-                    Some(ty) => ty,
-                    None => {
-                        error!(self, tuple_expr.span.clone(), "error");
-                        return ExprInfo::invalid(expr.span);
-                    },
-                };
+                let loc = field_expr.loc.unwrap() + offset as isize;
+                insts.push(Inst::Load(loc));
 
-                insts.push(Inst::Field(i));
-
-                ty.clone()
+                return ExprInfo::with_loc(field_expr.ty, field_expr.span, loc);
             },
             Expr::Field(struct_expr, Field::Id(id)) => {
                 let struct_expr = self.walk_expr(insts, *struct_expr);
+
+                // Named =>
+                //   Struct => ok
+                //   _ => error
+                // Pointer
+                //   Struct => ok
+                //   Named =>
+                //     Struct => ok
+                //     _ => error
+                //   _ => error
+                // Struct => ok
+                // _ => error
 
                 let fields = match &struct_expr.ty {
                     Type::Named(id) => {
@@ -363,7 +476,7 @@ impl<'a> Analyzer<'a> {
 
                 insts.push(Inst::Load(*loc));
 
-                ty.clone()
+                return ExprInfo::with_loc(ty.clone(), expr.span, *loc);
             },
             Expr::BinOp(BinOp::And, lhs, rhs) => {
                 let lhs = self.walk_expr(insts, *lhs);
@@ -624,11 +737,19 @@ impl<'a> Analyzer<'a> {
                 self.pop_scope();
             },
             Stmt::Bind(name, expr, is_mutable) => {
-                let expr = self.walk_expr(insts, expr);
+                match expr.kind {
+                    Expr::Tuple(exprs)=> {
+                        self.store_tuple(insts, name, exprs, true, is_mutable);
+                    },
+                    // TODO: Expr::Struct
+                    _ => {
+                        let expr = self.walk_expr(insts, expr);
 
-                let loc = self.new_var(name, expr.ty.clone(), is_mutable);
-                insts.push(Inst::Load(loc as isize));
-                insts.push(Inst::Store);
+                        let loc = self.new_var(name, expr.ty.clone(), is_mutable);
+                        insts.push(Inst::Load(loc as isize));
+                        insts.push(Inst::Store);
+                    }
+                }
             },
             Stmt::Assign(lhs, rhs) => {
                 if !Self::expr_is_lvalue(&lhs.kind) {
@@ -646,7 +767,7 @@ impl<'a> Analyzer<'a> {
 
                 check_type!(self, lhs.ty, rhs.ty, "expected type `{expected}` but got type `{actual}`", rhs.span);
 
-                insts.push(Inst::Store);
+                insts.push(Inst::StoreWithSize(lhs.ty.size()));
             },
             Stmt::Return(expr) => {
                 let func_name = self.functions[&self.current_func].name;

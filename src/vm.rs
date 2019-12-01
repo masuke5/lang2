@@ -233,6 +233,24 @@ impl<'a> VM<'a> {
                     let value_ref = unsafe { ptr.as_mut() };
                     *value_ref = value;
                 },
+                Inst::StoreWithSize(size) => {
+                    let ptr = match pop!(self, Value) {
+                        Value::Ref(ptr) => ptr,
+                        _ => panic!("expected reference"),
+                    };
+
+                    self.dump_stack(self.sp);
+                    for i in (0..*size).rev() {
+                        let mut value: Value = pop!(self);
+                        Self::dereference(&mut value);
+
+                        unsafe {
+                            let ptr = ptr.as_ptr().wrapping_add(i);
+                            *ptr = value;
+                        }
+                    }
+                    self.dump_stack(self.sp);
+                },
                 Inst::Call(name) => {
                     let func = &self.functions[name];
 

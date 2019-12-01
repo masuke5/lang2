@@ -71,7 +71,8 @@ pub enum Inst {
     Negative,
 
     Load(isize),
-    Store,
+    Store, // TODO: remove later
+    StoreWithSize(usize),
 
     Field(usize),
     BinOp(BinOp),
@@ -123,6 +124,7 @@ pub fn dump_insts(insts: &[Inst]) {
                 };
             },
             Inst::Store => println!("store"),
+            Inst::StoreWithSize(size) => println!("store size={}", size),
             Inst::Call(name) => {
                 println!("call {}", IdMap::name(*name));
             },
