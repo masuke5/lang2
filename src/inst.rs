@@ -25,7 +25,7 @@ pub enum BinOp {
 pub struct Function {
     pub name: Id,
     pub stack_size: usize,
-    pub param_count: usize,
+    pub param_size: usize,
     pub insts: Vec<Inst>,
 }
 
@@ -46,10 +46,10 @@ pub struct NativeFunction {
 }
 
 impl Function {
-    pub fn new(name: Id, param_count: usize) -> Self {
+    pub fn new(name: Id, param_size: usize) -> Self {
         Self {
             name,
-            param_count,
+            param_size,
             stack_size: 0,
             insts: Vec::new(),
         }
@@ -69,9 +69,9 @@ pub enum Inst {
     // dereference a pointer
     Dereference,
     Negative,
+    Copy(usize),
 
     Load(isize),
-    Store, // TODO: remove later
     StoreWithSize(usize),
 
     Field(usize),
@@ -87,7 +87,7 @@ pub enum Inst {
     Jump(usize),
     JumpIfZero(usize),
     JumpIfNonZero(usize),
-    Return,
+    Return(usize),
 
 }
 
@@ -107,6 +107,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::Pointer => println!("pointer"),
             Inst::Dereference => println!("deref"),
             Inst::Negative => println!("neg"),
+            Inst::Copy(size) => println!("copy size={}", size),
             Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
                 match binop {
@@ -123,7 +124,6 @@ pub fn dump_insts(insts: &[Inst]) {
                     BinOp::NotEqual => println!("not_equal"),
                 };
             },
-            Inst::Store => println!("store"),
             Inst::StoreWithSize(size) => println!("store size={}", size),
             Inst::Call(name) => {
                 println!("call {}", IdMap::name(*name));
@@ -140,7 +140,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::Jump(i) => println!("jump {}", i),
             Inst::JumpIfZero(i) => println!("jump_if_zero {}", i),
             Inst::JumpIfNonZero(i) => println!("jump_if_non_zero {}", i),
-            Inst::Return => println!("return"),
+            Inst::Return(size) => println!("return size={}", size),
         }
     }
 }

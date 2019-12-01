@@ -116,7 +116,7 @@ impl<'a> Analyzer<'a> {
 
     fn insert_params(&mut self, params: Vec<(Id, Type, bool)>) {
         let last_map = self.variables.last_mut().unwrap();
-        let mut loc = -2isize; // fp, ip
+        let mut loc = -3isize; // fp, ip
         for (id, ty, is_mutable) in params.iter().rev() {
             loc -= ty.size() as isize;
             last_map.insert(*id, (loc, ty.clone(), *is_mutable));
@@ -213,6 +213,8 @@ impl<'a> Analyzer<'a> {
                 // Expr::Struct
                 _ => {
                     let expr = self.walk_expr(insts, expr);
+                    insts.push(Inst::Copy(expr.ty.size()));
+
                     size += expr.ty.size();
                     types.push(expr.ty);
                 },
@@ -620,6 +622,8 @@ impl<'a> Analyzer<'a> {
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
                     let arg = self.walk_expr(insts, arg);
+                    insts.push(Inst::Copy(arg.ty.size()));
+
                     check_type!(self, *param_ty, arg.ty, "the parameter type is `{expected}`. but got `{actual}` type", arg.span.clone()); 
                 }
 
@@ -744,10 +748,11 @@ impl<'a> Analyzer<'a> {
                     // TODO: Expr::Struct
                     _ => {
                         let expr = self.walk_expr(insts, expr);
+                        insts.push(Inst::Copy(expr.ty.size()));
 
                         let loc = self.new_var(name, expr.ty.clone(), is_mutable);
                         insts.push(Inst::Load(loc as isize));
-                        insts.push(Inst::Store);
+                        insts.push(Inst::StoreWithSize(expr.ty.size()));
                     }
                 }
             },
@@ -763,6 +768,7 @@ impl<'a> Analyzer<'a> {
                 }
 
                 let rhs = self.walk_expr(insts, rhs);
+                insts.push(Inst::Copy(rhs.ty.size()));
                 let lhs = self.walk_expr(insts, lhs);
 
                 check_type!(self, lhs.ty, rhs.ty, "expected type `{expected}` but got type `{actual}`", rhs.span);
@@ -785,12 +791,13 @@ impl<'a> Analyzer<'a> {
                         ExprInfo::new(Type::Unit, stmt.span)
                     }
                 };
+                insts.push(Inst::Copy(expr.ty.size()));
 
                 // Check type
                 let return_ty = &self.function_headers[&self.current_func].return_ty;
                 check_type!(self, *return_ty, expr.ty, "expected `{expected}` type, but got `{actual}` type", expr.span);
 
-                insts.push(Inst::Return);
+                insts.push(Inst::Return(expr.ty.size()));
             },
         }
     }
@@ -838,7 +845,7 @@ impl<'a> Analyzer<'a> {
                 // insert a return instruction if the return value type is unit
                 if let Type::Unit = &self.function_headers[&self.current_func].return_ty {
                     insts.push(Inst::Int(0));
-                    insts.push(Inst::Return);
+                    insts.push(Inst::Return(1));
                 }
 
                 self.functions.get_mut(&name).unwrap().insts = insts;
@@ -855,7 +862,7 @@ impl<'a> Analyzer<'a> {
         match toplevel {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
-                let param_count = param_types.len();
+                let param_size = param_types.iter().fold(0, |acc, ty| acc + ty.size());
 
                 // Insert a header of the function
                 let header = FunctionHeader {
@@ -865,7 +872,7 @@ impl<'a> Analyzer<'a> {
                 self.function_headers.insert(*name, header);
 
                 // Insert function
-                let func = Function::new(*name, param_count);
+                let func = Function::new(*name, param_size);
                 self.functions.insert(*name, func);
             },
             TopLevel::Type(name, ty) => {

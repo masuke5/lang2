@@ -98,14 +98,6 @@ impl<'a> VM<'a> {
         println!("-------- END DUMP ----------");
     }
 
-    // Copy if the value is a reference
-    fn dereference(value: &mut Value) {
-        if let Value::Ref(ptr) = value {
-            let new_value = unsafe { ptr.as_ref() }.clone();
-            *value = new_value;
-        }
-    }
-
     pub fn run(&'a mut self) {
         let main_id = IdMap::get("$main").unwrap();
         if !self.functions.contains_key(&main_id) {
@@ -176,6 +168,28 @@ impl<'a> VM<'a> {
 
                     *n = -(*n);
                 },
+                Inst::Copy(size) => {
+                    // Copy if TOS is a reference
+                    match &self.stack[self.sp] {
+                        Value::Ref(mut ptr) if *size == 1 => {
+                            let value = unsafe { ptr.as_mut() };
+                            self.stack[self.sp] = value.clone();
+                        },
+                        Value::Ref(ptr) => {
+                            let src = ptr.as_ptr();
+
+                            self.sp -= 1; // pop
+
+                            for i in 0..*size {
+                                unsafe {
+                                    let src_ptr = src.wrapping_add(i);
+                                    push!(self, (*src_ptr).clone());
+                                };
+                            }
+                        },
+                        _ => {},
+                    }
+                },
                 Inst::Field(i) => {
                     fn field(value: &mut Value, i: usize, needs_ref: bool) -> Value {
                         match value {
@@ -221,52 +235,32 @@ impl<'a> VM<'a> {
 
                     push!(self, result);
                 },
-                Inst::Store => {
-                    let mut ptr = match pop!(self, Value) {
-                        Value::Ref(ptr) => ptr,
-                        _ => panic!("expected reference"),
-                    };
-
-                    let mut value: Value = pop!(self);
-                    Self::dereference(&mut value);
-
-                    let value_ref = unsafe { ptr.as_mut() };
-                    *value_ref = value;
-                },
                 Inst::StoreWithSize(size) => {
                     let ptr = match pop!(self, Value) {
                         Value::Ref(ptr) => ptr,
                         _ => panic!("expected reference"),
                     };
 
-                    self.dump_stack(self.sp);
                     for i in (0..*size).rev() {
-                        let mut value: Value = pop!(self);
-                        Self::dereference(&mut value);
+                        let value: Value = pop!(self);
 
                         unsafe {
                             let ptr = ptr.as_ptr().wrapping_add(i);
                             *ptr = value;
                         }
                     }
-                    self.dump_stack(self.sp);
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];
 
-                    // Dereference arguments because Inst::Load make very deep Value::Ref in recursive functions
-                    for value in &mut self.stack[self.sp - func.param_count + 1..=self.sp] {
-                        Self::dereference(value);
-                    }
-
-                    push!(self, Value::Int(func.param_count as i64));
+                    push!(self, Value::Int(func.param_size as i64));
                     push!(self, Value::Int(self.ip as i64));
                     push!(self, Value::Int(self.fp as i64));
                     self.insts_stack.push(insts);
-                    
+
                     // Allocate stack frame
                     self.ip = 0;
-                    self.fp = self.sp;
+                    self.fp = self.sp + 1;
                     self.sp += func.stack_size;
 
                     insts = &func.insts;
@@ -274,44 +268,48 @@ impl<'a> VM<'a> {
                     continue;
                 },
                 #[cfg(debug_assertions)]
-                Inst::CallNative(_, func, param_count) => {
-                    let return_value = func.0(&self.stack[self.sp - param_count + 1..=self.sp]);
+                Inst::CallNative(_, func, param_size) => {
+                    let return_value = func.0(&self.stack[self.sp - param_size + 1..=self.sp]);
 
                     // Pop arguments
-                    self.sp -= param_count;
+                    self.sp -= param_size;
 
                     push!(self, return_value);
                 },
                 #[cfg(not(debug_assertions))]
-                Inst::CallNative(func, param_count) => {
-                    let return_value = func.0(&self.stack[self.sp - param_count + 1..self.sp + 1]);
+                Inst::CallNative(func, param_size) => {
+                    let return_value = func.0(&self.stack[self.sp - param_size + 1..self.sp + 1]);
 
                     // Pop arguments
-                    self.sp -= param_count;
+                    self.sp -= param_size;
 
                     push!(self, return_value);
                 },
                 Inst::Pop => {
                     pop!(self, Value);
                 },
-                Inst::Return => {
+                Inst::Return(size) => {
                     // Save a return value
-                    let mut value: Value = pop!(self);
-                    // Dereference if the value is a reference because is an invalid reference to a local variable
-                    Self::dereference(&mut value);
+                    let mut values = Vec::new();
+                    for _ in 0..*size {
+                        let value: Value = pop!(self);
+                        values.push(value);
+                    }
 
                     // Restore stack frame
-                    self.sp = self.fp;
+                    self.sp = self.fp - 1;
                     self.fp = pop!(self, i64) as usize;
                     self.ip = pop!(self, i64) as usize;
                     insts = self.insts_stack.pop().unwrap();
 
                     // Pop arguments
-                    let param_count = pop!(self, i64) as usize;
-                    self.sp -= param_count;
+                    let param_size = pop!(self, i64) as usize;
+                    self.sp -= param_size;
 
                     // Push the return value
-                    push!(self, value);
+                    for value in values.into_iter().rev() {
+                        push!(self, value);
+                    }
                 }
                 Inst::Jump(loc) => {
                     self.ip = *loc;
