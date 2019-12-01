@@ -38,6 +38,28 @@ struct FunctionHeader {
 }
 
 #[derive(Debug)]
+struct ExprInfo {
+    pub ty: Type,
+    pub span: Span,
+}
+
+impl ExprInfo {
+    fn new(ty: Type, span: Span) -> Self {
+        Self {
+            ty,
+            span,
+        }
+    }
+
+    fn invalid(span: Span) -> Self {
+        Self {
+            ty: Type::Invalid,
+            span,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
@@ -148,7 +170,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> (Type, Span) {
+    fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> ExprInfo {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
                 insts.push(Inst::Int(n));
@@ -173,8 +195,8 @@ impl<'a> Analyzer<'a> {
             Expr::Tuple(exprs) => {
                 let mut types = Vec::new();
                 for expr in exprs {
-                    let (ty, _) = self.walk_expr(insts, expr);
-                    types.push(ty);
+                    let e = self.walk_expr(insts, expr);
+                    types.push(e.ty);
                 }
 
                 insts.push(Inst::Record(types.len()));
@@ -186,32 +208,20 @@ impl<'a> Analyzer<'a> {
                     Some(ty) => ty,
                     None => {
                         error!(self, expr.span.clone(), "undefined type `{}`", IdMap::name(name));
-                        return (Type::Invalid, expr.span);
+                        return ExprInfo::invalid(expr.span);
                     },
                 };
 
                 match ty.clone() {
                     Type::Struct(ty_fields) => {
-                        /*for (field_name, field_expr) in fields {
-                            let (ty, expr_span) = self.walk_expr(insts, field_expr);
-                            match ty_fields.iter().find(|(name, _)| *name == field_name.kind) {
-                                Some((_, expected_ty)) => {
-                                    check_type!(self, *expected_ty, ty, "expected type `{expected}` but got `{actual}`", expr_span);
-                                },
-                                None => {
-                                    error!(self, field_name.span, "field `{}` does not exists", IdMap::name(field_name.kind));
-                                },
-                            }
-                        }*/
-
                         // Push fields in order
                         let mut not_enough_fields = Vec::new();
                         for (name, ty) in ty_fields {
                             match fields.iter().find(|(field_name, _)| field_name.kind == name) {
                                 Some((_, field_expr)) => {
                                     // TODO: remove clone() if possible
-                                    let (expr_ty, expr_span) = self.walk_expr(insts, field_expr.clone());
-                                    check_type!(self, ty, expr_ty, "expected type `{expected}` but got `{actual}`", expr_span);
+                                    let expr = self.walk_expr(insts, field_expr.clone());
+                                    check_type!(self, ty, expr.ty, "expected type `{expected}` but got `{actual}`", expr.span);
                                 },
                                 None => {
                                     not_enough_fields.push(name);
@@ -240,31 +250,31 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Field(tuple_expr, Field::Number(i)) => {
-                let (ty, tuple_span) = self.walk_expr(insts, *tuple_expr);
+                let tuple_expr = self.walk_expr(insts, *tuple_expr);
 
-                let types = match ty {
+                let types = match tuple_expr.ty {
                     Type::Tuple(types) => types,
                     Type::Pointer(ty) => {
                         insts.push(Inst::Dereference);
                         match ty {
                             box Type::Tuple(types) => types,
                             ty => {
-                                error!(self, tuple_span.clone(), "expected type `tuple` but got type `{}`", ty);
-                                return (Type::Invalid, expr.span);
+                                error!(self, tuple_expr.span.clone(), "expected type `tuple` but got type `{}`", ty);
+                                return ExprInfo::invalid(expr.span);
                             },
                         }
                     },
                     ty => {
-                        error!(self, tuple_span.clone(), "expected type `tuple` but got type `{}`", ty);
-                        return (Type::Invalid, expr.span);
+                        error!(self, tuple_expr.span.clone(), "expected type `tuple` but got type `{}`", ty);
+                        return ExprInfo::invalid(expr.span);
                     },
                 };
 
                 let ty = match types.get(i) {
                     Some(ty) => ty,
                     None => {
-                        error!(self, tuple_span.clone(), "error");
-                        return (Type::Invalid, expr.span);
+                        error!(self, tuple_expr.span.clone(), "error");
+                        return ExprInfo::invalid(expr.span);
                     },
                 };
 
@@ -273,23 +283,23 @@ impl<'a> Analyzer<'a> {
                 ty.clone()
             },
             Expr::Field(struct_expr, Field::Id(id)) => {
-                let (ty, struct_span) = self.walk_expr(insts, *struct_expr);
+                let struct_expr = self.walk_expr(insts, *struct_expr);
 
-                let fields = match &ty {
+                let fields = match &struct_expr.ty {
                     Type::Named(id) => {
                         let ty = match self.types.get(&id) {
                             Some(ty) => ty,
                             None => {
-                                error!(self, struct_span, "type `{}` does not exist", IdMap::name(*id));
-                                return (Type::Invalid, expr.span);
+                                error!(self, struct_expr.span, "type `{}` does not exist", IdMap::name(*id));
+                                return ExprInfo::invalid(expr.span);
                             },
                         };
 
                         match ty {
                             Type::Struct(fields) => fields,
                             ty => {
-                                error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
-                                return (Type::Invalid, expr.span);
+                                error!(self, struct_expr.span.clone(), "expected struct but got type `{}`", ty);
+                                return ExprInfo::invalid(expr.span);
                             },
                         }
                     },
@@ -303,29 +313,29 @@ impl<'a> Analyzer<'a> {
                                 let ty = match self.types.get(&id) {
                                     Some(ty) => ty,
                                     None => {
-                                        error!(self, struct_span, "type `{}` does not exist", IdMap::name(*id));
-                                        return (Type::Invalid, expr.span);
+                                        error!(self, struct_expr.span, "type `{}` does not exist", IdMap::name(*id));
+                                        return ExprInfo::invalid(expr.span);
                                     },
                                 };
 
                                 match ty {
                                     Type::Struct(fields) => fields,
                                     ty => {
-                                        error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
-                                        return (Type::Invalid, expr.span);
+                                        error!(self, struct_expr.span.clone(), "expected struct but got type `{}`", ty);
+                                        return ExprInfo::invalid(expr.span);
                                     },
                                 }
                             },
                             ty => {
-                                error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
-                                return (Type::Invalid, expr.span);
+                                error!(self, struct_expr.span.clone(), "expected struct but got type `{}`", ty);
+                                return ExprInfo::invalid(expr.span);
                             },
                         }
                     },
                     Type::Struct(fields) => fields,
                     ty => {
-                        error!(self, struct_span.clone(), "expected struct but got type `{}`", ty);
-                        return (Type::Invalid, expr.span);
+                        error!(self, struct_expr.span.clone(), "expected struct but got type `{}`", ty);
+                        return ExprInfo::invalid(expr.span);
                     },
                 };
 
@@ -333,7 +343,7 @@ impl<'a> Analyzer<'a> {
                     Some(i) => i,
                     None => {
                         error!(self, expr.span.clone(), "field does not exists");
-                        return (Type::Invalid, expr.span);
+                        return ExprInfo::invalid(expr.span);
                     },
                 };
                 let (_, field_ty) = &fields[i];
@@ -347,7 +357,7 @@ impl<'a> Analyzer<'a> {
                     Some(r) => r,
                     None => {
                         self.add_error("undefined variable", expr.span.clone());
-                        return (Type::Invalid, expr.span);
+                        return ExprInfo::invalid(expr.span);
                     },
                 };
 
@@ -356,12 +366,12 @@ impl<'a> Analyzer<'a> {
                 ty.clone()
             },
             Expr::BinOp(BinOp::And, lhs, rhs) => {
-                let (lty, _) = self.walk_expr(insts, *lhs);
+                let lhs = self.walk_expr(insts, *lhs);
 
                 let jump1 = insts.len();
                 insts.push(Inst::Int(0));
 
-                let (rty, _) = self.walk_expr(insts, *rhs);
+                let rhs = self.walk_expr(insts, *rhs);
 
                 let jump2 = insts.len();
                 insts.push(Inst::Int(0));
@@ -378,7 +388,7 @@ impl<'a> Analyzer<'a> {
 
                 insts[jump_to_end] = Inst::Jump(insts.len());
 
-                match (lty, rty) {
+                match (lhs.ty, rhs.ty) {
                     (Type::Bool, Type::Bool) => {},
                     (Type::Invalid, _) | (_, Type::Invalid) => {},
                     (lty, rty) => {
@@ -389,12 +399,12 @@ impl<'a> Analyzer<'a> {
                 Type::Bool
             },
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
-                let (lty, _) = self.walk_expr(insts, *lhs);
+                let lhs = self.walk_expr(insts, *lhs);
 
                 let jump1 = insts.len();
                 insts.push(Inst::Int(0));
 
-                let (rty, _) = self.walk_expr(insts, *rhs);
+                let rhs = self.walk_expr(insts, *rhs);
 
                 let jump2 = insts.len();
                 insts.push(Inst::Int(0));
@@ -411,7 +421,7 @@ impl<'a> Analyzer<'a> {
 
                 insts[jump_to_end] = Inst::Jump(insts.len());
 
-                match (lty, rty) {
+                match (lhs.ty, rhs.ty) {
                     (Type::Bool, Type::Bool) => {},
                     (Type::Invalid, _) | (_, Type::Invalid) => {},
                     (lty, rty) => {
@@ -422,8 +432,8 @@ impl<'a> Analyzer<'a> {
                 Type::Bool
             },
             Expr::BinOp(binop, lhs, rhs) => {
-                let (lty, _) = self.walk_expr(insts, *lhs);
-                let (rty, _) = self.walk_expr(insts, *rhs);
+                let lhs = self.walk_expr(insts, *lhs);
+                let rhs = self.walk_expr(insts, *rhs);
 
                 // Insert an instruction
                 let ibinop = match binop {
@@ -442,12 +452,12 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::BinOp(ibinop));
 
                 // Type check
-                if !check_type!(self, lty, rty, "different types `{expected}` and `{actual}`", expr.span.clone()) {
-                    return (lty, expr.span);
+                if !check_type!(self, lhs.ty, rhs.ty, "different types `{expected}` and `{actual}`", expr.span.clone()) {
+                    return ExprInfo::new(lhs.ty, expr.span);
                 }
 
                 let binop_symbol = binop.to_symbol();
-                match (binop, &lty) {
+                match (binop, &lhs.ty) {
                     (BinOp::Add, Type::Int) => Type::Int,
                     (BinOp::Sub, Type::Int) => Type::Int,
                     (BinOp::Mul, Type::Int) => Type::Int,
@@ -459,7 +469,7 @@ impl<'a> Analyzer<'a> {
                     (BinOp::GreaterThan, Type::Int) => Type::Bool,
                     (BinOp::GreaterThanOrEqual, Type::Int) => Type::Bool,
                     _ => {
-                        self.add_error(&format!("`{} {} {}` is not possible", lty, binop_symbol, rty), expr.span.clone());
+                        self.add_error(&format!("`{} {} {}` is not possible", lhs.ty, binop_symbol, rhs.ty), expr.span.clone());
                         Type::Invalid
                     }
                 }
@@ -477,7 +487,7 @@ impl<'a> Analyzer<'a> {
                             Some(func) => func,
                             None => {
                                 error!(self, expr.span.clone(), "undefined function");
-                                return (Type::Invalid, expr.span);
+                                return ExprInfo::invalid(expr.span);
                             },
                         };
 
@@ -491,13 +501,13 @@ impl<'a> Analyzer<'a> {
                         "the function takes {} parameters. but got {} arguments",
                         params.len(),
                         args.len());
-                    return (return_ty, expr.span);
+                    return ExprInfo::new(return_ty, expr.span);
                 }
 
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
-                    let (arg_ty, span) = self.walk_expr(insts, arg);
-                    check_type!(self, *param_ty, arg_ty, "the parameter type is `{expected}`. but got `{actual}` type", span.clone()); 
+                    let arg = self.walk_expr(insts, arg);
+                    check_type!(self, *param_ty, arg.ty, "the parameter type is `{expected}`. but got `{actual}` type", arg.span.clone()); 
                 }
 
                 // Insert an instruction
@@ -510,58 +520,58 @@ impl<'a> Analyzer<'a> {
                     error!(self, expr.span, "this expression is not lvalue");
                     Type::Invalid
                 } else {
-                    let (ty, _) = self.walk_expr(insts, *expr);
+                    let expr = self.walk_expr(insts, *expr);
                     insts.push(Inst::Pointer);
 
-                    Type::Pointer(Box::new(ty))
+                    Type::Pointer(Box::new(expr.ty))
                 }
             },
             Expr::Dereference(expr) => {
-                let (ty, span) = self.walk_expr(insts, *expr);
-                match ty {
+                let expr = self.walk_expr(insts, *expr);
+                match expr.ty {
                     Type::Pointer(ty) => {
                         insts.push(Inst::Dereference);
                         *ty
                     }
                     Type::Invalid => Type::Invalid,
                     ty => {
-                        error!(self, span, "expected type `pointer` but got type `{}`", ty);
+                        error!(self, expr.span, "expected type `pointer` but got type `{}`", ty);
                         Type::Invalid
                     }
                 }
             },
             Expr::Negative(expr) => {
-                let (ty, span) = self.walk_expr(insts, *expr);
-                match ty {
-                    Type::Int /* | Type::Float */ => {
+                let expr = self.walk_expr(insts, *expr);
+                match expr.ty {
+                    ty @ Type::Int /* | Type::Float */ => {
                         insts.push(Inst::Negative);
                         ty
                     },
                     ty => {
-                        error!(self, span, "expected type `int` or `float` but got type `{}`", ty);
+                        error!(self, expr.span, "expected type `int` or `float` but got type `{}`", ty);
                         Type::Invalid
                     },
                 }
             },
         };
 
-        (ty, expr.span)
+        ExprInfo::new(ty, expr.span)
     }
 
     fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Spanned<Stmt>) {
         match stmt.kind {
             Stmt::Expr(expr) => {
-                let (ty, _) = self.walk_expr(insts, expr);
+                let expr = self.walk_expr(insts, expr);
 
-                let pop_count = ty.size();
+                let pop_count = expr.ty.size();
                 for _ in 0..pop_count {
                     insts.push(Inst::Pop);
                 }
             },
             Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
-                let (ty, span) = self.walk_expr(insts, cond);
-                check_type!(self, Type::Bool, ty, "expected type `{expected}` but got type `{actual}`", span);
+                let expr = self.walk_expr(insts, cond);
+                check_type!(self, Type::Bool, expr.ty, "expected type `{expected}` but got type `{actual}`", expr.span);
 
                 // Insert dummy instruction to jump to else-clause or end
                 let jump_to_else = insts.len();
@@ -590,8 +600,8 @@ impl<'a> Analyzer<'a> {
                 let begin = insts.len();
 
                 // Insert condition expression instruction
-                let (ty, span) = self.walk_expr(insts, cond);
-                check_type!(self, Type::Bool, ty, "expected type `{expected}` but got type `{actual}`", span);
+                let cond = self.walk_expr(insts, cond);
+                check_type!(self, Type::Bool, cond.ty, "expected type `{expected}` but got type `{actual}`", cond.span);
 
                 // Insert dummy instruction to jump to end
                 let jump_to_end = insts.len();
@@ -614,9 +624,9 @@ impl<'a> Analyzer<'a> {
                 self.pop_scope();
             },
             Stmt::Bind(name, expr, is_mutable) => {
-                let (ty, _) = self.walk_expr(insts, expr);
+                let expr = self.walk_expr(insts, expr);
 
-                let loc = self.new_var(name, ty.clone(), is_mutable);
+                let loc = self.new_var(name, expr.ty.clone(), is_mutable);
                 insts.push(Inst::Load(loc as isize));
                 insts.push(Inst::Store);
             },
@@ -631,10 +641,10 @@ impl<'a> Analyzer<'a> {
                     return;
                 }
 
-                let (rhs_ty, rhs_span) = self.walk_expr(insts, rhs);
-                let (lhs_ty, _) = self.walk_expr(insts, lhs);
+                let rhs = self.walk_expr(insts, rhs);
+                let lhs = self.walk_expr(insts, lhs);
 
-                check_type!(self, lhs_ty, rhs_ty, "expected type `{expected}` but got type `{actual}`", rhs_span);
+                check_type!(self, lhs.ty, rhs.ty, "expected type `{expected}` but got type `{actual}`", rhs.span);
 
                 insts.push(Inst::Store);
             },
@@ -647,17 +657,17 @@ impl<'a> Analyzer<'a> {
                     return;
                 }
 
-                let (ty, span) = match expr {
+                let expr = match expr {
                     Some(expr) => self.walk_expr(insts, expr),
                     None => {
                         insts.push(Inst::Int(0));
-                        (Type::Unit, stmt.span)
+                        ExprInfo::new(Type::Unit, stmt.span)
                     }
                 };
 
                 // Check type
                 let return_ty = &self.function_headers[&self.current_func].return_ty;
-                check_type!(self, *return_ty, ty, "expected `{expected}` type, but got `{actual}` type", span);
+                check_type!(self, *return_ty, expr.ty, "expected `{expected}` type, but got `{actual}` type", expr.span);
 
                 insts.push(Inst::Return);
             },
