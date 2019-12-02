@@ -104,7 +104,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // Execute
     let mut vm = VM::new(functions);
-    vm.run();
+    vm.run(matches.is_present("trace"));
 
     Ok(())
 }
@@ -147,6 +147,9 @@ fn main() {
         .arg(Arg::with_name("dump-insts")
              .long("dump-insts")
              .help("Dumps instructions"))
+        .arg(Arg::with_name("trace")
+             .long("trace")
+             .help("Traces instructions"))
         .get_matches();
 
     let (file, input) = match get_input(&matches) {

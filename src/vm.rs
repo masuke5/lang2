@@ -93,7 +93,7 @@ impl<'a> VM<'a> {
         println!("-------- END DUMP ----------");
     }
 
-    pub fn run(&'a mut self) {
+    pub fn run(&'a mut self, enable_trace: bool) {
         let main_id = IdMap::get("$main").unwrap();
         if !self.functions.contains_key(&main_id) {
             return;
@@ -113,7 +113,13 @@ impl<'a> VM<'a> {
                 break;
             }
 
-            match &insts[self.ip] {
+            let inst = &insts[self.ip];
+
+            if enable_trace {
+                Self::trace(inst);
+            }
+
+            match inst {
                 Inst::Int(n) => {
                     push!(self, Value::Int(*n));
                 },
@@ -301,5 +307,9 @@ impl<'a> VM<'a> {
 
             self.ip += 1;
         }
+    }
+
+    fn trace(inst: &Inst) {
+        println!("{}", inst);
     }
 }

@@ -90,55 +90,59 @@ pub enum Inst {
 
 }
 
+impl fmt::Display for Inst {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Inst::Int(n) => write!(f, "int {}", n),
+            Inst::String(s) => write!(f, "string \"{}\"", utils::escape_string(s)),
+            Inst::True => write!(f, "true"),
+            Inst::False => write!(f, "false"),
+            Inst::Load(loc) => write!(f, "load_ref {}", loc),
+            Inst::Pointer => write!(f, "pointer"),
+            Inst::Dereference => write!(f, "deref"),
+            Inst::Negative => write!(f, "neg"),
+            Inst::Copy(size) => write!(f, "copy size={}", size),
+            Inst::Offset(i) => write!(f, "offset {}", i),
+            Inst::BinOp(binop) => {
+                match binop {
+                    BinOp::Add => write!(f, "add"),
+                    BinOp::Sub => write!(f, "sub"),
+                    BinOp::Mul => write!(f, "mul"),
+                    BinOp::Div => write!(f, "div"),
+                    BinOp::Mod => write!(f, "mod"),
+                    BinOp::LessThan => write!(f, "less_than"),
+                    BinOp::LessThanOrEqual => write!(f, "less_than_or_equal"),
+                    BinOp::GreaterThan => write!(f, "greater_than"),
+                    BinOp::GreaterThanOrEqual => write!(f, "greater_than_or_equal"),
+                    BinOp::Equal => write!(f, "equal"),
+                    BinOp::NotEqual => write!(f, "not_equal"),
+                }
+            },
+            Inst::StoreWithSize(size) => write!(f, "store size={}", size),
+            Inst::Call(name) => {
+                write!(f, "call {}", IdMap::name(*name))
+            },
+            #[cfg(debug_assertions)]
+            Inst::CallNative(name, _, param_count) => {
+                write!(f, "call_native {} params={}", IdMap::name(*name), param_count)
+            },
+            #[cfg(not(debug_assertions))]
+            Inst::CallNative(_, param_count) => {
+                write!(f, "call_native params={}", param_count);
+            },
+            Inst::Pop => write!(f, "pop"),
+            Inst::Jump(i) => write!(f, "jump {}", i),
+            Inst::JumpIfZero(i) => write!(f, "jump_if_zero {}", i),
+            Inst::JumpIfNonZero(i) => write!(f, "jump_if_non_zero {}", i),
+            Inst::Return(size) => write!(f, "return size={}", size),
+        }
+    }
+}
+
 pub fn dump_insts(insts: &[Inst]) {
     let index_len = format!("{}", insts.len()).len();
 
     for (i, inst) in insts.iter().enumerate() {
-        print!("{:<width$} ", i, width = index_len);
-
-        match inst {
-            Inst::Int(n) => println!("int {}", n),
-            Inst::String(s) => println!("string \"{}\"", utils::escape_string(s)),
-            Inst::True => println!("true"),
-            Inst::False => println!("false"),
-            Inst::Load(loc) => println!("load_ref {}", loc),
-            Inst::Pointer => println!("pointer"),
-            Inst::Dereference => println!("deref"),
-            Inst::Negative => println!("neg"),
-            Inst::Copy(size) => println!("copy size={}", size),
-            Inst::Offset(i) => println!("offset {}", i),
-            Inst::BinOp(binop) => {
-                match binop {
-                    BinOp::Add => println!("add"),
-                    BinOp::Sub => println!("sub"),
-                    BinOp::Mul => println!("mul"),
-                    BinOp::Div => println!("div"),
-                    BinOp::Mod => println!("mod"),
-                    BinOp::LessThan => println!("less_than"),
-                    BinOp::LessThanOrEqual => println!("less_than_or_equal"),
-                    BinOp::GreaterThan => println!("greater_than"),
-                    BinOp::GreaterThanOrEqual => println!("greater_than_or_equal"),
-                    BinOp::Equal => println!("equal"),
-                    BinOp::NotEqual => println!("not_equal"),
-                };
-            },
-            Inst::StoreWithSize(size) => println!("store size={}", size),
-            Inst::Call(name) => {
-                println!("call {}", IdMap::name(*name));
-            },
-            #[cfg(debug_assertions)]
-            Inst::CallNative(name, _, param_count) => {
-                println!("call_native {} params={}", IdMap::name(*name), param_count);
-            },
-            #[cfg(not(debug_assertions))]
-            Inst::CallNative(_, param_count) => {
-                println!("call_native params={}", param_count);
-            },
-            Inst::Pop => println!("pop"),
-            Inst::Jump(i) => println!("jump {}", i),
-            Inst::JumpIfZero(i) => println!("jump_if_zero {}", i),
-            Inst::JumpIfNonZero(i) => println!("jump_if_non_zero {}", i),
-            Inst::Return(size) => println!("return size={}", size),
-        }
+        println!("{:<width$} {}", i, inst, width = index_len);
     }
 }
