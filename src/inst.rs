@@ -70,6 +70,7 @@ pub enum Inst {
     Dereference,
     Negative,
     Copy(usize),
+    Offset(usize),
 
     Load(isize),
     StoreWithSize(usize),
@@ -108,6 +109,7 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::Dereference => println!("deref"),
             Inst::Negative => println!("neg"),
             Inst::Copy(size) => println!("copy size={}", size),
+            Inst::Offset(i) => println!("offset {}", i),
             Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
                 match binop {

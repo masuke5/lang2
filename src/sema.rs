@@ -143,7 +143,7 @@ impl<'a> Analyzer<'a> {
     fn insert_copy_inst(&self, insts: &mut Vec<Inst>, ty: &Type) {
         match insts.last() {
             Some(inst) => match inst {
-                Inst::Load(_) | Inst::Field(_) | Inst::Dereference => {
+                Inst::Load(_) | Inst::Field(_) | Inst::Dereference | Inst::Offset(_) => {
                     let size = type_size!(self, ty);
                     insts.push(Inst::Copy(size));
                 },
@@ -191,6 +191,13 @@ impl<'a> Analyzer<'a> {
         { Inst::CallNative(name, body, params) }
         #[cfg(not(debug_assertions))]
         { Inst::CallNative(body, params) }
+    }
+
+    fn should_store(ty: &Type) -> bool {
+        match ty {
+            Type::Tuple(_) | Type::Struct(_) => true,
+            _ => false,
+        }
     }
 
     // ====================================
@@ -429,19 +436,29 @@ impl<'a> Analyzer<'a> {
             },
             _ => {
                 let expr = self.walk_expr(insts, expr);
-
-                // Pop because walk_expr push a reference to a comp data
-                insts.pop().unwrap();
-
                 (expr, 0)
             },
         };
+
+        match &expr.ty {
+            Type::Pointer(_) => insts.push(Inst::Dereference),
+            _ => {}
+        }
 
         let (field_ty, types, i) = match field {
             Field::Number(i) => {
                 // Return if tuple_expr type is not tuple
                 let types = match &expr.ty {
                     Type::Tuple(types) => types,
+                    Type::Pointer(ty) => {
+                        match ty {
+                            box Type::Tuple(types) => types,
+                            ty => {
+                                error!(self, expr.span.clone(), "expected tuple but got `{}`", ty);
+                                return None;
+                            },
+                        }
+                    },
                     ty => {
                         error!(self, expr.span.clone(), "expected tuple but got `{}`", ty);
                         return None;
@@ -481,7 +498,7 @@ impl<'a> Analyzer<'a> {
             .take(i)
             .fold(0, |acc, ty| acc + type_size!(self, &ty));
 
-        let info = ExprInfo::with_loc(field_ty.clone(), expr.span, expr.loc.unwrap());
+        let info = ExprInfo::new(field_ty.clone(), expr.span);
         Some((info, offset + offset_add))
     }
 
@@ -489,6 +506,7 @@ impl<'a> Analyzer<'a> {
     //  Expression
     // ====================================
 
+    // 複数の値を返す可能性のある式はstoreしなければならない
     fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> ExprInfo {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
@@ -526,10 +544,9 @@ impl<'a> Analyzer<'a> {
                     None => return ExprInfo::invalid(expr.span),
                 };
 
-                let loc = field_expr.loc.unwrap() + offset as isize;
-                insts.push(Inst::Load(loc));
+                insts.push(Inst::Offset(offset));
 
-                return ExprInfo::with_loc(field_expr.ty, field_expr.span, loc);
+                field_expr.ty
             },
             Expr::Variable(name) => {
                 let (loc, ty, _) = match self.find_var(name) {
@@ -715,6 +732,15 @@ impl<'a> Analyzer<'a> {
 
                 // Insert an instruction
                 insts.push(inst);
+
+                // Store if the return value is compound data
+                if Self::should_store(&return_ty) {
+                    let id = self.gen_temp_id();
+                    let loc = self.new_var(id, return_ty.clone(), false);
+                    insts.push(Inst::Load(loc));
+                    insts.push(Inst::StoreWithSize(type_size!(self, &return_ty)));
+                    insts.push(Inst::Load(loc));
+                }
 
                 return_ty
             },

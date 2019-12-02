@@ -190,6 +190,15 @@ impl<'a> VM<'a> {
                         _ => {},
                     }
                 },
+                Inst::Offset(offset) => {
+                    let ptr = match &mut self.stack[self.sp] {
+                        Value::Ref(ptr) => ptr,
+                        _ => panic!("expected ref"),
+                    };
+
+                    let new_ptr = ptr.as_ptr().wrapping_add(*offset);
+                    *ptr = NonNull::new(new_ptr).unwrap();
+                },
                 Inst::Field(i) => {
                     fn field(value: &mut Value, i: usize, needs_ref: bool) -> Value {
                         match value {
