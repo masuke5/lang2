@@ -63,7 +63,6 @@ pub enum Inst {
     String(String),
     True,
     False,
-    Record(usize),
     // make a pointer from a reference
     Pointer,
     // dereference a pointer
@@ -75,7 +74,6 @@ pub enum Inst {
     Load(isize),
     StoreWithSize(usize),
 
-    Field(usize),
     BinOp(BinOp),
     Call(Id),
     Pop,
@@ -104,13 +102,11 @@ pub fn dump_insts(insts: &[Inst]) {
             Inst::True => println!("true"),
             Inst::False => println!("false"),
             Inst::Load(loc) => println!("load_ref {}", loc),
-            Inst::Record(size) => println!("record size={}", size),
             Inst::Pointer => println!("pointer"),
             Inst::Dereference => println!("deref"),
             Inst::Negative => println!("neg"),
             Inst::Copy(size) => println!("copy size={}", size),
             Inst::Offset(i) => println!("offset {}", i),
-            Inst::Field(i) => println!("field {}", i),
             Inst::BinOp(binop) => {
                 match binop {
                     BinOp::Add => println!("add"),

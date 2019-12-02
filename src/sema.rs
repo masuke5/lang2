@@ -57,9 +57,6 @@ struct FunctionHeader {
 struct ExprInfo {
     pub ty: Type,
     pub span: Span,
-    // Variable offset of compound data such as tuple and structure
-    // Set only when type of an expression passed to walk_expr is tuple or struct.
-    pub loc: Option<isize>,
 }
 
 impl ExprInfo {
@@ -67,15 +64,6 @@ impl ExprInfo {
         Self {
             ty,
             span,
-            loc: None,
-        }
-    }
-
-    fn with_loc(ty: Type, span: Span, loc: isize) -> Self {
-        Self {
-            ty,
-            span,
-            loc: Some(loc),
         }
     }
 
@@ -83,7 +71,6 @@ impl ExprInfo {
         Self {
             ty: Type::Invalid,
             span,
-            loc: None,
         }
     }
 }
@@ -143,7 +130,7 @@ impl<'a> Analyzer<'a> {
     fn insert_copy_inst(&self, insts: &mut Vec<Inst>, ty: &Type) {
         match insts.last() {
             Some(inst) => match inst {
-                Inst::Load(_) | Inst::Field(_) | Inst::Dereference | Inst::Offset(_) => {
+                Inst::Load(_) | Inst::Dereference | Inst::Offset(_) => {
                     let size = type_size!(self, ty);
                     insts.push(Inst::Copy(size));
                 },
@@ -536,7 +523,7 @@ impl<'a> Analyzer<'a> {
 
                 insts.push(Inst::Load(loc));
 
-                return ExprInfo::with_loc(ty, span, loc);
+                return ExprInfo::new(ty, span);
             },
             Expr::Field(tuple_expr, field) => {
                 let (field_expr, offset) = match self.walk_field(insts, field, *tuple_expr) {
@@ -559,7 +546,7 @@ impl<'a> Analyzer<'a> {
 
                 insts.push(Inst::Load(*loc));
 
-                return ExprInfo::with_loc(ty.clone(), expr.span, *loc);
+                ty.clone()
             },
             //   lhs
             //   jump_if_zero B

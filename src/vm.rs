@@ -66,11 +66,6 @@ impl<'a> VM<'a> {
             Value::String(s) => println!("str \"{}\"", utils::escape_string(s)),
             Value::Bool(true) => println!("bool true"),
             Value::Bool(false) => println!("bool false"),
-            Value::Record(values) => {
-                for value in values {
-                    Self::dump_value(value, depth + 1);
-                }
-            },
             Value::Ref(ptr) => {
                 println!("ref");
                 let value = unsafe { ptr.as_ref() };
@@ -136,17 +131,6 @@ impl<'a> VM<'a> {
                     let ptr = NonNull::new(value as *mut _).unwrap();
                     push!(self, Value::Ref(ptr));
                 },
-                Inst::Record(size) => {
-                    let mut values = Vec::with_capacity(*size);
-                    values.resize(*size, Value::Unintialized);
-
-                    for i in (0..*size).rev() {
-                        let v: Value = pop!(self);
-                        values[i] = v;
-                    }
-
-                    push!(self, Value::Record(values));
-                },
                 Inst::Pointer => {
                     let value_ref: Value = pop!(self);
                     match value_ref {
@@ -198,31 +182,6 @@ impl<'a> VM<'a> {
 
                     let new_ptr = ptr.as_ptr().wrapping_add(*offset);
                     *ptr = NonNull::new(new_ptr).unwrap();
-                },
-                Inst::Field(i) => {
-                    fn field(value: &mut Value, i: usize, needs_ref: bool) -> Value {
-                        match value {
-                            Value::Ref(ptr) => {
-                                let mut value = unsafe { ptr.as_mut() };
-                                field(&mut value, i, true)
-                            },
-                            Value::Record(ref mut values) => {
-                                let value = &mut values[i];
-
-                                if needs_ref {
-                                    Value::Ref(NonNull::new(value as *mut _).unwrap())
-                                } else {
-                                    value.clone()
-                                }
-                            },
-                            _ => panic!(),
-                        }
-                    }
-
-                    let mut record: Value = pop!(self);
-                    let value = field(&mut record, *i, false);
-
-                    push!(self, value);
                 },
                 Inst::BinOp(binop) => {
                     let rhs: i64 = pop!(self);

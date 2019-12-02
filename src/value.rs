@@ -11,7 +11,6 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     String(String),
-    Record(Vec<Value>),
     Ref(NonNull<Value>),
     Pointer(NonNull<Value>),
 }
@@ -53,10 +52,6 @@ impl_from_value! {bool, "expected bool",
 
 impl_from_value! {String, "expected string",
     Value::String(s) => s,
-}
-
-impl_from_value! {Vec<Value>, "expected record",
-    Value::Record(values) => values,
 }
 
 impl_from_value! {NonNull<Value>, "expected pointer",
