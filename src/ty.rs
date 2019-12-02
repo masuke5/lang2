@@ -58,6 +58,8 @@ impl fmt::Display for Type {
 }
 
 impl Type {
+    // Return size of the type
+    // Note: size of Named is always 1
     pub fn size(&self) -> usize {
         match self {
             Type::Tuple(types) => types.iter().fold(0, |acc, ty| acc + ty.size()),
