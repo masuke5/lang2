@@ -544,8 +544,10 @@ impl<'a> Analyzer<'a> {
                     None => return ExprInfo::invalid(expr.span),
                 };
 
-                insts.push(Inst::Int(offset as i64));
-                insts.push(Inst::Offset);
+                if offset != 0 {
+                    insts.push(Inst::Int(offset as i64));
+                    insts.push(Inst::Offset);
+                }
 
                 field_expr.ty
             },
