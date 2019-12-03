@@ -212,6 +212,45 @@ test_eq("struct field 1", 234, person.age);
 test_eq("struct field 2", 0, person.child.age);
 test_eq("struct field 3", 8, person.child.age_in_months);
 
+## array ##
+
+let mut arr = [3; 10];
+test_eq("array subscript", 3, arr[0]);
+
+arr[3] := 9134;
+test_eq("assign to array", 9134, arr[3]);
+
+let mut ptr = &arr;
+ptr[4] := 30984304;
+test_eq("assign to pointer to array", 30984304, arr[4]);
+
+test_eq("function passed array", 30993462, sum(arr));
+test_eq("function returning array", 4, one_to_ten()[3]);
+
+fn sum(arr: [int; 10]): int {
+    let mut i = 0;
+    let mut sum = 0;
+
+    while i < 10 {
+        sum := sum + arr[i];
+        i := i + 1;
+    }
+
+    return sum;
+}
+
+fn one_to_ten(): [int; 10] {
+    let mut arr = [0; 10];
+    let mut i = 0;
+
+    while i < 10 {
+        arr[i] := i + 1;
+        i := i + 1;
+    }
+
+    return arr;
+}
+
 ## other expressions ##
 
 test_eq("negative", -39, -15 - 24);

@@ -382,6 +382,27 @@ impl Parser {
         Some(expr)
     }
 
+    fn parse_subscript(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_field;
+
+        let mut expr = parse(self)?;
+
+        loop {
+            if self.consume(&Token::Lbracket) {
+                let subscript = parse(self)?;
+
+                self.expect(&Token::Rbracket, &[Token::Rbracket])?;
+                
+                let span = Span::merge(&expr.span, &self.prev().span);
+                expr = spanned(Expr::Subscript(Box::new(expr), Box::new(subscript)), span);
+            } else {
+                break;
+            }
+        }
+
+        Some(expr)
+    }
+
     #[inline]
     fn parse_unary_op<P, F>(&mut self, mut parse: P, f: F) -> Option<Spanned<Expr>>
         where P: FnMut(&mut Self) -> Option<Spanned<Expr>>,
@@ -396,7 +417,7 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Option<Spanned<Expr>> {
-        let parse = Self::parse_field;
+        let parse = Self::parse_subscript;
 
         match self.peek().kind {
             Token::Ampersand => self.parse_unary_op(parse, |expr| Expr::Address(expr)),

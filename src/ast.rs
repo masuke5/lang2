@@ -60,6 +60,7 @@ pub enum Expr {
     Struct(Id, Vec<(Spanned<Id>, Spanned<Expr>)>),
     Array(Box<Spanned<Expr>>, usize),
     Field(Box<Spanned<Expr>>, Field),
+    Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
     Call(Id, Vec<Spanned<Expr>>),
@@ -126,6 +127,11 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
             };
 
             dump_expr(&expr, depth + 1);
+        },
+        Expr::Subscript(expr, subscript) => {
+            println!("subscript {}", span_to_string(&expr.span));
+            dump_expr(&expr, depth + 1);
+            dump_expr(&subscript, depth + 1);
         },
         Expr::Variable(name) => println!("{} {}", IdMap::name(*name), span_to_string(&expr.span)),
         Expr::BinOp(binop, lhs, rhs) => {

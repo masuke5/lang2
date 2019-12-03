@@ -15,6 +15,9 @@ macro_rules! error {
 }
 
 macro_rules! check_type {
+    ($self:ident, $ty1:expr, $ty2:expr, $span:expr) => {
+        check_type!($self, $ty1, $ty2, "expected type `{expected}` but got type `{actual}`", $span);
+    };
     ($self:ident, $ty1:expr, $ty2:expr, $format:tt, $span:expr) => {
         {
             if $ty1 != Type::Invalid && $ty2 != Type::Invalid {
@@ -130,7 +133,7 @@ impl<'a> Analyzer<'a> {
     fn insert_copy_inst(&self, insts: &mut Vec<Inst>, ty: &Type) {
         match insts.last() {
             Some(inst) => match inst {
-                Inst::Load(_) | Inst::Dereference | Inst::Offset(_) => {
+                Inst::Load(_) | Inst::Dereference | Inst::Offset | Inst::Call(_) /* | Inst::CallNative */ => {
                     let size = type_size!(self, ty);
                     insts.push(Inst::Copy(size));
                 },
@@ -182,7 +185,7 @@ impl<'a> Analyzer<'a> {
 
     fn should_store(ty: &Type) -> bool {
         match ty {
-            Type::Tuple(_) | Type::Struct(_) => true,
+            Type::Tuple(_) | Type::Struct(_) | Type::Array(_, _) => true,
             _ => false,
         }
     }
@@ -194,7 +197,7 @@ impl<'a> Analyzer<'a> {
     fn expr_is_lvalue(expr: &Expr) -> bool {
         match expr {
             Expr::Variable(_) | Expr::Dereference(_) => true,
-            Expr::Field(expr, _) => Self::expr_is_lvalue(&expr.kind),
+            Expr::Field(expr, _) | Expr::Subscript(expr, _) => Self::expr_is_lvalue(&expr.kind),
             _ => false,
         }
     }
@@ -213,6 +216,9 @@ impl<'a> Analyzer<'a> {
                 true
             },
             Expr::Field(expr, _) => {
+                self.expr_is_mutable(&expr.kind)
+            },
+            Expr::Subscript(expr, _) => {
                 self.expr_is_mutable(&expr.kind)
             },
             _ => false, // expr is not lvalue
@@ -545,9 +551,42 @@ impl<'a> Analyzer<'a> {
                     None => return ExprInfo::invalid(expr.span),
                 };
 
-                insts.push(Inst::Offset(offset));
+                insts.push(Inst::Int(offset as i64));
+                insts.push(Inst::Offset);
 
                 field_expr.ty
+            },
+            Expr::Subscript(expr, subscript_expr) => {
+                let expr = self.walk_expr(insts, *expr);
+
+                let ty = match expr.ty {
+                    Type::Array(ty, _) => *ty,
+                    Type::Pointer(ty) => {
+                        self.insert_copy_inst(insts, &Type::Pointer(ty.clone()));
+                        insts.push(Inst::Dereference);
+
+                        match *ty {
+                            Type::Array(ty, _) => *ty,
+                            ty => {
+                                error!(self, expr.span.clone(), "expected array but got type `{}`", ty);
+                                return ExprInfo::invalid(expr.span);
+                            },
+                        }
+                    }
+                    ty => {
+                        error!(self, expr.span.clone(), "expected array but got type `{}`", ty);
+                        return ExprInfo::invalid(expr.span);
+                    },
+                };
+
+                let subscript_expr = self.walk_expr(insts, *subscript_expr);
+                self.insert_copy_inst(insts, &subscript_expr.ty);
+
+                check_type!(self, Type::Int, subscript_expr.ty, subscript_expr.span);
+
+                insts.push(Inst::Offset);
+
+                ty
             },
             Expr::Variable(name) => {
                 let (loc, ty, _) = match self.find_var(name) {

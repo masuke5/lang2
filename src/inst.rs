@@ -69,7 +69,7 @@ pub enum Inst {
     Dereference,
     Negative,
     Copy(usize),
-    Offset(usize),
+    Offset,
     Duplicate(usize, usize),
     Load(isize),
     StoreWithSize(usize),
@@ -101,7 +101,7 @@ impl fmt::Display for Inst {
             Inst::Negative => write!(f, "neg"),
             Inst::Copy(size) => write!(f, "copy size={}", size),
             Inst::Duplicate(size, count) => write!(f, "duplicate size={}, count={}", size, count),
-            Inst::Offset(i) => write!(f, "offset {}", i),
+            Inst::Offset => write!(f, "offset"),
             Inst::BinOp(binop) => {
                 match binop {
                     BinOp::Add => write!(f, "add"),

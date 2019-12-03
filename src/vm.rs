@@ -107,9 +107,6 @@ impl<'a> VM<'a> {
 
         loop {
             if self.ip >= insts.len() {
-                assert!(self.insts_stack.is_empty());
-                assert_eq!(self.sp, main_func.stack_size);
-                self.sp = self.fp;
                 break;
             }
 
@@ -192,13 +189,15 @@ impl<'a> VM<'a> {
 
                     self.sp += size * count;
                 },
-                Inst::Offset(offset) => {
+                Inst::Offset => {
+                    let offset: i64 = pop!(self);
+
                     let ptr = match &mut self.stack[self.sp] {
                         Value::Ref(ptr) => ptr,
                         _ => panic!("expected ref"),
                     };
 
-                    let new_ptr = ptr.as_ptr().wrapping_add(*offset);
+                    let new_ptr = ptr.as_ptr().wrapping_add(offset as usize);
                     *ptr = NonNull::new(new_ptr).unwrap();
                 },
                 Inst::BinOp(binop) => {
@@ -319,6 +318,10 @@ impl<'a> VM<'a> {
 
             self.ip += 1;
         }
+
+        assert!(self.insts_stack.is_empty());
+        assert_eq!(self.sp, main_func.stack_size);
+        self.sp = self.fp;
     }
 
     fn trace(inst: &Inst) {
