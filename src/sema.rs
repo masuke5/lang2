@@ -5,7 +5,7 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::inst::{Inst, Function, NativeFunctionBody, BinOp as IBinOp};
+use crate::inst::{Inst, Function, BinOp as IBinOp};
 use crate::stdlib::NativeFuncMap;
 
 macro_rules! error {
@@ -173,14 +173,6 @@ impl<'a> Analyzer<'a> {
         }
 
         None
-    }
-
-    #[allow(unused_variables)]
-    fn call_native(name: Id, body: NativeFunctionBody, params: usize) -> Inst {
-        #[cfg(debug_assertions)]
-        { Inst::CallNative(name, body, params) }
-        #[cfg(not(debug_assertions))]
-        { Inst::CallNative(body, params) }
     }
 
     fn should_store(ty: &Type) -> bool {
@@ -743,7 +735,7 @@ impl<'a> Analyzer<'a> {
 
                 let (return_ty, params, inst) = match self.stdlib_funcs.get(&*name_str) {
                     Some(func) => {
-                        (func.return_ty.clone(), func.params.clone(), Self::call_native(name, func.body.clone(), func.params.len()))
+                        (func.return_ty.clone(), func.params.clone(), Inst::CallNative(name, func.body.clone(), func.params.len()))
                     },
                     None => {
                         // Get the callee function

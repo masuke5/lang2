@@ -76,10 +76,7 @@ pub enum Inst {
     BinOp(BinOp),
     Call(Id),
     Pop,
-    #[cfg(debug_assertions)]
     CallNative(Id, NativeFunctionBody, usize),
-    #[cfg(not(debug_assertions))]
-    CallNative(NativeFunctionBody, usize),
 
     Jump(usize),
     JumpIfZero(usize),
@@ -121,13 +118,8 @@ impl fmt::Display for Inst {
             Inst::Call(name) => {
                 write!(f, "call {}", IdMap::name(*name))
             },
-            #[cfg(debug_assertions)]
             Inst::CallNative(name, _, param_count) => {
                 write!(f, "call_native {} params={}", IdMap::name(*name), param_count)
-            },
-            #[cfg(not(debug_assertions))]
-            Inst::CallNative(_, param_count) => {
-                write!(f, "call_native params={}", param_count);
             },
             Inst::Pop => write!(f, "pop"),
             Inst::Jump(i) => write!(f, "jump {}", i),

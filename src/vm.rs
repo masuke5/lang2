@@ -252,18 +252,8 @@ impl<'a> VM<'a> {
 
                     continue;
                 },
-                #[cfg(debug_assertions)]
                 Inst::CallNative(_, func, param_size) => {
                     let return_value = func.0(&self.stack[self.sp - param_size + 1..=self.sp]);
-
-                    // Pop arguments
-                    self.sp -= param_size;
-
-                    push!(self, return_value);
-                },
-                #[cfg(not(debug_assertions))]
-                Inst::CallNative(func, param_size) => {
-                    let return_value = func.0(&self.stack[self.sp - param_size + 1..self.sp + 1]);
 
                     // Pop arguments
                     self.sp -= param_size;
