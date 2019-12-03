@@ -439,7 +439,10 @@ impl<'a> Analyzer<'a> {
         };
 
         match &expr.ty {
-            Type::Pointer(_) => insts.push(Inst::Dereference),
+            Type::Pointer(_) => {
+                self.insert_copy_inst(insts, &expr.ty);
+                insts.push(Inst::Dereference);
+            },
             _ => {}
         }
 
@@ -572,11 +575,13 @@ impl<'a> Analyzer<'a> {
             Expr::BinOp(BinOp::And, lhs, rhs) => {
                 // Jump to `B` if `lhs` is false
                 let lhs = self.walk_expr(insts, *lhs);
+                self.insert_copy_inst(insts, &lhs.ty);
                 let jump1 = insts.len();
                 insts.push(Inst::Int(0));
 
                 // Jump to `B` if `rhs` is false
                 let rhs = self.walk_expr(insts, *rhs);
+                self.insert_copy_inst(insts, &lhs.ty);
                 let jump2 = insts.len();
                 insts.push(Inst::Int(0));
 
@@ -616,11 +621,13 @@ impl<'a> Analyzer<'a> {
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
                 // Jump to `B` if `lhs` is true
                 let lhs = self.walk_expr(insts, *lhs);
+                self.insert_copy_inst(insts, &lhs.ty);
                 let jump1 = insts.len();
                 insts.push(Inst::Int(0));
 
                 // Jump to `B` if `rhs` is true
                 let rhs = self.walk_expr(insts, *rhs);
+                self.insert_copy_inst(insts, &lhs.ty);
                 let jump2 = insts.len();
                 insts.push(Inst::Int(0));
 
@@ -649,7 +656,9 @@ impl<'a> Analyzer<'a> {
             },
             Expr::BinOp(binop, lhs, rhs) => {
                 let lhs = self.walk_expr(insts, *lhs);
+                self.insert_copy_inst(insts, &lhs.ty);
                 let rhs = self.walk_expr(insts, *rhs);
+                self.insert_copy_inst(insts, &lhs.ty);
 
                 // Insert an instruction
                 let ibinop = match binop {
@@ -755,6 +764,8 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Dereference(expr) => {
                 let expr = self.walk_expr(insts, *expr);
+                self.insert_copy_inst(insts, &expr.ty);
+
                 match expr.ty {
                     Type::Pointer(ty) => {
                         insts.push(Inst::Dereference);
@@ -769,6 +780,8 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Negative(expr) => {
                 let expr = self.walk_expr(insts, *expr);
+                self.insert_copy_inst(insts, &expr.ty);
+
                 match expr.ty {
                     ty @ Type::Int /* | Type::Float */ => {
                         insts.push(Inst::Negative);
@@ -798,6 +811,7 @@ impl<'a> Analyzer<'a> {
             Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
                 let expr = self.walk_expr(insts, cond);
+                self.insert_copy_inst(insts, &expr.ty);
                 check_type!(self, Type::Bool, expr.ty, "expected type `{expected}` but got type `{actual}`", expr.span);
 
                 // Insert dummy instruction to jump to else-clause or end
@@ -828,6 +842,7 @@ impl<'a> Analyzer<'a> {
 
                 // Insert condition expression instruction
                 let cond = self.walk_expr(insts, cond);
+                self.insert_copy_inst(insts, &cond.ty);
                 check_type!(self, Type::Bool, cond.ty, "expected type `{expected}` but got type `{actual}`", cond.span);
 
                 // Insert dummy instruction to jump to end

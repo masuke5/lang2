@@ -22,7 +22,6 @@ macro_rules! impl_from_value {
             fn from_value_ref(value: &Value) -> &Self {
                 match value {
                     $($pat => $expr,)*
-                    Value::Ref(ptr) => Self::from_value_ref(unsafe { ptr.as_ref() }),
                     _ => panic!($mess),
                 }
             }
@@ -31,10 +30,6 @@ macro_rules! impl_from_value {
             fn from_value(value: Value) -> Self {
                 match value {
                     $($pat => $expr,)*
-                    Value::Ref(ptr) => {
-                        let value = unsafe { ptr.as_ref() };
-                        Self::from_value(value.clone())
-                    }
                     _ => panic!($mess),
                 }
             }
