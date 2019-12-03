@@ -10,6 +10,7 @@ pub enum Type {
     Pointer(Box<Type>),
     Tuple(Vec<Type>),
     Struct(Vec<(Id, Type)>),
+    Array(Box<Type>, usize),
     Named(Id),
     Invalid,
 }
@@ -49,6 +50,7 @@ impl fmt::Display for Type {
 
                 write!(f, " }}")
             },
+            Type::Array(ty, size) => write!(f, "[{}; {}]", ty, size),
             Type::Named(name) => {
                 write!(f, "{}", IdMap::name(*name))
             },
@@ -64,6 +66,7 @@ impl Type {
         match self {
             Type::Tuple(types) => types.iter().fold(0, |acc, ty| acc + ty.size()),
             Type::Struct(fields) => fields.iter().fold(0, |acc, (_, ty)| acc + ty.size()),
+            Type::Array(ty, size) => ty.size() * size,
             Type::Invalid => 0,
             _ => 1,
         }

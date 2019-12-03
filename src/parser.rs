@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use crate::span::{Span, Spanned};
 use crate::error::Error;
 use crate::token::*;
@@ -267,6 +269,32 @@ impl Parser {
         Some(spanned(Expr::Tuple(inner), span))
     }
 
+    fn parse_array(&mut self) -> Option<Spanned<Expr>> {
+        let lbracket_span = self.peek().span.clone();
+        self.next(); // eat "["
+
+        let init_expr = self.parse_expr()?;
+
+        self.expect(&Token::Semicolon, &[Token::Semicolon]);
+
+        let size = match self.peek().kind {
+            Token::Number(size) => match usize::try_from(size) {
+                Ok(size) => size,
+                Err(_) => {
+                    error!(self, self.peek().span.clone(), "too large");
+                    0
+                },
+            },
+            _ => return None,
+        };
+        self.next();
+
+        self.expect(&Token::Rbracket, &[Token::Rbracket]);
+
+        let span = Span::merge(&lbracket_span, &self.prev().span);
+        Some(spanned(Expr::Array(Box::new(init_expr), size), span))
+    }
+
     fn parse_primary(&mut self) -> Option<Spanned<Expr>> {
         let token = self.peek().clone();
 
@@ -288,6 +316,7 @@ impl Parser {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::False), token.span))
             },
+            Token::Lbracket => self.parse_array(),
             Token::Lparen => {
                 let lparen_span = self.peek().span.clone();
                 self.next();
@@ -674,6 +703,30 @@ impl Parser {
         }
     }
 
+    fn parse_type_array(&mut self) -> Option<Type> {
+        self.next(); // eat "["
+
+        let ty = self.parse_skip(Self::parse_type, &[Token::Rbracket])?;
+
+        self.expect(&Token::Semicolon, &[Token::Rbracket])?;
+
+        let size = match self.peek().kind {
+            Token::Number(size) => match usize::try_from(size) {
+                Ok(size) => size,
+                Err(_) => {
+                    error!(self, self.peek().span.clone(), "too large");
+                    0
+                },
+            },
+            _ => return None,
+        };
+        self.next();
+
+        self.expect(&Token::Rbracket, &[Token::Rbracket]);
+
+        Some(Type::Array(Box::new(ty), size))
+    }
+
     fn parse_type(&mut self) -> Option<Type> {
         match self.peek().kind {
             Token::Int => self.next_and(Some(Type::Int)),
@@ -683,6 +736,7 @@ impl Parser {
             Token::Asterisk => self.parse_type_pointer(),
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
+            Token::Lbracket => self.parse_type_array(), // array
             _ => {
                 error!(self,
                     self.peek().span.clone(),

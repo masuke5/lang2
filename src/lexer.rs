@@ -240,6 +240,8 @@ impl<'a> Lexer<'a> {
             ')' => Some(Token::Rparen),
             '{' => Some(Token::Lbrace),
             '}' => Some(Token::Rbrace),
+            '[' => Some(Token::Lbracket),
+            ']' => Some(Token::Rbracket),
             '=' => Some(Token::Equal),
             ';' => Some(Token::Semicolon),
             ',' => Some(Token::Comma),

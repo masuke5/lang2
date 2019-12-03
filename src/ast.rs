@@ -58,6 +58,7 @@ pub enum Expr {
     Literal(Literal),
     Tuple(Vec<Spanned<Expr>>),
     Struct(Id, Vec<(Spanned<Id>, Spanned<Expr>)>),
+    Array(Box<Spanned<Expr>>, usize),
     Field(Box<Spanned<Expr>>, Field),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
@@ -113,6 +114,10 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
                 println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
                 dump_expr(expr, depth + 2);
             }
+        },
+        Expr::Array(init_expr, size) => {
+            println!("[{}] {}", size, span_to_string(&expr.span));
+            dump_expr(init_expr, depth + 1);
         },
         Expr::Field(expr, field) => {
             match field {

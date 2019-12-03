@@ -324,6 +324,16 @@ impl<'a> Analyzer<'a> {
         (Type::Named(name), size)
     }
 
+    fn walk_array(&mut self, insts: &mut Vec<Inst>, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
+        let init_expr = self.walk_expr(insts, init_expr);
+        let expr_size = type_size!(self, &init_expr.ty);
+
+        self.insert_copy_inst(insts, &init_expr.ty);
+        insts.push(Inst::Duplicate(expr_size, size - 1));
+
+        (Type::Array(Box::new(init_expr.ty), size), expr_size * size)
+    }
+
     fn store_comp_literal(
         &mut self,
         insts: &mut Vec<Inst>,
@@ -335,6 +345,7 @@ impl<'a> Analyzer<'a> {
         let (ty, size) = match expr.kind {
             Expr::Tuple(exprs) => self.walk_tuple(insts, exprs),
             Expr::Struct(name, fields) => self.walk_struct(insts, name, fields, expr.span),
+            Expr::Array(init_expr, size) => self.walk_array(insts, *init_expr, size),
             _ => panic!("the expression is not a compound literal"),
         };
 
@@ -516,7 +527,7 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::False);
                 Type::Bool
             },
-            Expr::Tuple(_) | Expr::Struct(_, _) => {
+            Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
                 let id = self.gen_temp_id();
                 let span = expr.span.clone();
                 let (ty, loc) = self.store_comp_literal(insts, id, expr, true, false);
@@ -841,7 +852,7 @@ impl<'a> Analyzer<'a> {
             },
             Stmt::Bind(name, expr, is_mutable) => {
                 match expr.kind {
-                    Expr::Tuple(_) | Expr::Struct(_, _) => {
+                    Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
                         self.store_comp_literal(insts, name, expr, true, is_mutable);
                     },
                     _ => {
@@ -916,6 +927,9 @@ impl<'a> Analyzer<'a> {
                 for ty in types {
                     self.walk_type(ty, span);
                 }
+            },
+            Type::Array(ty, _) => {
+                self.walk_type(ty, span);
             },
             Type::Pointer(ty) => self.walk_type(ty, span),
             Type::Int | Type::Bool | Type::String | Type::Unit | Type::Invalid => {},

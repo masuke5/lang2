@@ -70,14 +70,12 @@ pub enum Inst {
     Negative,
     Copy(usize),
     Offset(usize),
-
+    Duplicate(usize, usize),
     Load(isize),
     StoreWithSize(usize),
-
     BinOp(BinOp),
     Call(Id),
     Pop,
-
     #[cfg(debug_assertions)]
     CallNative(Id, NativeFunctionBody, usize),
     #[cfg(not(debug_assertions))]
@@ -102,6 +100,7 @@ impl fmt::Display for Inst {
             Inst::Dereference => write!(f, "deref"),
             Inst::Negative => write!(f, "neg"),
             Inst::Copy(size) => write!(f, "copy size={}", size),
+            Inst::Duplicate(size, count) => write!(f, "duplicate size={}, count={}", size, count),
             Inst::Offset(i) => write!(f, "offset {}", i),
             Inst::BinOp(binop) => {
                 match binop {

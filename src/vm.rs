@@ -161,8 +161,8 @@ impl<'a> VM<'a> {
                 Inst::Copy(size) => {
                     // Copy if TOS is a reference
                     match &self.stack[self.sp] {
-                        Value::Ref(mut ptr) if *size == 1 => {
-                            let value = unsafe { ptr.as_mut() };
+                        Value::Ref(ptr) if *size == 1 => {
+                            let value = unsafe { ptr.as_ref() };
                             self.stack[self.sp] = value.clone();
                         },
                         Value::Ref(ptr) => {
@@ -179,6 +179,18 @@ impl<'a> VM<'a> {
                         },
                         _ => {},
                     }
+                },
+                Inst::Duplicate(size, count) => {
+                    let ptr = &self.stack[self.sp - (size - 1)] as *const Value;
+
+                    for i in 1..=*count {
+                        unsafe {
+                            let dest = ptr.wrapping_add(i * size) as *mut _;
+                            ptr.copy_to_nonoverlapping(dest, *size);
+                        }
+                    }
+
+                    self.sp += size * count;
                 },
                 Inst::Offset(offset) => {
                     let ptr = match &mut self.stack[self.sp] {
