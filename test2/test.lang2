@@ -212,6 +212,14 @@ test_eq("struct field 1", 234, person.age);
 test_eq("struct field 2", 0, person.child.age);
 test_eq("struct field 3", 8, person.child.age_in_months);
 
+## heap ##
+
+let mut person = new Person:{ name: "aaaaaaaaa", age: 1000000, child: Child:{ age: 999950, age_in_months: 11 } };
+test_eq("struct in heap", 11, person.child.age_in_months);
+
+person.age := person.age - 1;
+test_eq("assign to struct in heap", 999999, person.age);
+
 ## array ##
 
 let mut arr = [3; 10];

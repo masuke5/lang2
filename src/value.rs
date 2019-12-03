@@ -1,4 +1,5 @@
 use std::ptr::NonNull;
+use crate::gc::GcRegion;
 
 pub trait FromValue {
     fn from_value_ref(value: &Value) -> &Self;
@@ -8,14 +9,17 @@ pub trait FromValue {
 #[derive(Debug, Clone)]
 pub enum Pointer {
     ToStack(NonNull<Value>),
-    ToHeap(NonNull<Value>),
+    ToHeap(NonNull<GcRegion>),
 }
 
 impl Pointer {
     pub fn as_non_null(&self) -> NonNull<Value> {
         match self {
             Pointer::ToStack(ptr) => *ptr,
-            Pointer::ToHeap(ptr) => *ptr,
+            Pointer::ToHeap(mut ptr) => {
+                let region = unsafe { ptr.as_mut() };
+                NonNull::new(region.base).unwrap()
+            },
         }
     }
 }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ptr;
 use std::ptr::NonNull;
 use std::mem;
 
@@ -6,6 +7,7 @@ use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
 use crate::value::{FromValue, Value, Pointer};
 use crate::utils;
+use crate::gc::Gc;
 
 const STACK_SIZE: usize = 10000;
 
@@ -35,6 +37,9 @@ macro_rules! push {
 
 pub struct VM<'a> {
     functions: HashMap<Id, Function>,
+    
+    // garbage collector
+    gc: Gc,
 
     // instruction pointer
     ip: usize,
@@ -51,6 +56,7 @@ impl<'a> VM<'a> {
     pub fn new(functions: HashMap<Id, Function>) -> Self {
         Self {
             functions,
+            gc: Gc::new(),
             ip: 0,
             fp: 0,
             sp: 0,
@@ -166,7 +172,7 @@ impl<'a> VM<'a> {
 
                             for i in 0..*size {
                                 unsafe {
-                                    let src_ptr = src.wrapping_add(i);
+                                    let src_ptr = src.add(i);
                                     push!(self, (*src_ptr).clone());
                                 };
                             }
@@ -179,7 +185,7 @@ impl<'a> VM<'a> {
 
                     for i in 1..=*count {
                         unsafe {
-                            let dest = ptr.wrapping_add(i * size) as *mut _;
+                            let dest = ptr.add(i * size) as *mut _;
                             ptr.copy_to_nonoverlapping(dest, *size);
                         }
                     }
@@ -194,7 +200,7 @@ impl<'a> VM<'a> {
                         _ => panic!("expected ref"),
                     };
 
-                    let new_ptr = ptr.as_ptr().wrapping_add(offset as usize);
+                    let new_ptr = unsafe { ptr.as_ptr().add(offset as usize) };
                     *ptr = NonNull::new(new_ptr).unwrap();
                 },
                 Inst::BinOp(binop) => {
@@ -227,20 +233,23 @@ impl<'a> VM<'a> {
                         let value: Value = pop!(self);
 
                         unsafe {
-                            let ptr = ptr.as_ptr().wrapping_add(i);
+                            let ptr = ptr.as_ptr().add(i);
                             *ptr = value;
                         }
                     }
                 },
                 Inst::Alloc(size) => {
-                    // TODO: Use GC
-                    let base = 9000;
-                    for i in (0..*size).rev() {
-                        self.stack[base + i] = pop!(self, Value);
+                    let ptr_to_region = self.gc.alloc(*size, &mut self.stack);
+
+                    unsafe {
+                        let base_ptr = ptr_to_region.as_ref().base;
+                        for i in (0..*size).rev() {
+                            let value: Value = pop!(self);
+                            ptr::write(base_ptr.add(i), value);
+                        }
                     }
 
-                    let ptr = NonNull::new(&mut self.stack[base] as *mut _).unwrap();
-                    push!(self, Value::Pointer(Pointer::ToHeap(ptr)));
+                    push!(self, Value::Pointer(Pointer::ToHeap(ptr_to_region)));
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];

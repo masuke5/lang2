@@ -1,4 +1,4 @@
-#![feature(box_patterns, slice_concat_trait)]
+#![feature(box_patterns, slice_concat_trait, drain_filter)]
 
 mod span;
 mod error;
@@ -14,6 +14,7 @@ mod vm;
 mod value;
 mod stdlib;
 mod utils;
+mod gc;
 
 use std::process::exit;
 use std::fs::File;

@@ -36,6 +36,7 @@ macro_rules! check_type {
 
 // Return size of specified type.
 // The reason why I create this as macro is because doesn't borrow `self.types` but `self`
+// FIXME: nested structure
 macro_rules! type_size {
     ($self:ident, $ty:expr) => {
         match $ty {
