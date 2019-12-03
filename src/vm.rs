@@ -4,7 +4,7 @@ use std::mem;
 
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
-use crate::value::{FromValue, Value};
+use crate::value::{FromValue, Value, Pointer};
 use crate::utils;
 
 const STACK_SIZE: usize = 10000;
@@ -71,7 +71,7 @@ impl<'a> VM<'a> {
                 let value = unsafe { ptr.as_ref() };
                 Self::dump_value(value, depth + 1);
             },
-            Value::Pointer(ptr) => println!("ptr {:p}", ptr),
+            Value::Pointer(ptr) => println!("ptr {:p}", ptr.as_non_null()),
             Value::Unintialized => println!("uninitialized"),
         }
     }
@@ -136,15 +136,12 @@ impl<'a> VM<'a> {
                 },
                 Inst::Pointer => {
                     let value_ref: Value = pop!(self);
-                    match value_ref {
-                        Value::Ref(ptr) => {
-                            push!(self, Value::Pointer(ptr));
-                        },
-                        _ => panic!("expected ref"),
-                    }
+                    let value_ptr = value_ref.expect_ref();
+
+                    push!(self, Value::Pointer(Pointer::ToStack(value_ptr)));
                 },
                 Inst::Dereference => {
-                    let ptr: NonNull<Value> = pop!(self);
+                    let ptr = pop!(self, Value).expect_ptr();
                     push!(self, Value::Ref(ptr));
                 },
                 Inst::Negative => {
@@ -175,7 +172,7 @@ impl<'a> VM<'a> {
                             }
                         },
                         _ => {},
-                    }
+                    };
                 },
                 Inst::Duplicate(size, count) => {
                     let ptr = &self.stack[self.sp - (size - 1)] as *const Value;
@@ -234,6 +231,16 @@ impl<'a> VM<'a> {
                             *ptr = value;
                         }
                     }
+                },
+                Inst::Alloc(size) => {
+                    // TODO: Use GC
+                    let base = 9000;
+                    for i in (0..*size).rev() {
+                        self.stack[base + i] = pop!(self, Value);
+                    }
+
+                    let ptr = NonNull::new(&mut self.stack[base] as *mut _).unwrap();
+                    push!(self, Value::Pointer(Pointer::ToHeap(ptr)));
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];

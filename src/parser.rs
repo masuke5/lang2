@@ -423,6 +423,7 @@ impl Parser {
             Token::Ampersand => self.parse_unary_op(parse, |expr| Expr::Address(expr)),
             Token::Asterisk => self.parse_unary_op(parse, |expr| Expr::Dereference(expr)),
             Token::Sub => self.parse_unary_op(parse, |expr| Expr::Negative(expr)),
+            Token::New => self.parse_unary_op(parse, |expr| Expr::Alloc(expr)),
             _ => parse(self),
         }
     }

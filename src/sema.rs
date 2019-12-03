@@ -824,6 +824,13 @@ impl<'a> Analyzer<'a> {
                     },
                 }
             },
+            Expr::Alloc(expr) => {
+                let expr = self.walk_expr(insts, *expr);
+                self.insert_copy_inst(insts, &expr.ty);
+                insts.push(Inst::Alloc(type_size!(self, &expr.ty)));
+
+                Type::Pointer(Box::new(expr.ty))
+            },
         };
 
         ExprInfo::new(ty, expr.span)

@@ -67,6 +67,7 @@ pub enum Expr {
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>),
     Negative(Box<Spanned<Expr>>),
+    Alloc(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -155,6 +156,10 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
         },
         Expr::Negative(expr_) => {
             println!("neg {}", span_to_string(&expr.span));
+            dump_expr(&expr_, depth + 1);
+        },
+        Expr::Alloc(expr_) => {
+            println!("alloc {}", span_to_string(&expr.span));
             dump_expr(&expr_, depth + 1);
         },
     }

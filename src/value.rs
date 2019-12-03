@@ -6,13 +6,61 @@ pub trait FromValue {
 }
 
 #[derive(Debug, Clone)]
+pub enum Pointer {
+    ToStack(NonNull<Value>),
+    ToHeap(NonNull<Value>),
+}
+
+impl Pointer {
+    pub fn as_non_null(&self) -> NonNull<Value> {
+        match self {
+            Pointer::ToStack(ptr) => *ptr,
+            Pointer::ToHeap(ptr) => *ptr,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Value {
     Unintialized,
     Int(i64),
     Bool(bool),
     String(String),
     Ref(NonNull<Value>),
-    Pointer(NonNull<Value>),
+    Pointer(Pointer),
+}
+
+impl Value {
+    #[allow(dead_code)]
+    pub fn expect_ptr_ref(&self) -> NonNull<Value> {
+        match self {
+            Value::Pointer(ptr) => ptr.as_non_null(),
+            _ => panic!("expected pointer"),
+        }
+    }
+
+    pub fn expect_ptr(self) -> NonNull<Value> {
+        match self {
+            Value::Pointer(ptr) => ptr.as_non_null(),
+            _ => panic!("expected pointer"),
+        }
+    }
+
+    // reference to Value::Ref
+    #[allow(dead_code)]
+    pub fn expect_ref_ref(&self) -> NonNull<Value> {
+        match self {
+            Value::Ref(ptr) => *ptr,
+            _ => panic!("expected ref"),
+        }
+    }
+
+    pub fn expect_ref(self) -> NonNull<Value> {
+        match self {
+            Value::Ref(ptr) => ptr,
+            _ => panic!("expected ref"),
+        }
+    }
 }
 
 macro_rules! impl_from_value {
@@ -49,7 +97,7 @@ impl_from_value! {String, "expected string",
     Value::String(s) => s,
 }
 
-impl_from_value! {NonNull<Value>, "expected pointer",
+impl_from_value! {Pointer, "expected pointer",
     Value::Pointer(ptr) => ptr,
 }
 

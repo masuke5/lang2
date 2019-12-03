@@ -74,15 +74,16 @@ pub enum Inst {
     Load(isize),
     StoreWithSize(usize),
     BinOp(BinOp),
-    Call(Id),
     Pop,
+    Alloc(usize),
+
+    Call(Id),
     CallNative(Id, NativeFunctionBody, usize),
 
     Jump(usize),
     JumpIfZero(usize),
     JumpIfNonZero(usize),
     Return(usize),
-
 }
 
 impl fmt::Display for Inst {
@@ -115,6 +116,7 @@ impl fmt::Display for Inst {
                 }
             },
             Inst::StoreWithSize(size) => write!(f, "store size={}", size),
+            Inst::Alloc(size) => write!(f, "alloc size={}", size),
             Inst::Call(name) => {
                 write!(f, "call {}", IdMap::name(*name))
             },
