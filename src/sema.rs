@@ -193,11 +193,21 @@ impl<'a> Analyzer<'a> {
     fn new_var(&mut self, id: Id, ty: Type, is_mutable: bool) -> isize {
         let last_map = self.variables.last_mut().unwrap();
         let current_func = self.functions.get_mut(&self.current_func).unwrap();
+        let new_var_size = type_size(&self.types, &ty);
 
-        let loc = current_func.stack_size as isize;
+        let loc = match last_map.get(&id) {
+            // If the same scope contains the same size variable, use the variable location
+            Some((loc, ty, _)) if new_var_size == type_size(&self.types, ty) => {
+                *loc
+            },
+            _ => {
+                let loc = current_func.stack_size as isize;
+                current_func.stack_size += new_var_size;
+                loc
+            },
+        };
+
         last_map.insert(id, (loc, ty.clone(), is_mutable));
-
-        current_func.stack_size += type_size(&self.types, &ty);
 
         loc
     }
