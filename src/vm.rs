@@ -135,6 +135,10 @@ impl<'a> VM<'a> {
                 Inst::False => {
                     push!(self, Value::Bool(false));
                 },
+                Inst::Null => {
+                    let nullptr = unsafe { NonNull::new_unchecked(ptr::null_mut()) };
+                    push!(self, Value::Pointer(Pointer::ToStack(nullptr)));
+                },
                 Inst::Load(loc) => {
                     let value = &mut self.stack[(self.fp as isize + *loc) as usize];
                     let ptr = NonNull::new(value as *mut _).unwrap();

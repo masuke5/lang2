@@ -155,6 +155,7 @@ impl<'a> Lexer<'a> {
             "type" => Token::Type,
             "struct" => Token::Struct,
             "new" => Token::New,
+            "__null__" => Token::Null,
             s => {
                 let id = IdMap::new_id(s);
                 Token::Identifier(id)

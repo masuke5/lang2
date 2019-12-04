@@ -49,50 +49,6 @@ fn type_size(types: &HashMap<Id, Type>, ty: &Type) -> usize {
     }
 }
 
-/*
-macro_rules! type_size {
-    ($self:ident, $ty:expr) => {
-        {
-            let mut size = 0;
-            let mut stack: LinkedList<&Type> = LinkedList::new();
-            stack.push_front($ty);
-
-            while let Some(ty) = stack.pop_front() {
-                match ty {
-                    Type::Named(id) => {
-                        match $self.types.get(&id) {
-                            Some(t) => stack.push_front(t),
-                            None => {
-                                size = 1;
-                                break;
-                            },
-                        }
-                    },
-                    Type::Tuple(types) => {
-                        for ty in types {
-                            stack.push_front(ty);
-                        }
-                    },
-                    Type::Struct(fields) => {
-                        for (_, ty) in fields {
-                            stack.push_front(ty);
-                        }
-                    },
-                    Type::Array(ty, _) => stack.push_front(ty),
-                    ty => {
-                        size += ty.size();
-                        break;
-                    },
-                }
-            }
-
-            size
-        }
-    }
-}
-*/
-
-
 #[derive(Debug)]
 struct FunctionHeader {
     pub params: Vec<Type>,
@@ -581,6 +537,10 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::False);
                 Type::Bool
             },
+            Expr::Literal(Literal::Null) => {
+                insts.push(Inst::Null);
+                Type::Null
+            },
             Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
                 let id = self.gen_temp_id();
                 let span = expr.span.clone();
@@ -1019,6 +979,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    // Check if specified type exists
     fn walk_type(&mut self, ty: &Type, span: &Span) {
         match ty {
             Type::Named(name) => {
@@ -1040,7 +1001,7 @@ impl<'a> Analyzer<'a> {
                 self.walk_type(ty, span);
             },
             Type::Pointer(ty) => self.walk_type(ty, span),
-            Type::Int | Type::Bool | Type::String | Type::Unit | Type::Invalid => {},
+            Type::Int | Type::Bool | Type::String | Type::Unit | Type::Invalid | Type::Null => {},
         }
     }
 

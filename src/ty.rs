@@ -7,6 +7,7 @@ pub enum Type {
     Bool,
     String,
     Unit,
+    Null,
     Pointer(Box<Type>),
     Tuple(Vec<Type>),
     Struct(Vec<(Id, Type)>),
@@ -22,6 +23,7 @@ impl fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
             Type::Unit => write!(f, "()"),
+            Type::Null => write!(f, "null"),
             Type::Pointer(ty) => write!(f, "*{}", ty),
             Type::Tuple(inner) => {
                 write!(f, "(")?;

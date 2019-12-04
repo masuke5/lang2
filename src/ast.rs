@@ -45,6 +45,7 @@ pub enum Literal {
     Unit,
     True,
     False,
+    Null,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -103,6 +104,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
         Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
+        Expr::Literal(Literal::Null) => println!("__null__ {}", span_to_string(&expr.span)),
         Expr::Tuple(exprs) => {
             println!("tuple {}", span_to_string(&expr.span));
             for expr in exprs {

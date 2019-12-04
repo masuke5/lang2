@@ -316,6 +316,10 @@ impl Parser {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::False), token.span))
             },
+            Token::Null => {
+                self.next();
+                Some(spanned(Expr::Literal(Literal::Null), token.span))
+            },
             Token::Lbracket => self.parse_array(),
             Token::Lparen => {
                 let lparen_span = self.peek().span.clone();

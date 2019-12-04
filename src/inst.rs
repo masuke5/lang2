@@ -63,6 +63,7 @@ pub enum Inst {
     String(String),
     True,
     False,
+    Null,
     // make a pointer from a reference
     Pointer,
     // dereference a pointer
@@ -93,6 +94,7 @@ impl fmt::Display for Inst {
             Inst::String(s) => write!(f, "string \"{}\"", utils::escape_string(s)),
             Inst::True => write!(f, "true"),
             Inst::False => write!(f, "false"),
+            Inst::Null => write!(f, "__null__"),
             Inst::Load(loc) => write!(f, "load_ref {}", loc),
             Inst::Pointer => write!(f, "pointer"),
             Inst::Dereference => write!(f, "deref"),
