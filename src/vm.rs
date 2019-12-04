@@ -208,24 +208,40 @@ impl<'a> VM<'a> {
                     *ptr = NonNull::new(new_ptr).unwrap();
                 },
                 Inst::BinOp(binop) => {
-                    let rhs: i64 = pop!(self);
-                    let lhs: i64 = pop!(self);
+                    match pop!(self, Value) {
+                        Value::Int(rhs) => {
+                            let lhs: i64 = pop!(self);
 
-                    let result = match binop {
-                        BinOp::Add => Value::Int(lhs + rhs),
-                        BinOp::Sub => Value::Int(lhs - rhs),
-                        BinOp::Mul => Value::Int(lhs * rhs),
-                        BinOp::Div => Value::Int(lhs / rhs),
-                        BinOp::Mod => Value::Int(lhs % rhs),
-                        BinOp::LessThan => Value::Bool(lhs < rhs),
-                        BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
-                        BinOp::GreaterThan => Value::Bool(lhs > rhs),
-                        BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
-                        BinOp::Equal => Value::Bool(lhs == rhs),
-                        BinOp::NotEqual => Value::Bool(lhs != rhs),
-                    };
+                            let result = match binop {
+                                BinOp::Add => Value::Int(lhs + rhs),
+                                BinOp::Sub => Value::Int(lhs - rhs),
+                                BinOp::Mul => Value::Int(lhs * rhs),
+                                BinOp::Div => Value::Int(lhs / rhs),
+                                BinOp::Mod => Value::Int(lhs % rhs),
+                                BinOp::LessThan => Value::Bool(lhs < rhs),
+                                BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
+                                BinOp::GreaterThan => Value::Bool(lhs > rhs),
+                                BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
+                                BinOp::Equal => Value::Bool(lhs == rhs),
+                                BinOp::NotEqual => Value::Bool(lhs != rhs),
+                            };
 
-                    push!(self, result);
+                            push!(self, result);
+                        },
+                        Value::Pointer(lhs) => {
+                            let lhs = lhs.as_non_null();
+                            let rhs = pop!(self, Value).expect_ptr();
+
+                            let result = match binop {
+                                BinOp::Equal => Value::Bool(lhs == rhs),
+                                BinOp::NotEqual => Value::Bool(lhs != rhs),
+                                _ => panic!("unexpected binary operator"),
+                            };
+
+                            push!(self, result);
+                        },
+                        _ => panic!("expected int or pointer"),
+                    }
                 },
                 Inst::StoreWithSize(size) => {
                     let ptr = match pop!(self, Value) {

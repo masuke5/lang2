@@ -52,6 +52,13 @@ test("greater than or equal", 93 >= 31);
 test("and", true && true);
 test("or", false || true);
 
+let b = 8149712421;
+let ptr1 = &a;
+let ptr2 = &a;
+let ptr3 = &b;
+test("pointer comparison 1", ptr1 = ptr2);
+test("pointer comparison 2", ptr2 <> ptr3);
+
 let a = 384123;
 a = 83901 && add_3(&a) = 5312;
 test_eq("short-circuit evalution in &&", 384123, a);

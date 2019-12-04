@@ -464,14 +464,14 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_field(&mut self, insts: &mut Vec<Inst>, field: Field, expr: Spanned<Expr>) -> Option<(ExprInfo, usize)> {
-        let (expr, offset) = match expr.kind {
+    fn walk_field(&mut self, insts: &mut Vec<Inst>, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
+        let expr = match expr.kind {
             Expr::Field(expr, field) => {
                 self.walk_field(insts, field, *expr)?
             },
             _ => {
                 let expr = self.walk_expr(insts, expr);
-                (expr, 0)
+                expr
             },
         };
 
@@ -524,12 +524,17 @@ impl<'a> Analyzer<'a> {
             },
         };
 
-        let offset_add = types.iter()
+        let offset = types.iter()
             .take(i)
             .fold(0, |acc, ty| acc + type_size(&self.types, &ty));
 
+        if offset != 0 {
+            insts.push(Inst::Int(offset as i64));
+            insts.push(Inst::Offset);
+        }
+
         let info = ExprInfo::new(field_ty.clone(), expr.span);
-        Some((info, offset + offset_add))
+        Some(info)
     }
 
     // ====================================
@@ -573,15 +578,10 @@ impl<'a> Analyzer<'a> {
                 return ExprInfo::new(ty, span);
             },
             Expr::Field(tuple_expr, field) => {
-                let (field_expr, offset) = match self.walk_field(insts, field, *tuple_expr) {
+                let field_expr = match self.walk_field(insts, field, *tuple_expr) {
                     Some(t) => t,
                     None => return ExprInfo::invalid(expr.span),
                 };
-
-                if offset != 0 {
-                    insts.push(Inst::Int(offset as i64));
-                    insts.push(Inst::Offset);
-                }
 
                 field_expr.ty
             },
@@ -744,25 +744,27 @@ impl<'a> Analyzer<'a> {
                 };
                 insts.push(Inst::BinOp(ibinop));
 
-                // Type check
-                if !check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span) {
-                    return ExprInfo::new(lhs.ty, expr.span);
-                }
-
                 let binop_symbol = binop.to_symbol();
-                match (binop, &lhs.ty) {
-                    (BinOp::Add, Type::Int) => Type::Int,
-                    (BinOp::Sub, Type::Int) => Type::Int,
-                    (BinOp::Mul, Type::Int) => Type::Int,
-                    (BinOp::Div, Type::Int) => Type::Int,
-                    (BinOp::Equal, Type::Int) => Type::Bool,
-                    (BinOp::NotEqual, Type::Int) => Type::Bool,
-                    (BinOp::LessThan, Type::Int) => Type::Bool,
-                    (BinOp::LessThanOrEqual, Type::Int) => Type::Bool,
-                    (BinOp::GreaterThan, Type::Int) => Type::Bool,
-                    (BinOp::GreaterThanOrEqual, Type::Int) => Type::Bool,
+                match (binop, &lhs.ty, &rhs.ty) {
+                    (BinOp::Add, Type::Int, Type::Int) => Type::Int,
+                    (BinOp::Sub, Type::Int, Type::Int) => Type::Int,
+                    (BinOp::Mul, Type::Int, Type::Int) => Type::Int,
+                    (BinOp::Div, Type::Int, Type::Int) => Type::Int,
+                    (BinOp::Equal, Type::Int, Type::Int) => Type::Bool,
+                    (BinOp::NotEqual, Type::Int, Type::Int) => Type::Bool,
+                    (BinOp::LessThan, Type::Int, Type::Int) => Type::Bool,
+                    (BinOp::LessThanOrEqual, Type::Int, Type::Int) => Type::Bool,
+                    (BinOp::GreaterThan, Type::Int, Type::Int) => Type::Bool,
+                    (BinOp::GreaterThanOrEqual, Type::Int, Type::Int) => Type::Bool,
+
+                    (BinOp::Equal, Type::Pointer(_), Type::Pointer(_)) => Type::Bool,
+                    (BinOp::Equal, Type::Null, Type::Pointer(_)) => Type::Bool,
+                    (BinOp::Equal, Type::Pointer(_), Type::Null) => Type::Bool,
+                    (BinOp::NotEqual, Type::Pointer(_), Type::Pointer(_)) => Type::Bool,
+                    (BinOp::NotEqual, Type::Null, Type::Pointer(_)) => Type::Bool,
+                    (BinOp::NotEqual, Type::Pointer(_), Type::Null) => Type::Bool,
                     _ => {
-                        self.add_error(&format!("`{} {} {}` is not possible", lhs.ty, binop_symbol, rhs.ty), expr.span.clone());
+                        self.add_error(&format!("`{} {} {}`", lhs.ty, binop_symbol, rhs.ty), expr.span.clone());
                         Type::Invalid
                     }
                 }
