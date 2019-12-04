@@ -35,20 +35,62 @@ macro_rules! check_type {
 }
 
 // Return size of specified type.
-// The reason why I create this as macro is because doesn't borrow `self.types` but `self`
-// FIXME: nested structure
+fn type_size(types: &HashMap<Id, Type>, ty: &Type) -> usize {
+    match ty {
+        Type::Named(id) => {
+            types.get(id)
+                .map(|ty| type_size(types, ty))
+                .unwrap_or(1)
+        },
+        Type::Tuple(tys) => tys.iter().fold(0, |acc, ty| acc + type_size(types, ty)),
+        Type::Struct(fields) => fields.iter().fold(0, |acc, (_, ty)| acc + type_size(types, ty)),
+        Type::Array(ty, size) => type_size(types, ty) * size,
+        ty => ty.size(),
+    }
+}
+
+/*
 macro_rules! type_size {
     ($self:ident, $ty:expr) => {
-        match $ty {
-            Type::Named(id) => {
-                $self.types.get(&id)
-                    .map(|ty| ty.size())
-                    .unwrap_or(1) // don't have to add an error because do it already
-            },
-            ty => ty.size(),
+        {
+            let mut size = 0;
+            let mut stack: LinkedList<&Type> = LinkedList::new();
+            stack.push_front($ty);
+
+            while let Some(ty) = stack.pop_front() {
+                match ty {
+                    Type::Named(id) => {
+                        match $self.types.get(&id) {
+                            Some(t) => stack.push_front(t),
+                            None => {
+                                size = 1;
+                                break;
+                            },
+                        }
+                    },
+                    Type::Tuple(types) => {
+                        for ty in types {
+                            stack.push_front(ty);
+                        }
+                    },
+                    Type::Struct(fields) => {
+                        for (_, ty) in fields {
+                            stack.push_front(ty);
+                        }
+                    },
+                    Type::Array(ty, _) => stack.push_front(ty),
+                    ty => {
+                        size += ty.size();
+                        break;
+                    },
+                }
+            }
+
+            size
         }
     }
 }
+*/
 
 
 #[derive(Debug)]
@@ -125,7 +167,7 @@ impl<'a> Analyzer<'a> {
         let last_map = self.variables.last_mut().unwrap();
         let mut loc = -3isize; // fp, ip
         for (id, ty, is_mutable) in params.iter().rev() {
-            loc -= type_size!(self, ty) as isize;
+            loc -= type_size(&self.types, ty) as isize;
             last_map.insert(*id, (loc, ty.clone(), *is_mutable));
         }
     }
@@ -135,7 +177,7 @@ impl<'a> Analyzer<'a> {
         match insts.last() {
             Some(inst) => match inst {
                 Inst::Load(_) | Inst::Dereference | Inst::Offset | Inst::Call(_) /* | Inst::CallNative */ => {
-                    let size = type_size!(self, ty);
+                    let size = type_size(&self.types, ty);
                     insts.push(Inst::Copy(size));
                 },
                 _ => {},
@@ -155,7 +197,7 @@ impl<'a> Analyzer<'a> {
         let loc = current_func.stack_size as isize;
         last_map.insert(id, (loc, ty.clone(), is_mutable));
 
-        current_func.stack_size += type_size!(self, &ty);
+        current_func.stack_size += type_size(&self.types, &ty);
 
         loc
     }
@@ -242,7 +284,7 @@ impl<'a> Analyzer<'a> {
                     let expr = self.walk_expr(insts, expr);
                     self.insert_copy_inst(insts, &expr.ty);
 
-                    size += type_size!(self, &expr.ty);
+                    size += type_size(&self.types, &expr.ty);
                     types.push(expr.ty);
                 },
             }
@@ -295,7 +337,7 @@ impl<'a> Analyzer<'a> {
 
                             self.insert_copy_inst(insts, &expr.ty);
 
-                            size += type_size!(self, &expr.ty);
+                            size += type_size(&self.types, &expr.ty);
                             expr.ty
                         },
                     };
@@ -325,7 +367,7 @@ impl<'a> Analyzer<'a> {
 
     fn walk_array(&mut self, insts: &mut Vec<Inst>, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
         let init_expr = self.walk_expr(insts, init_expr);
-        let expr_size = type_size!(self, &init_expr.ty);
+        let expr_size = type_size(&self.types, &init_expr.ty);
 
         self.insert_copy_inst(insts, &init_expr.ty);
         insts.push(Inst::Duplicate(expr_size, size - 1));
@@ -496,7 +538,7 @@ impl<'a> Analyzer<'a> {
 
         let offset_add = types.iter()
             .take(i)
-            .fold(0, |acc, ty| acc + type_size!(self, &ty));
+            .fold(0, |acc, ty| acc + type_size(&self.types, &ty));
 
         let info = ExprInfo::new(field_ty.clone(), expr.span);
         Some((info, offset + offset_add))
@@ -779,7 +821,7 @@ impl<'a> Analyzer<'a> {
                     let id = self.gen_temp_id();
                     let loc = self.new_var(id, return_ty.clone(), false);
                     insts.push(Inst::Load(loc));
-                    insts.push(Inst::StoreWithSize(type_size!(self, &return_ty)));
+                    insts.push(Inst::StoreWithSize(type_size(&self.types, &return_ty)));
                     insts.push(Inst::Load(loc));
                 }
 
@@ -830,7 +872,7 @@ impl<'a> Analyzer<'a> {
             Expr::Alloc(expr) => {
                 let expr = self.walk_expr(insts, *expr);
                 self.insert_copy_inst(insts, &expr.ty);
-                insts.push(Inst::Alloc(type_size!(self, &expr.ty)));
+                insts.push(Inst::Alloc(type_size(&self.types, &expr.ty)));
 
                 Type::Pointer(Box::new(expr.ty))
             },
@@ -844,7 +886,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Expr(expr) => {
                 let expr = self.walk_expr(insts, expr);
 
-                let pop_count = type_size!(self, &expr.ty);
+                let pop_count = type_size(&self.types, &expr.ty);
                 for _ in 0..pop_count {
                     insts.push(Inst::Pop);
                 }
@@ -917,7 +959,7 @@ impl<'a> Analyzer<'a> {
 
                         let loc = self.new_var(name, expr.ty.clone(), is_mutable);
                         insts.push(Inst::Load(loc as isize));
-                        insts.push(Inst::StoreWithSize(type_size!(self, &expr.ty)));
+                        insts.push(Inst::StoreWithSize(type_size(&self.types, &expr.ty)));
                     }
                 }
             },
@@ -938,7 +980,7 @@ impl<'a> Analyzer<'a> {
 
                 check_type!(self, lhs.ty, rhs.ty, "expected type `{expected}` but got type `{actual}`", rhs.span);
 
-                insts.push(Inst::StoreWithSize(type_size!(self, &lhs.ty)));
+                insts.push(Inst::StoreWithSize(type_size(&self.types, &lhs.ty)));
             },
             Stmt::Return(expr) => {
                 let func_name = self.functions[&self.current_func].name;
@@ -962,7 +1004,7 @@ impl<'a> Analyzer<'a> {
                 let return_ty = &self.function_headers[&self.current_func].return_ty;
                 check_type!(self, *return_ty, expr.ty, "expected `{expected}` type, but got `{actual}` type", expr.span);
 
-                insts.push(Inst::Return(type_size!(self, return_ty)));
+                insts.push(Inst::Return(type_size(&self.types, return_ty)));
             },
         }
     }
@@ -1030,7 +1072,7 @@ impl<'a> Analyzer<'a> {
         match toplevel {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
-                let param_size = param_types.iter().fold(0, |acc, ty| acc + type_size!(self, ty));
+                let param_size = param_types.iter().fold(0, |acc, ty| acc + type_size(&self.types, ty));
 
                 // Insert a header of the function
                 let header = FunctionHeader {
