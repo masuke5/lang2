@@ -78,12 +78,29 @@ impl ExprInfo {
 }
 
 #[derive(Debug)]
+struct Variable {
+    ty: Type,
+    is_mutable: bool,
+    loc: isize,
+}
+
+impl Variable {
+    fn new(ty: Type, is_mutable: bool, loc: isize) -> Self {
+        Self {
+            ty,
+            is_mutable,
+            loc,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
     functions: HashMap<Id, Function>,
     function_headers: HashMap<Id, FunctionHeader>,
     types: HashMap<Id, Type>,
-    variables: Vec<HashMap<Id, (isize, Type, bool)>>,
+    variables: Vec<HashMap<Id, Variable>>,
     errors: Vec<Error>,
     main_func_id: Id,
     current_func: Id,
@@ -124,7 +141,7 @@ impl<'a> Analyzer<'a> {
         let mut loc = -3isize; // fp, ip
         for (id, ty, is_mutable) in params.iter().rev() {
             loc -= type_size(&self.types, ty) as isize;
-            last_map.insert(*id, (loc, ty.clone(), *is_mutable));
+            last_map.insert(*id, Variable::new(ty.clone(), *is_mutable, loc));
         }
     }
 
@@ -153,8 +170,8 @@ impl<'a> Analyzer<'a> {
 
         let loc = match last_map.get(&id) {
             // If the same scope contains the same size variable, use the variable location
-            Some((loc, ty, _)) if new_var_size == type_size(&self.types, ty) => {
-                *loc
+            Some(var) if new_var_size == type_size(&self.types, &var.ty) => {
+                var.loc
             },
             _ => {
                 let loc = current_func.stack_size as isize;
@@ -163,7 +180,7 @@ impl<'a> Analyzer<'a> {
             },
         };
 
-        last_map.insert(id, (loc, ty.clone(), is_mutable));
+        last_map.insert(id, Variable::new(ty.clone(), is_mutable, loc));
 
         loc
     }
@@ -174,7 +191,7 @@ impl<'a> Analyzer<'a> {
         id
     }
 
-    fn find_var(&self, id: Id) -> Option<&(isize, Type, bool)> {
+    fn find_var(&self, id: Id) -> Option<&Variable> {
         for variables in self.variables.iter().rev() {
             if let Some(var) = variables.get(&id) {
                 return Some(var);
@@ -208,7 +225,7 @@ impl<'a> Analyzer<'a> {
         match expr {
             Expr::Variable(name) => {
                 match self.find_var(*name) {
-                    Some((_, _, is_mutable)) => *is_mutable,
+                    Some(var) => var.is_mutable,
                     None => false,
                 }
             },
@@ -358,7 +375,7 @@ impl<'a> Analyzer<'a> {
 
         // Create a variable if variable `id` does not exists or `force_create` is true
         let loc = match self.find_var(id) {
-            Some((loc, _, _)) if !force_create => *loc,
+            Some(var) if !force_create => var.loc,
             _ => self.new_var(id, ty.clone(), is_mutable),
         };
 
@@ -596,17 +613,17 @@ impl<'a> Analyzer<'a> {
                 ty
             },
             Expr::Variable(name) => {
-                let (loc, ty, _) = match self.find_var(name) {
-                    Some(r) => r,
+                let var = match self.find_var(name) {
+                    Some(v) => v,
                     None => {
                         self.add_error("undefined variable", expr.span.clone());
                         return ExprInfo::invalid(expr.span);
                     },
                 };
 
-                insts.push(Inst::Load(*loc));
+                insts.push(Inst::Load(var.loc));
 
-                ty.clone()
+                var.ty.clone()
             },
             //   lhs
             //   jump_if_zero B
