@@ -14,24 +14,18 @@ macro_rules! error {
     };
 }
 
-macro_rules! check_type {
-    ($self:ident, $ty1:expr, $ty2:expr, $span:expr) => {
-        check_type!($self, $ty1, $ty2, "expected type `{expected}` but got type `{actual}`", $span);
-    };
-    ($self:ident, $ty1:expr, $ty2:expr, $format:tt, $span:expr) => {
-        {
-            if $ty1 != Type::Invalid && $ty2 != Type::Invalid {
-                if $ty1 != $ty2 {
-                    $self.errors.push(Error::new(&format!($format, expected = $ty1, actual = $ty2), $span));
-                    false
-                } else {
-                    true
-                }
-            } else {
-                false
-            }
+fn check_type(errors: &mut Vec<Error>, expected: &Type, actual: &Type, span: Span) -> bool {
+    if *expected != Type::Invalid && *actual != Type::Invalid {
+        if expected != actual {
+            let error = Error::new(&format!("expected type `{}` but got type `{}`", expected, actual), span);
+            errors.push(error);
+            false
+        } else {
+            true
         }
-    };
+    } else {
+        false
+    }
 }
 
 // Return size of specified type.
@@ -314,9 +308,8 @@ impl<'a> Analyzer<'a> {
                             ty
                         },
                         _ => {
-                            // TODO: remove clone() if possible
-                            let expr = self.walk_expr(insts, expr.clone());
-                            check_type!(self, ty, expr.ty, "expected type `{expected}` but got `{actual}`", expr.span);
+                            let expr = self.walk_expr(insts, expr);
+                            check_type(&mut self.errors, &ty, &expr.ty, expr.span);
 
                             self.insert_copy_inst(insts, &expr.ty);
 
@@ -606,7 +599,7 @@ impl<'a> Analyzer<'a> {
                 let subscript_expr = self.walk_expr(insts, *subscript_expr);
                 self.insert_copy_inst(insts, &subscript_expr.ty);
 
-                check_type!(self, Type::Int, subscript_expr.ty, subscript_expr.span);
+                check_type(&mut self.errors, &Type::Int, &subscript_expr.ty, subscript_expr.span);
 
                 insts.push(Inst::Offset);
 
@@ -740,7 +733,7 @@ impl<'a> Analyzer<'a> {
                 insts.push(Inst::BinOp(ibinop));
 
                 // Type check
-                if !check_type!(self, lhs.ty, rhs.ty, "different types `{expected}` and `{actual}`", expr.span.clone()) {
+                if !check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span) {
                     return ExprInfo::new(lhs.ty, expr.span);
                 }
 
@@ -796,8 +789,7 @@ impl<'a> Analyzer<'a> {
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
                     let arg = self.walk_expr(insts, arg);
                     self.insert_copy_inst(insts, &arg.ty);
-
-                    check_type!(self, *param_ty, arg.ty, "the parameter type is `{expected}`. but got `{actual}` type", arg.span.clone()); 
+                    check_type(&mut self.errors, &param_ty, &arg.ty, arg.span.clone());
                 }
 
                 // Insert an instruction
@@ -882,7 +874,7 @@ impl<'a> Analyzer<'a> {
                 // Condition
                 let expr = self.walk_expr(insts, cond);
                 self.insert_copy_inst(insts, &expr.ty);
-                check_type!(self, Type::Bool, expr.ty, "expected type `{expected}` but got type `{actual}`", expr.span);
+                check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
 
                 // Insert dummy instruction to jump to else-clause or end
                 let jump_to_else = insts.len();
@@ -913,7 +905,7 @@ impl<'a> Analyzer<'a> {
                 // Insert condition expression instruction
                 let cond = self.walk_expr(insts, cond);
                 self.insert_copy_inst(insts, &cond.ty);
-                check_type!(self, Type::Bool, cond.ty, "expected type `{expected}` but got type `{actual}`", cond.span);
+                check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
 
                 // Insert dummy instruction to jump to end
                 let jump_to_end = insts.len();
@@ -965,7 +957,7 @@ impl<'a> Analyzer<'a> {
                 self.insert_copy_inst(insts, &rhs.ty);
                 let lhs = self.walk_expr(insts, lhs);
 
-                check_type!(self, lhs.ty, rhs.ty, "expected type `{expected}` but got type `{actual}`", rhs.span);
+                check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span);
 
                 insts.push(Inst::StoreWithSize(type_size(&self.types, &lhs.ty)));
             },
@@ -989,7 +981,7 @@ impl<'a> Analyzer<'a> {
 
                 // Check type
                 let return_ty = &self.function_headers[&self.current_func].return_ty;
-                check_type!(self, *return_ty, expr.ty, "expected `{expected}` type, but got `{actual}` type", expr.span);
+                check_type(&mut self.errors, return_ty, &expr.ty, expr.span);
 
                 insts.push(Inst::Return(type_size(&self.types, return_ty)));
             },
