@@ -45,7 +45,7 @@ fn type_size(types: &HashMap<Id, Type>, ty: &Type) -> usize {
         Type::Tuple(tys) => tys.iter().fold(0, |acc, ty| acc + type_size(types, ty)),
         Type::Struct(fields) => fields.iter().fold(0, |acc, (_, ty)| acc + type_size(types, ty)),
         Type::Array(ty, size) => type_size(types, ty) * size,
-        ty => ty.size(),
+        _ => 1,
     }
 }
 
