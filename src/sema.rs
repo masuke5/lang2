@@ -14,18 +14,52 @@ macro_rules! error {
     };
 }
 
-fn check_type(errors: &mut Vec<Error>, expected: &Type, actual: &Type, span: Span) -> bool {
-    if *expected != Type::Invalid && *actual != Type::Invalid {
-        if expected != actual {
-            let error = Error::new(&format!("expected type `{}` but got type `{}`", expected, actual), span);
-            errors.push(error);
-            false
-        } else {
-            true
+macro_rules! fn_to_expect {
+    ($fn_name:ident, $type_name:tt, $ty:ty, $pat:pat => $expr:expr,) => {
+        fn $fn_name<'a>(errors: &mut Vec<Error>, ty: &'a Type, span: Span) -> Option<&'a $ty> {
+            match ty {
+                $pat => $expr,
+                _ => {
+                    let msg = format!(concat!("expected type `", $type_name, "` but got type `{}`"), ty);
+                    let error = Error::new(&msg, span);
+                    errors.push(error);
+                    None
+                },
+            }
         }
-    } else {
-        false
+    };
+}
+
+fn check_type(errors: &mut Vec<Error>, expected: &Type, actual: &Type, span: Span) -> bool {
+    // Don't add an error if type of either `lhs` and `rhs` is invalid
+    if *expected == Type::Invalid || *actual == Type::Invalid {
+        return false;
     }
+
+    // A null can assign a pointer
+    if let Type::Pointer(_) = expected {
+        if *actual == Type::Null {
+            return true;
+        }
+    }
+
+    if expected != actual {
+        let error = Error::new(&format!("expected type `{}` but got type `{}`", expected, actual), span);
+        errors.push(error);
+        false
+    } else {
+        true
+    }
+}
+
+fn_to_expect! {
+    expect_tuple, "tuple", Vec<Type>,
+    Type::Tuple(types) => Some(types),
+}
+
+fn_to_expect! {
+    expect_struct, "struct", Vec<(Id, Type)>,
+    Type::Struct(fields) => Some(fields),
 }
 
 // Return size of specified type.
@@ -280,13 +314,11 @@ impl<'a> Analyzer<'a> {
         };
 
         // Get fields
-        let ty_fields = match ty.clone() {
-            Type::Struct(fields) => fields,
-            ty => {
-                error!(self, span.clone(), "expected struct but got `{}`", ty);
-                return (Type::Invalid, 0);
-            },
+        let ty_fields = match expect_struct(&mut self.errors, ty, span.clone()) {
+            Some(fields) => fields,
+            None => return (Type::Invalid, 0),
         };
+        let ty_fields = ty_fields.clone();
 
         let mut fields = Vec::new();
         let mut size = 0;
@@ -405,13 +437,7 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                match ty {
-                    Type::Struct(fields) => Some(fields),
-                    ty => {
-                        error!(self, span.clone(), "expected struct but got `{}`", ty);
-                        None
-                    },
-                }
+                expect_struct(&mut self.errors, ty, span.clone())
             },
             Type::Pointer(ty) => match ty {
                 box Type::Struct(fields) => Some(fields),
@@ -424,21 +450,15 @@ impl<'a> Analyzer<'a> {
                         },
                     };
 
-                    match ty {
-                        Type::Struct(fields) => Some(fields),
-                        ty => {
-                            error!(self, span.clone(), "expected struct but got `{}`", ty);
-                            None
-                        },
-                    }
+                    expect_struct(&mut self.errors, ty, span.clone())
                 },
                 ty => {
-                    error!(self, span.clone(), "expected struct but got `{}`", ty);
+                    error!(self, span.clone(), "expected type `struct` or `*struct` but got type `{}`", ty);
                     None
                 },
             },
             ty => {
-                error!(self, span.clone(), "expected struct but got `{}`", ty);
+                error!(self, span.clone(), "expected type `struct` or `*struct` but got type `{}`", ty);
                 None
             },
         }
@@ -468,17 +488,9 @@ impl<'a> Analyzer<'a> {
                 // Return if tuple_expr type is not tuple
                 let types = match &expr.ty {
                     Type::Tuple(types) => types,
-                    Type::Pointer(ty) => {
-                        match ty {
-                            box Type::Tuple(types) => types,
-                            ty => {
-                                error!(self, expr.span.clone(), "expected tuple but got `{}`", ty);
-                                return None;
-                            },
-                        }
-                    },
+                    Type::Pointer(ty) => expect_tuple(&mut self.errors, ty, expr.span.clone())?,
                     ty => {
-                        error!(self, expr.span.clone(), "expected tuple but got `{}`", ty);
+                        error!(self, expr.span.clone(), "expected `tuple` or `*tuple` but got `{}`", ty);
                         return None;
                     },
                 };
