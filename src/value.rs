@@ -18,7 +18,7 @@ impl Pointer {
             Pointer::ToStack(ptr) => *ptr,
             Pointer::ToHeap(mut ptr) => {
                 let region = unsafe { ptr.as_mut() };
-                NonNull::new(region.base).unwrap()
+                region.base
             },
         }
     }

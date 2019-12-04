@@ -242,7 +242,7 @@ impl<'a> VM<'a> {
                     let ptr_to_region = self.gc.alloc(*size, &mut self.stack);
 
                     unsafe {
-                        let base_ptr = ptr_to_region.as_ref().base;
+                        let base_ptr = ptr_to_region.as_ref().base.as_ptr();
                         for i in (0..*size).rev() {
                             let value: Value = pop!(self);
                             ptr::write(base_ptr.add(i), value);
