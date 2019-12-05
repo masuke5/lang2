@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ptr;
 use std::ptr::NonNull;
 use std::mem;
+use std::slice;
 
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
@@ -33,6 +34,41 @@ macro_rules! push {
         $self.sp += 1;
         $self.stack[$self.sp] = $value;
     };
+}
+
+pub struct Context {
+    stack: NonNull<Value>,
+    gc: NonNull<Gc>,
+    current_param: usize,
+    param_size: usize,
+    sp: usize,
+}
+
+impl Context {
+    pub fn new_value(&mut self, values: &mut [Value]) -> Value {
+        let gc = unsafe { self.gc.as_mut() };
+        let mut stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
+
+        let size = values.len();
+        let ptr_to_region = gc.alloc(size, &mut stack);
+
+        unsafe {
+            let base_ptr = ptr_to_region.as_ref().base.as_ptr();
+            for i in (0..size).rev() {
+                let value: Value = mem::replace(&mut values[i], Value::Unintialized);
+                ptr::write(base_ptr.add(i), value);
+            }
+        }
+
+        Value::Pointer(Pointer::ToHeap(ptr_to_region))
+    }
+
+    pub fn next_param<T: FromValue>(&mut self) -> T {
+        let stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
+        let v = mem::replace(&mut stack[self.sp - self.param_size + 1 + self.current_param], Value::Unintialized);
+        self.current_param += 1;
+        FromValue::from_value(v)
+    }
 }
 
 pub struct VM<'a> {
@@ -314,12 +350,25 @@ impl<'a> VM<'a> {
                     continue;
                 },
                 Inst::CallNative(_, func, param_size) => {
-                    let return_value = func.0(&self.stack[self.sp - param_size + 1..=self.sp]);
+                    let mut ctx = Context {
+                        stack: unsafe { NonNull::new_unchecked(&mut self.stack[0] as *mut _) },
+                        gc: unsafe { NonNull::new_unchecked(&mut self.gc as *mut _) },
+                        current_param: 0,
+                        param_size: *param_size,
+                        sp: self.sp,
+                    };
+
+                    let return_values = func.0(&mut ctx);
 
                     // Pop arguments
                     self.sp -= param_size;
 
-                    push!(self, return_value);
+                    let rv_size = return_values.len();
+                    for (i, value) in return_values.into_iter().enumerate() {
+                        self.stack[self.sp + i + 1] = value;
+                    }
+
+                    self.sp += rv_size;
                 },
                 Inst::Pop => {
                     pop!(self, Value);

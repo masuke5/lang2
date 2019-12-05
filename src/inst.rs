@@ -4,6 +4,7 @@ use crate::ty::Type;
 use crate::id::{Id, IdMap};
 use crate::value::Value;
 use crate::utils;
+use crate::vm::Context;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -30,7 +31,7 @@ pub struct Function {
 }
 
 #[derive(Clone)]
-pub struct NativeFunctionBody(pub fn(&[Value]) -> Value);
+pub struct NativeFunctionBody(pub fn(&mut Context) -> Vec<Value>);
 
 impl fmt::Debug for NativeFunctionBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
