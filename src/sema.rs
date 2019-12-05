@@ -87,6 +87,8 @@ struct FunctionHeader {
 struct ExprInfo {
     pub ty: Type,
     pub span: Span,
+    pub is_lvalue: bool,
+    pub is_mutable: bool,
 }
 
 impl ExprInfo {
@@ -94,14 +96,22 @@ impl ExprInfo {
         Self {
             ty,
             span,
+            is_lvalue: false,
+            is_mutable: false,
+        }
+    }
+
+    fn new_lvalue(ty: Type, span: Span, is_mutable: bool) -> Self {
+        Self {
+            ty,
+            span,
+            is_lvalue: true,
+            is_mutable,
         }
     }
 
     fn invalid(span: Span) -> Self {
-        Self {
-            ty: Type::Invalid,
-            span,
-        }
+        Self::new(Type::Invalid, span)
     }
 }
 
@@ -233,41 +243,6 @@ impl<'a> Analyzer<'a> {
         match ty {
             Type::Tuple(_) | Type::Struct(_) | Type::Array(_, _) => true,
             _ => false,
-        }
-    }
-
-    // ====================================
-    //  Lvalue
-    // ====================================
-
-    fn expr_is_lvalue(expr: &Expr) -> bool {
-        match expr {
-            Expr::Variable(_) | Expr::Dereference(_) => true,
-            Expr::Field(expr, _) | Expr::Subscript(expr, _) => Self::expr_is_lvalue(&expr.kind),
-            _ => false,
-        }
-    }
-
-    // return true if expr specified is mutable. this function doesn't check if a variable exists
-    fn expr_is_mutable(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Variable(name) => {
-                match self.find_var(*name) {
-                    Some(var) => var.is_mutable,
-                    None => false,
-                }
-            },
-            Expr::Dereference(_) => {
-                // TODO: return true if the expr type is `mut pointer`
-                true
-            },
-            Expr::Field(expr, _) => {
-                self.expr_is_mutable(&expr.kind)
-            },
-            Expr::Subscript(expr, _) => {
-                self.expr_is_mutable(&expr.kind)
-            },
-            _ => false, // expr is not lvalue
         }
     }
 
@@ -465,7 +440,7 @@ impl<'a> Analyzer<'a> {
     }
 
     fn walk_field(&mut self, insts: &mut Vec<Inst>, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
-        let expr = match expr.kind {
+        let mut expr = match expr.kind {
             Expr::Field(expr, field) => {
                 self.walk_field(insts, field, *expr)?
             },
@@ -479,6 +454,7 @@ impl<'a> Analyzer<'a> {
             Type::Pointer(_) => {
                 self.insert_copy_inst(insts, &expr.ty);
                 insts.push(Inst::Dereference);
+                expr.is_mutable = true; // TODO
             },
             _ => {}
         }
@@ -533,8 +509,8 @@ impl<'a> Analyzer<'a> {
             insts.push(Inst::Offset);
         }
 
-        let info = ExprInfo::new(field_ty.clone(), expr.span);
-        Some(info)
+        expr.ty = field_ty.clone();
+        Some(expr)
     }
 
     // ====================================
@@ -583,10 +559,10 @@ impl<'a> Analyzer<'a> {
                     None => return ExprInfo::invalid(expr.span),
                 };
 
-                field_expr.ty
+                return field_expr;
             },
             Expr::Subscript(expr, subscript_expr) => {
-                let expr = self.walk_expr(insts, *expr);
+                let mut expr = self.walk_expr(insts, *expr);
 
                 let ty = match expr.ty {
                     Type::Array(ty, _) => *ty,
@@ -615,7 +591,8 @@ impl<'a> Analyzer<'a> {
 
                 insts.push(Inst::Offset);
 
-                ty
+                expr.ty = ty;
+                return expr;
             },
             Expr::Variable(name) => {
                 let var = match self.find_var(name) {
@@ -628,7 +605,7 @@ impl<'a> Analyzer<'a> {
 
                 insts.push(Inst::Load(var.loc));
 
-                var.ty.clone()
+                return ExprInfo::new_lvalue(var.ty.clone(), expr.span, var.is_mutable);
             },
             //   lhs
             //   jump_if_zero B
@@ -821,13 +798,13 @@ impl<'a> Analyzer<'a> {
                 return_ty
             },
             Expr::Address(expr) => {
-                if !Self::expr_is_lvalue(&expr.kind) {
+                let expr = self.walk_expr(insts, *expr);
+
+                if !expr.is_lvalue {
                     error!(self, expr.span, "this expression is not lvalue");
                     Type::Invalid
                 } else {
-                    let expr = self.walk_expr(insts, *expr);
                     insts.push(Inst::Pointer);
-
                     Type::Pointer(Box::new(expr.ty))
                 }
             },
@@ -838,7 +815,7 @@ impl<'a> Analyzer<'a> {
                 match expr.ty {
                     Type::Pointer(ty) => {
                         insts.push(Inst::Dereference);
-                        *ty
+                        return ExprInfo::new_lvalue(*ty, expr.span, true); // TODO:
                     }
                     Type::Invalid => Type::Invalid,
                     ty => {
@@ -957,19 +934,19 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Stmt::Assign(lhs, rhs) => {
-                if !Self::expr_is_lvalue(&lhs.kind) {
+                let rhs = self.walk_expr(insts, rhs);
+                self.insert_copy_inst(insts, &rhs.ty);
+                let lhs = self.walk_expr(insts, lhs);
+
+                if !lhs.is_lvalue {
                     error!(self, lhs.span, "unassignable expression");
                     return;
                 }
 
-                if !self.expr_is_mutable(&lhs.kind) {
+                if !lhs.is_mutable {
                     error!(self, lhs.span, "immutable expression");
                     return;
                 }
-
-                let rhs = self.walk_expr(insts, rhs);
-                self.insert_copy_inst(insts, &rhs.ty);
-                let lhs = self.walk_expr(insts, lhs);
 
                 check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span);
 

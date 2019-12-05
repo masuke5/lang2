@@ -1,0 +1,57 @@
+type Node struct {
+    value: int,
+    next: *Node,
+};
+
+type List struct {
+    head: *Node,
+};
+
+fn list_new(): *List {
+    let list = new List:{
+        head: __null__,
+    };
+
+    return list;
+}
+
+fn list_push_front(list: *List, n: int) {
+    let new_node = new Node:{
+        value: n,
+        next: list.head,
+    };
+
+    list.head := new_node;
+}
+
+fn list_pop_front(list: *List) {
+    list.head := list.head.next;
+}
+
+fn _list_print(node: *Node) {
+    if node.next <> __null__ {
+        _list_print(node.next);
+    }
+
+    printnln(node.value);
+}
+
+fn list_print(list: *List) {
+    if list.head <> __null__ {
+        _list_print(list.head);
+    }
+}
+
+let list = list_new();
+
+list_push_front(list, 1);
+list_push_front(list, 2);
+list_push_front(list, 3);
+list_push_front(list, 4);
+list_push_front(list, 5);
+list_push_front(list, 6);
+
+list_pop_front(list);
+list_pop_front(list);
+
+list_print(list);
