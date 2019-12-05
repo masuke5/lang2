@@ -196,7 +196,14 @@ impl<'a> Analyzer<'a> {
     fn insert_copy_inst(&self, insts: &mut Vec<Inst>, ty: &Type) {
         match insts.last() {
             Some(inst) => match inst {
-                Inst::Load(_) | Inst::Dereference | Inst::Offset | Inst::Call(_) /* | Inst::CallNative */ => {
+                Inst::Load(loc) => {
+                    let loc = *loc;
+                    let size = type_size(&self.types, ty);
+
+                    insts.pop().unwrap();
+                    insts.push(Inst::LoadCopy(loc, size));
+                },
+                Inst::Dereference | Inst::Offset | Inst::Call(_) | Inst::CallNative(_, _, _) => {
                     let size = type_size(&self.types, ty);
                     insts.push(Inst::Copy(size));
                 },

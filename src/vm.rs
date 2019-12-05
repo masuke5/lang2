@@ -144,6 +144,12 @@ impl<'a> VM<'a> {
                     let ptr = NonNull::new(value as *mut _).unwrap();
                     push!(self, Value::Ref(ptr));
                 },
+                Inst::LoadCopy(loc, size) => {
+                    for i in 0..*size {
+                        let value = self.stack[(self.fp as isize + *loc) as usize + i].clone();
+                        push!(self, value);
+                    }
+                },
                 Inst::Pointer => {
                     let value_ref: Value = pop!(self);
                     let value_ptr = value_ref.expect_ref();
@@ -351,6 +357,6 @@ impl<'a> VM<'a> {
     }
 
     fn trace(inst: &Inst) {
-        println!("{}", inst);
+        eprintln!("{}", inst);
     }
 }
