@@ -140,19 +140,37 @@ impl<'a> VM<'a> {
                     push!(self, Value::Pointer(Pointer::ToStack(nullptr)));
                 },
                 Inst::Load(loc) => {
-                    let value = &mut self.stack[(self.fp as isize + *loc) as usize];
-                    let ptr = NonNull::new(value as *mut _).unwrap();
+                    let loc = (self.fp as isize + *loc) as usize;
+                    if loc >= STACK_SIZE {
+                        panic!("out of bounds");
+                    }
+
+                    let value = &mut self.stack[loc];
+                    let ptr = unsafe { NonNull::new_unchecked(value as *mut _) };
                     push!(self, Value::Ref(ptr));
                 },
                 Inst::LoadCopy(loc, size) => {
-                    for i in 0..*size {
-                        let value = self.stack[(self.fp as isize + *loc) as usize + i].clone();
-                        push!(self, value);
+                    let base = (self.fp as isize + *loc) as usize;
+                    if base + size >= STACK_SIZE || self.sp + size >= STACK_SIZE {
+                        panic!("out of bounds");
                     }
+
+                    for i in 0..*size {
+                        let value = self.stack[base + i].clone();
+                        self.stack[self.sp + i + 1] = value; 
+                    }
+
+                    // This doesn't work due to Value::String
+                    // unsafe {
+                    //     let src = &self.stack[base] as *const _;
+                    //     let dst = &mut self.stack[self.sp + 1] as *mut _;
+                    //     ptr::copy_nonoverlapping(src, dst, *size);
+                    // }
+
+                    self.sp += size;
                 },
                 Inst::Pointer => {
-                    let value_ref: Value = pop!(self);
-                    let value_ptr = value_ref.expect_ref();
+                    let value_ptr = pop!(self, Value).expect_ref();
 
                     push!(self, Value::Pointer(Pointer::ToStack(value_ptr)));
                 },
@@ -183,9 +201,11 @@ impl<'a> VM<'a> {
                             for i in 0..*size {
                                 unsafe {
                                     let src_ptr = src.add(i);
-                                    push!(self, (*src_ptr).clone());
+                                    self.stack[self.sp + i + 1] = (*src_ptr).clone();
                                 };
                             }
+
+                            self.sp += size;
                         },
                         _ => {},
                     };
@@ -250,19 +270,18 @@ impl<'a> VM<'a> {
                     }
                 },
                 Inst::StoreWithSize(size) => {
-                    let ptr = match pop!(self, Value) {
-                        Value::Ref(ptr) => ptr,
-                        _ => panic!("expected reference"),
-                    };
+                    let ptr = pop!(self, Value).expect_ref();
 
-                    for i in (0..*size).rev() {
-                        let value: Value = pop!(self);
+                    for i in 0..*size {
+                        let value: Value = self.stack[self.sp - i].clone();
 
                         unsafe {
-                            let ptr = ptr.as_ptr().add(i);
+                            let ptr = ptr.as_ptr().add(*size).sub(i + 1);
                             *ptr = value;
                         }
                     }
+
+                    self.sp -= size;
                 },
                 Inst::Alloc(size) => {
                     let ptr_to_region = self.gc.alloc(*size, &mut self.stack);
@@ -307,7 +326,7 @@ impl<'a> VM<'a> {
                 },
                 Inst::Return(size) => {
                     // Save a return value
-                    let mut values = Vec::new();
+                    let mut values = Vec::with_capacity(*size);
                     for _ in 0..*size {
                         let value: Value = pop!(self);
                         values.push(value);
@@ -357,6 +376,8 @@ impl<'a> VM<'a> {
     }
 
     fn trace(inst: &Inst) {
+        use std::io::{Write, stderr};
         eprintln!("{}", inst);
+        stderr().flush().unwrap();
     }
 }
