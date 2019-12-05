@@ -424,10 +424,28 @@ impl Parser {
         let parse = Self::parse_subscript;
 
         match self.peek().kind {
-            Token::Ampersand => self.parse_unary_op(parse, |expr| Expr::Address(expr)),
             Token::Asterisk => self.parse_unary_op(parse, |expr| Expr::Dereference(expr)),
             Token::Sub => self.parse_unary_op(parse, |expr| Expr::Negative(expr)),
-            Token::New => self.parse_unary_op(parse, |expr| Expr::Alloc(expr)),
+            Token::Ampersand => {
+                let symbol_span = self.peek().span.clone();
+                self.next();
+
+                let is_mutable = self.consume(&Token::Mut);
+                let expr = parse(self)?;
+
+                let span = Span::merge(&symbol_span, &expr.span);
+                Some(spanned(Expr::Address(Box::new(expr), is_mutable), span))
+            },
+            Token::New => {
+                let symbol_span = self.peek().span.clone();
+                self.next();
+
+                let is_mutable = self.consume(&Token::Mut);
+                let expr = parse(self)?;
+
+                let span = Span::merge(&symbol_span, &expr.span);
+                Some(spanned(Expr::Alloc(Box::new(expr), is_mutable), span))
+            },
             _ => parse(self),
         }
     }
@@ -650,9 +668,11 @@ impl Parser {
 
     fn parse_type_pointer(&mut self) -> Option<Type> {
         self.next(); // eat '*'
+
+        let is_mutable = self.consume(&Token::Mut);
         let ty = self.parse_type()?;
 
-        Some(Type::Pointer(Box::new(ty)))
+        Some(Type::Pointer(Box::new(ty), is_mutable))
     }
 
     fn parse_type_tuple(&mut self) -> Option<Type> {

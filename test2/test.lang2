@@ -59,14 +59,14 @@ let ptr3 = &b;
 test("pointer comparison 1", ptr1 = ptr2);
 test("pointer comparison 2", ptr2 <> ptr3);
 
-let a = 384123;
-a = 83901 && add_3(&a) = 5312;
+let mut a = 384123;
+a = 83901 && add_3(&mut a) = 5312;
 test_eq("short-circuit evalution in &&", 384123, a);
 
-a = 384123 || add_3(&a) = 5312;
+a = 384123 || add_3(&mut a) = 5312;
 test_eq("short-circuit evalution in ||", 384123, a);
 
-fn add_3(n: *int): int {
+fn add_3(n: *mut int): int {
     *n := 3095;
     return 5312;
 }
@@ -156,21 +156,21 @@ fn double(t: (int, int)): (int, int) {
 
 ## pointer ##
 
-let value = 1395;
-let ptr = &value;
+let mut value = 1395;
+let ptr = &mut value;
 test_eq("dereference", 1395, *ptr);
 *ptr := 538081;
 test_eq("assign to a value dereferenced", 538081, value);
 
-let tuple = (1, 3, 5);
-let ptr = &tuple.1;
+let mut tuple = (1, 3, 5);
+let ptr = &mut tuple.1;
 *ptr := 923;
 test_eq("pointer to a field", 923, tuple.1);
 
-add_2(&tuple.2);
+add_2(&mut tuple.2);
 test_eq("function passed a pointer", 7, tuple.2);
 
-fn add_2(n: *int): () {
+fn add_2(n: *mut int): () {
     *n := *n + 2;
     return;
 }
@@ -221,7 +221,7 @@ test_eq("struct field 3", 8, person.child.age_in_months);
 
 ## heap ##
 
-let mut person = new Person:{ name: "aaaaaaaaa", age: 1000000, child: Child:{ age: 999950, age_in_months: 11 } };
+let person = new mut Person:{ name: "aaaaaaaaa", age: 1000000, child: Child:{ age: 999950, age_in_months: 11 } };
 test_eq("struct in heap", 11, person.child.age_in_months);
 
 person.age := person.age - 1;
@@ -235,7 +235,7 @@ test_eq("array subscript", 3, arr[0]);
 arr[3] := 9134;
 test_eq("assign to array", 9134, arr[3]);
 
-let mut ptr = &arr;
+let ptr = &mut arr;
 ptr[4] := 30984304;
 test_eq("assign to pointer to array", 30984304, arr[4]);
 

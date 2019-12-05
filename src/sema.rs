@@ -36,10 +36,19 @@ fn check_type(errors: &mut Vec<Error>, expected: &Type, actual: &Type, span: Spa
         return false;
     }
 
-    // A null can assign a pointer
-    if let Type::Pointer(_) = expected {
+    // A null can assign to a pointer
+    if let Type::Pointer(_, _) = expected {
         if *actual == Type::Null {
             return true;
+        }
+    }
+
+    // A mutable pointer can assign to a immutable pointer
+    if let Type::Pointer(expected, false) = expected {
+        if let Type::Pointer(actual, _) = actual {
+            if *expected == *actual {
+                return true;
+            }
         }
     }
 
@@ -414,7 +423,7 @@ impl<'a> Analyzer<'a> {
 
                 expect_struct(&mut self.errors, ty, span.clone())
             },
-            Type::Pointer(ty) => match ty {
+            Type::Pointer(ty, _) => match ty {
                 box Type::Struct(fields) => Some(fields),
                 box Type::Named(name) => {
                     let ty = match self.types.get(name) {
@@ -451,10 +460,10 @@ impl<'a> Analyzer<'a> {
         };
 
         match &expr.ty {
-            Type::Pointer(_) => {
+            Type::Pointer(_, is_mutable) => {
                 self.insert_copy_inst(insts, &expr.ty);
                 insts.push(Inst::Dereference);
-                expr.is_mutable = true; // TODO
+                expr.is_mutable = *is_mutable;
             },
             _ => {}
         }
@@ -464,7 +473,7 @@ impl<'a> Analyzer<'a> {
                 // Return if tuple_expr type is not tuple
                 let types = match &expr.ty {
                     Type::Tuple(types) => types,
-                    Type::Pointer(ty) => expect_tuple(&mut self.errors, ty, expr.span.clone())?,
+                    Type::Pointer(ty, _) => expect_tuple(&mut self.errors, ty, expr.span.clone())?,
                     ty => {
                         error!(self, expr.span.clone(), "expected `tuple` or `*tuple` but got `{}`", ty);
                         return None;
@@ -566,8 +575,9 @@ impl<'a> Analyzer<'a> {
 
                 let ty = match expr.ty {
                     Type::Array(ty, _) => *ty,
-                    Type::Pointer(ty) => {
-                        self.insert_copy_inst(insts, &Type::Pointer(ty.clone()));
+                    Type::Pointer(ty, is_mutable) => {
+                        expr.is_mutable = is_mutable;
+                        self.insert_copy_inst(insts, &Type::Pointer(ty.clone(), is_mutable));
                         insts.push(Inst::Dereference);
 
                         match *ty {
@@ -734,12 +744,12 @@ impl<'a> Analyzer<'a> {
                     (BinOp::GreaterThan, Type::Int, Type::Int) => Type::Bool,
                     (BinOp::GreaterThanOrEqual, Type::Int, Type::Int) => Type::Bool,
 
-                    (BinOp::Equal, Type::Pointer(_), Type::Pointer(_)) => Type::Bool,
-                    (BinOp::Equal, Type::Null, Type::Pointer(_)) => Type::Bool,
-                    (BinOp::Equal, Type::Pointer(_), Type::Null) => Type::Bool,
-                    (BinOp::NotEqual, Type::Pointer(_), Type::Pointer(_)) => Type::Bool,
-                    (BinOp::NotEqual, Type::Null, Type::Pointer(_)) => Type::Bool,
-                    (BinOp::NotEqual, Type::Pointer(_), Type::Null) => Type::Bool,
+                    (BinOp::Equal, Type::Pointer(_, _), Type::Pointer(_, _)) => Type::Bool,
+                    (BinOp::Equal, Type::Null, Type::Pointer(_, _)) => Type::Bool,
+                    (BinOp::Equal, Type::Pointer(_, _), Type::Null) => Type::Bool,
+                    (BinOp::NotEqual, Type::Pointer(_, _), Type::Pointer(_, _)) => Type::Bool,
+                    (BinOp::NotEqual, Type::Null, Type::Pointer(_, _)) => Type::Bool,
+                    (BinOp::NotEqual, Type::Pointer(_, _), Type::Null) => Type::Bool,
                     _ => {
                         self.add_error(&format!("`{} {} {}`", lhs.ty, binop_symbol, rhs.ty), expr.span.clone());
                         Type::Invalid
@@ -797,15 +807,18 @@ impl<'a> Analyzer<'a> {
 
                 return_ty
             },
-            Expr::Address(expr) => {
+            Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr(insts, *expr);
 
                 if !expr.is_lvalue {
                     error!(self, expr.span, "this expression is not lvalue");
                     Type::Invalid
+                } else if is_mutable && !expr.is_mutable {
+                    error!(self, expr.span, "this expression is immutable");
+                    Type::Invalid
                 } else {
                     insts.push(Inst::Pointer);
-                    Type::Pointer(Box::new(expr.ty))
+                    Type::Pointer(Box::new(expr.ty), is_mutable)
                 }
             },
             Expr::Dereference(expr) => {
@@ -813,9 +826,9 @@ impl<'a> Analyzer<'a> {
                 self.insert_copy_inst(insts, &expr.ty);
 
                 match expr.ty {
-                    Type::Pointer(ty) => {
+                    Type::Pointer(ty, is_mutable) => {
                         insts.push(Inst::Dereference);
-                        return ExprInfo::new_lvalue(*ty, expr.span, true); // TODO:
+                        return ExprInfo::new_lvalue(*ty, expr.span, is_mutable); // TODO:
                     }
                     Type::Invalid => Type::Invalid,
                     ty => {
@@ -839,12 +852,12 @@ impl<'a> Analyzer<'a> {
                     },
                 }
             },
-            Expr::Alloc(expr) => {
+            Expr::Alloc(expr, is_mutable) => {
                 let expr = self.walk_expr(insts, *expr);
                 self.insert_copy_inst(insts, &expr.ty);
                 insts.push(Inst::Alloc(type_size(&self.types, &expr.ty)));
 
-                Type::Pointer(Box::new(expr.ty))
+                Type::Pointer(Box::new(expr.ty), is_mutable)
             },
         };
 
@@ -1000,7 +1013,7 @@ impl<'a> Analyzer<'a> {
             Type::Array(ty, _) => {
                 self.walk_type(ty, span);
             },
-            Type::Pointer(ty) => self.walk_type(ty, span),
+            Type::Pointer(ty, _) => self.walk_type(ty, span),
             Type::Int | Type::Bool | Type::String | Type::Unit | Type::Invalid | Type::Null => {},
         }
     }

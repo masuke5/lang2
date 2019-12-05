@@ -8,7 +8,7 @@ pub enum Type {
     String,
     Unit,
     Null,
-    Pointer(Box<Type>),
+    Pointer(Box<Type>, bool),
     Tuple(Vec<Type>),
     Struct(Vec<(Id, Type)>),
     Array(Box<Type>, usize),
@@ -24,7 +24,7 @@ impl fmt::Display for Type {
             Type::String => write!(f, "string"),
             Type::Unit => write!(f, "()"),
             Type::Null => write!(f, "null"),
-            Type::Pointer(ty) => write!(f, "*{}", ty),
+            Type::Pointer(ty, is_mutable) => write!(f, "*{}{}", if *is_mutable { "mut " } else { "" }, ty),
             Type::Tuple(inner) => {
                 write!(f, "(")?;
 

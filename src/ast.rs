@@ -66,9 +66,9 @@ pub enum Expr {
     Variable(Id),
     Call(Id, Vec<Spanned<Expr>>),
     Dereference(Box<Spanned<Expr>>),
-    Address(Box<Spanned<Expr>>),
+    Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
-    Alloc(Box<Spanned<Expr>>),
+    Alloc(Box<Spanned<Expr>>, bool),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -148,8 +148,8 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
                 dump_expr(&arg, depth + 1);
             }
         },
-        Expr::Address(expr_) => {
-            println!("& {}", span_to_string(&expr.span));
+        Expr::Address(expr_, is_mutable) => {
+            println!("&{} {}", if *is_mutable { "mut" } else { "" }, span_to_string(&expr.span));
             dump_expr(&expr_, depth + 1);
         },
         Expr::Dereference(expr_) => {
@@ -160,8 +160,8 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
             println!("neg {}", span_to_string(&expr.span));
             dump_expr(&expr_, depth + 1);
         },
-        Expr::Alloc(expr_) => {
-            println!("alloc {}", span_to_string(&expr.span));
+        Expr::Alloc(expr_, is_mutable) => {
+            println!("alloc{} {}", if *is_mutable { " mut" } else { "" }, span_to_string(&expr.span));
             dump_expr(&expr_, depth + 1);
         },
     }

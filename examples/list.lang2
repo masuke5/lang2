@@ -7,15 +7,13 @@ type List struct {
     head: *Node,
 };
 
-fn list_new(): *List {
-    let list = new List:{
+fn list_new(): List {
+    return List:{
         head: __null__,
     };
-
-    return list;
 }
 
-fn list_push_front(list: *List, n: int) {
+fn list_push_front(list: *mut List, n: int) {
     let new_node = new Node:{
         value: n,
         next: list.head,
@@ -24,7 +22,7 @@ fn list_push_front(list: *List, n: int) {
     list.head := new_node;
 }
 
-fn list_pop_front(list: *List) {
+fn list_pop_front(list: *mut List) {
     list.head := list.head.next;
 }
 
@@ -42,16 +40,16 @@ fn list_print(list: *List) {
     }
 }
 
-let list = list_new();
+let mut list = list_new();
 
-list_push_front(list, 1);
-list_push_front(list, 2);
-list_push_front(list, 3);
-list_push_front(list, 4);
-list_push_front(list, 5);
-list_push_front(list, 6);
+list_push_front(&mut list, 1);
+list_push_front(&mut list, 2);
+list_push_front(&mut list, 3);
+list_push_front(&mut list, 4);
+list_push_front(&mut list, 5);
+list_push_front(&mut list, 6);
 
-list_pop_front(list);
-list_pop_front(list);
+list_pop_front(&mut list);
+list_pop_front(&mut list);
 
-list_print(list);
+list_print(&list);
