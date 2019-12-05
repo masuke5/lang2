@@ -150,6 +150,7 @@ pub struct Analyzer<'a> {
     variables: Vec<HashMap<Id, Variable>>,
     errors: Vec<Error>,
     main_func_id: Id,
+    return_value_id: Id,
     current_func: Id,
     next_temp_num: u32,
 }
@@ -157,6 +158,7 @@ pub struct Analyzer<'a> {
 impl<'a> Analyzer<'a> {
     pub fn new(stdlib_funcs: &'a NativeFuncMap) -> Self {
         let main_func_id = IdMap::new_id("$main");
+        let return_value_id = IdMap::new_id("$rv");
 
         Self {
             stdlib_funcs,
@@ -166,6 +168,7 @@ impl<'a> Analyzer<'a> {
             types: HashMap::new(),
             errors: Vec::new(),
             main_func_id,
+            return_value_id,
             current_func: main_func_id, 
             next_temp_num: 0,
         }
@@ -183,13 +186,17 @@ impl<'a> Analyzer<'a> {
         self.variables.pop().unwrap();
     }
 
-    fn insert_params(&mut self, params: Vec<(Id, Type, bool)>) {
+    // Insert parameters and return value as variables to `self.variables`
+    fn insert_params(&mut self, params: Vec<(Id, Type, bool)>, return_ty: &Type) {
         let last_map = self.variables.last_mut().unwrap();
         let mut loc = -3isize; // fp, ip
         for (id, ty, is_mutable) in params.iter().rev() {
             loc -= type_size(&self.types, ty) as isize;
             last_map.insert(*id, Variable::new(ty.clone(), *is_mutable, loc));
         }
+
+        loc -= type_size(&self.types, return_ty) as isize;
+        last_map.insert(self.return_value_id, Variable::new(return_ty.clone(), false, loc));
     }
 
     // Insert a copy instruction if necessary
@@ -211,6 +218,10 @@ impl<'a> Analyzer<'a> {
             },
             _ => {},
         }
+    }
+
+    fn get_return_var(&self) -> &Variable {
+        self.find_var(self.return_value_id).unwrap()
     }
 
     // ====================================
@@ -780,6 +791,11 @@ impl<'a> Analyzer<'a> {
                             },
                         };
 
+                        let return_value_size = type_size(&self.types, &callee_func.return_ty);
+                        for _ in 0..return_value_size {
+                            insts.push(Inst::Int(0));
+                        }
+
                         (callee_func.return_ty.clone(), callee_func.params.clone(), Inst::Call(name))
                     },
                 };
@@ -991,10 +1007,15 @@ impl<'a> Analyzer<'a> {
                 self.insert_copy_inst(insts, &expr.ty);
 
                 // Check type
-                let return_ty = &self.function_headers[&self.current_func].return_ty;
-                check_type(&mut self.errors, return_ty, &expr.ty, expr.span);
+                let return_var = self.find_var(self.return_value_id).unwrap();
+                let ty = return_var.ty.clone();
+                let loc = return_var.loc;
 
-                insts.push(Inst::Return(type_size(&self.types, return_ty)));
+                check_type(&mut self.errors, &ty, &expr.ty, expr.span);
+
+                insts.push(Inst::Load(loc));
+                insts.push(Inst::StoreWithSize(type_size(&self.types, &ty)));
+                insts.push(Inst::Return);
             },
         }
     }
@@ -1031,22 +1052,23 @@ impl<'a> Analyzer<'a> {
                 self.current_func = self.main_func_id;
                 self.walk_stmt(main_insts, stmt);
             },
-            TopLevel::Function(name, params, _, stmt) => {
+            TopLevel::Function(name, params, return_ty, stmt) => {
                 self.current_func = name;
 
                 self.push_scope();
 
                 // params
-                self.insert_params(params);
+                self.insert_params(params, &return_ty);
 
                 // body
                 let mut insts = Vec::new();
                 self.walk_stmt(&mut insts, stmt);
 
+                let return_var = self.get_return_var();
+
                 // insert a return instruction if the return value type is unit
-                if let Type::Unit = &self.function_headers[&self.current_func].return_ty {
-                    insts.push(Inst::Int(0));
-                    insts.push(Inst::Return(1));
+                if let Type::Unit = return_var.ty {
+                    insts.push(Inst::Return);
                 }
 
                 self.functions.get_mut(&name).unwrap().insts = insts;

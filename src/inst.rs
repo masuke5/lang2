@@ -85,7 +85,7 @@ pub enum Inst {
     Jump(usize),
     JumpIfZero(usize),
     JumpIfNonZero(usize),
-    Return(usize),
+    Return,
 }
 
 impl fmt::Display for Inst {
@@ -131,7 +131,7 @@ impl fmt::Display for Inst {
             Inst::Jump(i) => write!(f, "jump {}", i),
             Inst::JumpIfZero(i) => write!(f, "jump_if_zero {}", i),
             Inst::JumpIfNonZero(i) => write!(f, "jump_if_non_zero {}", i),
-            Inst::Return(size) => write!(f, "return size={}", size),
+            Inst::Return => write!(f, "return"),
         }
     }
 }

@@ -324,14 +324,7 @@ impl<'a> VM<'a> {
                 Inst::Pop => {
                     pop!(self, Value);
                 },
-                Inst::Return(size) => {
-                    // Save a return value
-                    let mut values = Vec::with_capacity(*size);
-                    for _ in 0..*size {
-                        let value: Value = pop!(self);
-                        values.push(value);
-                    }
-
+                Inst::Return => {
                     // Restore stack frame
                     self.sp = self.fp - 1;
                     self.fp = pop!(self, i64) as usize;
@@ -341,11 +334,6 @@ impl<'a> VM<'a> {
                     // Pop arguments
                     let param_size = pop!(self, i64) as usize;
                     self.sp -= param_size;
-
-                    // Push the return value
-                    for value in values.into_iter().rev() {
-                        push!(self, value);
-                    }
                 }
                 Inst::Jump(loc) => {
                     self.ip = *loc;
