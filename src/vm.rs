@@ -37,6 +37,7 @@ macro_rules! push {
 
 pub struct Context {
     stack: NonNull<Value>,
+    #[allow(dead_code)] // remove later
     gc: NonNull<Gc>,
     current_param: usize,
     param_size: usize,
@@ -159,7 +160,7 @@ impl<'a> VM<'a> {
                 },
                 Inst::String(s) => {
                     let size = mem::size_of::<usize>() + s.len();
-                    let mut region = self.gc.alloc::<u8>(size, &mut self.stack);
+                    let mut region = self.gc.alloc::<u8>(size, &mut self.stack[..=self.sp]);
 
                     unsafe {
                         let new_str = region.as_mut().as_mut_ptr::<Lang2String>();
@@ -309,7 +310,7 @@ impl<'a> VM<'a> {
                     self.sp -= size;
                 },
                 Inst::Alloc(size) => {
-                    let mut ptr_to_region = self.gc.alloc::<Value>(*size, &mut self.stack);
+                    let mut ptr_to_region = self.gc.alloc::<Value>(*size, &mut self.stack[..=self.sp]);
 
                     unsafe {
                         let dst = ptr_to_region.as_mut().as_mut_ptr::<Value>();
@@ -406,8 +407,6 @@ impl<'a> VM<'a> {
     }
 
     fn trace(inst: &Inst) {
-        use std::io::{Write, stderr};
         eprintln!("{}", inst);
-        stderr().flush().unwrap();
     }
 }

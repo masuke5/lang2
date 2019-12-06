@@ -6,51 +6,51 @@ use std::ffi::c_void;
 use libc;
 use crate::value::{Value, Pointer};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct GcRegion {
-    base: NonNull<c_void>,
     pub size: usize,
     is_marked: bool,
+    data: [c_void; 0],
 }
 
-impl Drop for GcRegion {
-    fn drop(&mut self) {
-        unsafe {
-            libc::free(self.base.as_ptr());
-        }
+impl PartialEq for GcRegion {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size &&
+            self.is_marked == other.is_marked &&
+            self.data.as_ptr() == other.data.as_ptr()
     }
 }
 
 impl GcRegion {
-    fn new(size: usize) -> Self {
+    fn new(size: usize) -> NonNull<Self> {
         let ptr = unsafe {
-            let ptr = libc::malloc(size);
+            let ptr = libc::malloc(mem::size_of::<Self>() + size) as *mut Self;
+            (*ptr).size = size;
+            (*ptr).is_marked = false;
+
             NonNull::new(ptr).unwrap()
         };
 
-        Self {
-            base: ptr,
-            size,
-            is_marked: false,
-        }
+        ptr
     }
 
+    #[allow(dead_code)] // remove later
     pub fn as_ptr<T>(&self) -> *const T {
-        unsafe { self.base.as_ref() as *const c_void as *const T }
+        self.data.as_ptr() as *const c_void as *const T
     }
 
     pub fn as_mut_ptr<T>(&mut self) -> *mut T {
-        self.base.as_ptr() as *mut T
+        self.data.as_ptr() as *mut T
     }
 
     pub fn as_non_null<T>(&mut self) -> NonNull<T> {
-        self.base.cast()
+        unsafe { NonNull::new_unchecked(self.data.as_ptr() as *mut _) }
     }
 }
 
 pub struct Gc {
-    values: LinkedList<GcRegion>,
-    freelist_map: HashMap<usize, LinkedList<GcRegion>>,
+    values: LinkedList<NonNull<GcRegion>>,
+    freelist_map: HashMap<usize, LinkedList<NonNull<GcRegion>>>,
 }
 
 impl Gc {
@@ -61,7 +61,7 @@ impl Gc {
         }
     }
 
-    fn pop_region(&mut self, size: usize) -> Option<GcRegion> {
+    fn pop_region(&mut self, size: usize) -> Option<NonNull<GcRegion>> {
         match self.freelist_map.get_mut(&size) {
             Some(freelist) if !freelist.is_empty() => {
                 let region = freelist.pop_front().unwrap();
@@ -89,8 +89,7 @@ impl Gc {
 
         self.values.push_front(region);
 
-        let ptr = self.values.front_mut().unwrap() as *mut _;
-        unsafe { NonNull::new_unchecked(ptr) }
+        self.values.front_mut().unwrap().clone()
     }
 
     fn mark(&mut self, stack: &mut [Value]) {
@@ -118,6 +117,7 @@ impl Gc {
 
     fn sweep(&mut self) {
         let free_regions = self.values.drain_filter(|value| {
+            let value = unsafe { value.as_mut() };
             if value.is_marked {
                 value.is_marked = false;
                 false
@@ -126,19 +126,38 @@ impl Gc {
             }
         });
 
-        for region in free_regions {
+        for region_ptr in free_regions {
+            let region = unsafe { region_ptr.as_ref() };
             let freelist = match self.freelist_map.entry(region.size) {
                 Entry::Occupied(l) => l.into_mut(),
                 Entry::Vacant(v) => v.insert(LinkedList::new()),
             };
 
-            freelist.push_front(region);
+            freelist.push_front(region_ptr.clone());
         }
     }
 
     fn gc(&mut self, stack: &mut [Value]) {
         self.mark(stack);
         self.sweep();
+    }
+}
+
+impl Drop for Gc {
+    fn drop(&mut self) {
+        fn free(region: &NonNull<GcRegion>){ 
+            unsafe { libc::free(region.as_ptr() as *mut _) };
+        }
+
+        for region in &self.values {
+            free(region);
+        }
+
+        for list in self.freelist_map.values() {
+            for region in list {
+                free(region);
+            }
+        }
     }
 }
 
@@ -181,7 +200,9 @@ mod tests {
 
         gc.gc(&mut stack);
 
-        assert_eq!(unsafe { region3.as_ref() }, &gc.freelist_map.get_mut(&1).unwrap().pop_front().unwrap());
+        unsafe {
+            assert_eq!(region3.as_ref(), gc.freelist_map.get_mut(&1).unwrap().pop_front().unwrap().as_ref());
+        }
         assert_eq!(None, gc.freelist_map.get(&2));
     }
 }
