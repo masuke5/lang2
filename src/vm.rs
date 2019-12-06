@@ -194,17 +194,11 @@ impl<'a> VM<'a> {
                         panic!("out of bounds");
                     }
 
-                    for i in 0..*size {
-                        let value = self.stack[base + i].clone();
-                        self.stack[self.sp + i + 1] = value; 
+                    unsafe {
+                        let src = &self.stack[base] as *const _;
+                        let dst = &mut self.stack[self.sp + 1] as *mut _;
+                        ptr::copy_nonoverlapping(src, dst, *size);
                     }
-
-                    // This doesn't work due to Value::String
-                    // unsafe {
-                    //     let src = &self.stack[base] as *const _;
-                    //     let dst = &mut self.stack[self.sp + 1] as *mut _;
-                    //     ptr::copy_nonoverlapping(src, dst, *size);
-                    // }
 
                     self.sp += size;
                 },
@@ -233,15 +227,12 @@ impl<'a> VM<'a> {
                             self.stack[self.sp] = value.clone();
                         },
                         Value::Ref(ptr) => {
-                            let src = ptr.as_ptr();
-
                             self.sp -= 1; // pop
 
-                            for i in 0..*size {
-                                unsafe {
-                                    let src_ptr = src.add(i);
-                                    self.stack[self.sp + i + 1] = (*src_ptr).clone();
-                                };
+                            unsafe {
+                                let src = ptr.as_ptr();
+                                let dst = &mut self.stack[self.sp + 1] as *mut _;
+                                ptr::copy_nonoverlapping(src, dst, *size);
                             }
 
                             self.sp += size;
@@ -309,15 +300,10 @@ impl<'a> VM<'a> {
                     }
                 },
                 Inst::StoreWithSize(size) => {
-                    let ptr = pop!(self, Value).expect_ref();
-
-                    for i in 0..*size {
-                        let value: Value = self.stack[self.sp - i].clone();
-
-                        unsafe {
-                            let ptr = ptr.as_ptr().add(*size).sub(i + 1);
-                            *ptr = value;
-                        }
+                    unsafe {
+                        let dst = pop!(self, Value).expect_ref().as_ptr();
+                        let src = &self.stack[self.sp - *size + 1] as *const _;
+                        ptr::copy_nonoverlapping(src, dst, *size);
                     }
 
                     self.sp -= size;
@@ -326,21 +312,22 @@ impl<'a> VM<'a> {
                     let mut ptr_to_region = self.gc.alloc::<Value>(*size, &mut self.stack);
 
                     unsafe {
-                        let base_ptr = ptr_to_region.as_mut().as_mut_ptr::<Value>();
-                        for i in (0..*size).rev() {
-                            let value: Value = pop!(self);
-                            ptr::write(base_ptr.add(i), value);
-                        }
+                        let dst = ptr_to_region.as_mut().as_mut_ptr::<Value>();
+                        let src = &self.stack[self.sp - *size + 1] as *const _;
+                        ptr::copy_nonoverlapping(src, dst, *size);
                     }
+
+                    self.sp -= size;
 
                     push!(self, Value::Pointer(Pointer::ToHeap(ptr_to_region)));
                 },
                 Inst::Call(name) => {
                     let func = &self.functions[name];
 
-                    push!(self, Value::Int(func.param_size as i64));
-                    push!(self, Value::Int(self.ip as i64));
-                    push!(self, Value::Int(self.fp as i64));
+                    self.stack[self.sp + 1] = Value::Int(func.param_size as i64);
+                    self.stack[self.sp + 2] = Value::Int(self.ip as i64);
+                    self.stack[self.sp + 3] = Value::Int(self.fp as i64);
+                    self.sp += 3;
                     self.insts_stack.push(insts);
 
                     // Allocate stack frame
@@ -367,10 +354,13 @@ impl<'a> VM<'a> {
                     self.sp -= param_size;
 
                     let rv_size = return_values.len();
-                    for (i, value) in return_values.into_iter().enumerate() {
-                        self.stack[self.sp + i + 1] = value;
-                    }
 
+                    unsafe {
+                        let src = return_values.as_ptr();
+                        let dst = &mut self.stack[self.sp + 1] as *mut _;
+                        ptr::copy_nonoverlapping(src, dst, rv_size);
+                    }
+                    
                     self.sp += rv_size;
                 },
                 Inst::Pop => {
