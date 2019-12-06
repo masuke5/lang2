@@ -6,8 +6,7 @@ use std::slice;
 
 use crate::id::{Id, IdMap};
 use crate::inst::{Inst, BinOp, Function};
-use crate::value::{FromValue, Value, Pointer};
-use crate::utils;
+use crate::value::{FromValue, Value, Pointer, Lang2String};
 use crate::gc::Gc;
 
 const STACK_SIZE: usize = 10000;
@@ -45,29 +44,26 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new_value(&mut self, values: &mut [Value]) -> Value {
-        let gc = unsafe { self.gc.as_mut() };
-        let mut stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
-
-        let size = values.len();
-        let ptr_to_region = gc.alloc(size, &mut stack);
-
-        unsafe {
-            let base_ptr = ptr_to_region.as_ref().base.as_ptr();
-            for i in (0..size).rev() {
-                let value: Value = mem::replace(&mut values[i], Value::Unintialized);
-                ptr::write(base_ptr.add(i), value);
-            }
-        }
-
-        Value::Pointer(Pointer::ToHeap(ptr_to_region))
-    }
-
     pub fn next_param<T: FromValue>(&mut self) -> T {
         let stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
         let v = mem::replace(&mut stack[self.sp - self.param_size + 1 + self.current_param], Value::Unintialized);
         self.current_param += 1;
         FromValue::from_value(v)
+    }
+
+    pub fn next_string_ptr(&mut self) -> &mut Lang2String {
+        let stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
+        let value = mem::replace(&mut stack[self.sp - self.param_size + 1 + self.current_param], Value::Unintialized);
+        self.current_param += 1;
+
+        unsafe {
+            let ptr = match value {
+                Value::Pointer(ptr) => ptr.expect_to_heap::<Lang2String>(),
+                _ => panic!(),
+            };
+
+            &mut *ptr
+        }
     }
 }
 
@@ -105,7 +101,6 @@ impl<'a> VM<'a> {
         print!("{}", "  ".repeat(depth));
         match value {
             Value::Int(n) => println!("int {}", n),
-            Value::String(s) => println!("str \"{}\"", utils::escape_string(s)),
             Value::Bool(true) => println!("bool true"),
             Value::Bool(false) => println!("bool false"),
             Value::Ref(ptr) => {
@@ -163,7 +158,15 @@ impl<'a> VM<'a> {
                     push!(self, Value::Int(*n));
                 },
                 Inst::String(s) => {
-                    push!(self, Value::String(s.clone()));
+                    let size = mem::size_of::<usize>() + s.len();
+                    let mut region = self.gc.alloc::<u8>(size, &mut self.stack);
+
+                    unsafe {
+                        let new_str = region.as_mut().as_mut_ptr::<Lang2String>();
+                        (*new_str).write_string(s);
+                    }
+
+                    push!(self, Value::Pointer(Pointer::ToHeap(region)));
                 },
                 Inst::True => {
                     push!(self, Value::Bool(true));
@@ -320,10 +323,10 @@ impl<'a> VM<'a> {
                     self.sp -= size;
                 },
                 Inst::Alloc(size) => {
-                    let ptr_to_region = self.gc.alloc(*size, &mut self.stack);
+                    let mut ptr_to_region = self.gc.alloc::<Value>(*size, &mut self.stack);
 
                     unsafe {
-                        let base_ptr = ptr_to_region.as_ref().base.as_ptr();
+                        let base_ptr = ptr_to_region.as_mut().as_mut_ptr::<Value>();
                         for i in (0..*size).rev() {
                             let value: Value = pop!(self);
                             ptr::write(base_ptr.add(i), value);

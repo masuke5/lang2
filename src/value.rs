@@ -1,3 +1,7 @@
+use std::str;
+use std::fmt;
+use std::slice;
+use std::ptr;
 use std::ptr::NonNull;
 use crate::gc::GcRegion;
 
@@ -18,8 +22,17 @@ impl Pointer {
             Pointer::ToStack(ptr) => *ptr,
             Pointer::ToHeap(mut ptr) => {
                 let region = unsafe { ptr.as_mut() };
-                region.base
+                region.as_non_null()
             },
+        }
+    }
+
+    pub unsafe fn expect_to_heap<T>(&self) -> *mut T {
+        match self {
+            Pointer::ToHeap(ptr) => {
+                (*ptr.as_ptr()).as_mut_ptr::<T>()
+            },
+            _ => panic!("expected to heap"),
         }
     }
 }
@@ -29,7 +42,6 @@ pub enum Value {
     Unintialized,
     Int(i64),
     Bool(bool),
-    String(String),
     Ref(NonNull<Value>),
     Pointer(Pointer),
 }
@@ -97,14 +109,34 @@ impl_from_value! {bool, "expected bool",
     Value::Bool(b) => b,
 }
 
-impl_from_value! {String, "expected string",
-    Value::String(s) => s,
-}
-
 impl_from_value! {Pointer, "expected pointer",
     Value::Pointer(ptr) => ptr,
 }
 
 impl_from_value! {Value, "",
     value => value,
+}
+
+#[repr(C)]
+pub struct Lang2String {
+    pub len: usize,
+    pub bytes: [u8; 0],
+}
+
+impl Lang2String {
+    pub unsafe fn write_string(&mut self, s: &String) {
+        self.len = s.len();
+        ptr::copy_nonoverlapping(s.as_bytes().as_ptr(), self.bytes.as_mut_ptr(), s.len());
+    }
+}
+
+impl fmt::Display for Lang2String {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = unsafe {
+            let bytes = slice::from_raw_parts(self.bytes.as_ptr(), self.len);
+            str::from_utf8_unchecked(bytes)
+        };
+
+        f.write_str(s)
+    }
 }

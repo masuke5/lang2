@@ -1,14 +1,14 @@
 use std::collections::{HashMap, LinkedList};
 use std::collections::hash_map::Entry;
-use std::ptr::NonNull;
 use std::mem;
+use std::ptr::NonNull;
 use std::ffi::c_void;
 use libc;
 use crate::value::{Value, Pointer};
 
 #[derive(Debug, PartialEq)]
 pub struct GcRegion {
-    pub base: NonNull<Value>,
+    base: NonNull<c_void>,
     pub size: usize,
     is_marked: bool,
 }
@@ -16,7 +16,7 @@ pub struct GcRegion {
 impl Drop for GcRegion {
     fn drop(&mut self) {
         unsafe {
-            libc::free(self.base.as_ptr() as *mut c_void);
+            libc::free(self.base.as_ptr());
         }
     }
 }
@@ -24,8 +24,8 @@ impl Drop for GcRegion {
 impl GcRegion {
     fn new(size: usize) -> Self {
         let ptr = unsafe {
-            let ptr = libc::malloc(size * mem::size_of::<Value>());
-            NonNull::new(ptr as *mut Value).unwrap()
+            let ptr = libc::malloc(size);
+            NonNull::new(ptr).unwrap()
         };
 
         Self {
@@ -33,6 +33,18 @@ impl GcRegion {
             size,
             is_marked: false,
         }
+    }
+
+    pub fn as_ptr<T>(&self) -> *const T {
+        unsafe { self.base.as_ref() as *const c_void as *const T }
+    }
+
+    pub fn as_mut_ptr<T>(&mut self) -> *mut T {
+        self.base.as_ptr() as *mut T
+    }
+
+    pub fn as_non_null<T>(&mut self) -> NonNull<T> {
+        self.base.cast()
     }
 }
 
@@ -59,7 +71,9 @@ impl Gc {
         }
     }
 
-    pub fn alloc(&mut self, size: usize, stack: &mut [Value]) -> NonNull<GcRegion> {
+    pub fn alloc<T>(&mut self, count: usize, stack: &mut [Value]) -> NonNull<GcRegion> {
+        let size = count * mem::size_of::<T>();
+
         // Search from freelist
         let region = match self.pop_region(size) {
             Some(region) => region,
@@ -87,7 +101,7 @@ impl Gc {
                     region.is_marked = true;
 
                     unsafe {
-                        let base = region.base.as_ptr();
+                        let base = region.as_mut_ptr::<Value>();
                         for i in 0..region.size {
                             mark(&mut *base.add(i));
                         }
@@ -132,14 +146,14 @@ impl Gc {
 mod tests {
     use super::*;
 
-    fn write(region: NonNull<GcRegion>, values: &[Value]) {
-        let region = unsafe { region.as_ref() };
+    fn write(mut region: NonNull<GcRegion>, values: &[Value]) {
+        let region = unsafe { region.as_mut() };
         if values.len() != region.size {
             panic!("value size != region size");
         }
         
         unsafe {
-            let ptr = region.base.as_ptr();
+            let ptr = region.as_mut_ptr::<Value>();
             for i in 0..region.size {
                 ptr.add(i).write(values[i].clone());
             }
@@ -150,13 +164,13 @@ mod tests {
     fn test_gc() {
         let mut gc = Gc::new();
 
-        let region1 = gc.alloc(2, &mut []);
+        let region1 = gc.alloc::<Value>(2, &mut []);
         write(region1, &[Value::Int(1), Value::Int(2)]);
 
-        let region2 = gc.alloc(2, &mut [Value::Pointer(Pointer::ToHeap(region1))]);
+        let region2 = gc.alloc::<Value>(2, &mut [Value::Pointer(Pointer::ToHeap(region1))]);
         write(region2, &[Value::Int(3), Value::Pointer(Pointer::ToHeap(region1))]);
 
-        let region3 = gc.alloc(1, &mut [Value::Pointer(Pointer::ToHeap(region1)), Value::Pointer(Pointer::ToHeap(region2))]);
+        let region3 = gc.alloc::<Value>(1, &mut [Value::Pointer(Pointer::ToHeap(region1)), Value::Pointer(Pointer::ToHeap(region2))]);
         write(region3, &[Value::Int(190419041)]);
 
         let mut stack = vec![

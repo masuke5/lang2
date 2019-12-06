@@ -553,7 +553,7 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Literal(Literal::String(s)) => {
                 insts.push(Inst::String(s));
-                Type::String
+                Type::Pointer(Box::new(Type::String), false)
             },
             Expr::Literal(Literal::Unit) => {
                 insts.push(Inst::Int(0));

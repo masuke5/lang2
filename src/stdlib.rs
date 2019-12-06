@@ -24,7 +24,7 @@ fn printn(ctx: &mut Context) -> Vec<Value> {
 }
 
 fn print(ctx: &mut Context) -> Vec<Value> {
-    let s: String = ctx.next_param();
+    let s = ctx.next_string_ptr();
 
     print!("{}", s);
 
@@ -33,7 +33,7 @@ fn print(ctx: &mut Context) -> Vec<Value> {
 
 
 fn println(ctx: &mut Context) -> Vec<Value> {
-    let s: String = ctx.next_param();
+    let s = ctx.next_string_ptr();
 
     println!("{}", s);
 
@@ -53,8 +53,8 @@ pub fn functions() -> NativeFuncMap {
 
     funcs.insert("printn", func(vec![Type::Int], Type::Unit, FuncBody(printn)));
     funcs.insert("printnln", func(vec![Type::Int], Type::Unit, FuncBody(printnln)));
-    funcs.insert("print", func(vec![Type::String], Type::Unit, FuncBody(print)));
-    funcs.insert("println", func(vec![Type::String], Type::Unit, FuncBody(println)));
+    funcs.insert("print", func(vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, FuncBody(print)));
+    funcs.insert("println", func(vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, FuncBody(println)));
 
     funcs
 }
