@@ -93,18 +93,15 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // Semantic analysis and translate to instructions
     let analyzer = Analyzer::new(&stdlib_funcs);
-    let functions = analyzer.analyze(program)?;
+    let bytecode = analyzer.analyze(program)?;
 
     if matches.is_present("dump-insts") {
-        for (name, func) in functions {
-            println!("{}:", IdMap::name(name));
-            inst::dump_insts(&func.insts);
-        }
+        bytecode.dump();
         exit(0);
     }
 
     // Execute
-    let mut vm = VM::new(functions);
+    let mut vm = VM::new(std::collections::HashMap::new());
     vm.run(matches.is_present("trace"));
 
     Ok(())

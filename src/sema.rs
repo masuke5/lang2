@@ -5,7 +5,7 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::inst::{Inst, Function, BinOp as IBinOp};
+use crate::inst::{Function, opcode, Bytecode};
 use crate::stdlib::NativeFuncMap;
 
 macro_rules! error {
@@ -144,7 +144,6 @@ impl Variable {
 #[derive(Debug)]
 pub struct Analyzer<'a> {
     stdlib_funcs: &'a NativeFuncMap,
-    functions: HashMap<Id, Function>,
     function_headers: HashMap<Id, FunctionHeader>,
     types: HashMap<Id, Type>,
     variables: Vec<HashMap<Id, Variable>>,
@@ -162,7 +161,6 @@ impl<'a> Analyzer<'a> {
 
         Self {
             stdlib_funcs,
-            functions: HashMap::new(),
             function_headers: HashMap::new(),
             variables: Vec::with_capacity(5),
             types: HashMap::new(),
@@ -200,21 +198,16 @@ impl<'a> Analyzer<'a> {
     }
 
     // Insert a copy instruction if necessary
-    fn insert_copy_inst(&self, insts: &mut Vec<Inst>, ty: &Type) {
-        match insts.last() {
-            Some(inst) => match inst {
-                Inst::Load(loc) => {
-                    let loc = *loc;
-                    let size = type_size(&self.types, ty);
+    fn insert_copy_inst(&self, bytecode: &mut Bytecode, ty: &Type) {
+        if bytecode.code.len() <= 2 {
+            return;
+        }
 
-                    insts.pop().unwrap();
-                    insts.push(Inst::LoadCopy(loc, size));
-                },
-                Inst::Dereference | Inst::Offset | Inst::Call(_) | Inst::CallNative(_, _, _) => {
-                    let size = type_size(&self.types, ty);
-                    insts.push(Inst::Copy(size));
-                },
-                _ => {},
+        match *bytecode.code.get(bytecode.code.len() - 3).unwrap() {
+            // opcode::LOAD_REF => { }, TODO: Insert LOAD_COPY
+            opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET | opcode::CALL | opcode::CALL_NATIVE => {
+                let size = type_size(&self.types, ty);
+                bytecode.insert_inst(opcode::COPY, size as u8);
             },
             _ => {},
         }
@@ -228,9 +221,8 @@ impl<'a> Analyzer<'a> {
     //  Variable
     // ====================================
 
-    fn new_var(&mut self, id: Id, ty: Type, is_mutable: bool) -> isize {
+    fn new_var(&mut self, current_func: &mut Function, id: Id, ty: Type, is_mutable: bool) -> isize {
         let last_map = self.variables.last_mut().unwrap();
-        let current_func = self.functions.get_mut(&self.current_func).unwrap();
         let new_var_size = type_size(&self.types, &ty);
 
         let loc = match last_map.get(&id) {
@@ -277,25 +269,25 @@ impl<'a> Analyzer<'a> {
     //  Tuple
     // ====================================
 
-    fn walk_tuple(&mut self, insts: &mut Vec<Inst>, exprs: Vec<Spanned<Expr>>) -> (Type, usize) {
+    fn walk_tuple(&mut self, code: &mut Bytecode, exprs: Vec<Spanned<Expr>>) -> (Type, usize) {
         let mut types = Vec::new();
         let mut size = 0;
 
         for expr in exprs {
             match expr.kind {
                 Expr::Tuple(exprs) => {
-                    let (ty, tuple_size) = self.walk_tuple(insts, exprs);
+                    let (ty, tuple_size) = self.walk_tuple(code, exprs);
                     size += tuple_size;
                     types.push(ty);
                 },
                 Expr::Struct(name, fields) => {
-                    let (ty, tsize) = self.walk_struct(insts, name, fields, expr.span);
+                    let (ty, tsize) = self.walk_struct(code, name, fields, expr.span);
                     size += tsize;
                     types.push(ty);
                 },
                 _ => {
-                    let expr = self.walk_expr(insts, expr);
-                    self.insert_copy_inst(insts, &expr.ty);
+                    let expr = self.walk_expr(code, expr);
+                    self.insert_copy_inst(code, &expr.ty);
 
                     size += type_size(&self.types, &expr.ty);
                     types.push(expr.ty);
@@ -306,7 +298,7 @@ impl<'a> Analyzer<'a> {
         (Type::Tuple(types), size)
     }
 
-    fn walk_struct(&mut self, insts: &mut Vec<Inst>, name: Id, exprs: Vec<(Spanned<Id>, Spanned<Expr>)>, span: Span) -> (Type, usize) {
+    fn walk_struct(&mut self, code: &mut Bytecode, name: Id, exprs: Vec<(Spanned<Id>, Spanned<Expr>)>, span: Span) -> (Type, usize) {
         let ty = match self.types.get(&name) {
             Some(ty) => ty,
             None => {
@@ -332,20 +324,20 @@ impl<'a> Analyzer<'a> {
                     let expr = expr.clone();
                     let ty = match expr.kind {
                         Expr::Tuple(exprs) => {
-                            let (ty, tsize) = self.walk_tuple(insts, exprs);
+                            let (ty, tsize) = self.walk_tuple(code, exprs);
                             size += tsize;
                             ty
                         },
                         Expr::Struct(name, fields) => {
-                            let (ty, tsize) = self.walk_struct(insts, name, fields, expr.span);
+                            let (ty, tsize) = self.walk_struct(code, name, fields, expr.span);
                             size += tsize;
                             ty
                         },
                         _ => {
-                            let expr = self.walk_expr(insts, expr);
+                            let expr = self.walk_expr(code, expr);
                             check_type(&mut self.errors, &ty, &expr.ty, expr.span);
 
-                            self.insert_copy_inst(insts, &expr.ty);
+                            self.insert_copy_inst(code, &expr.ty);
 
                             size += type_size(&self.types, &expr.ty);
                             expr.ty
@@ -375,39 +367,39 @@ impl<'a> Analyzer<'a> {
         (Type::Named(name), size)
     }
 
-    fn walk_array(&mut self, insts: &mut Vec<Inst>, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
-        let init_expr = self.walk_expr(insts, init_expr);
+    fn walk_array(&mut self, code: &mut Bytecode, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
+        let init_expr = self.walk_expr(code, init_expr);
         let expr_size = type_size(&self.types, &init_expr.ty);
 
-        self.insert_copy_inst(insts, &init_expr.ty);
-        insts.push(Inst::Duplicate(expr_size, size - 1));
+        self.insert_copy_inst(code, &init_expr.ty);
+        code.insert_inst(opcode::DUPLICATE, (size - 1) as u8);
 
         (Type::Array(Box::new(init_expr.ty), size), expr_size * size)
     }
 
     fn store_comp_literal(
         &mut self,
-        insts: &mut Vec<Inst>,
+        code: &mut Bytecode,
         id: Id,
         expr: Spanned<Expr>,
         force_create: bool,
         is_mutable: bool
     ) -> (Type, isize) {
         let (ty, size) = match expr.kind {
-            Expr::Tuple(exprs) => self.walk_tuple(insts, exprs),
-            Expr::Struct(name, fields) => self.walk_struct(insts, name, fields, expr.span),
-            Expr::Array(init_expr, size) => self.walk_array(insts, *init_expr, size),
+            Expr::Tuple(exprs) => self.walk_tuple(code, exprs),
+            Expr::Struct(name, fields) => self.walk_struct(code, name, fields, expr.span),
+            Expr::Array(init_expr, size) => self.walk_array(code, *init_expr, size),
             _ => panic!("the expression is not a compound literal"),
         };
 
         // Create a variable if variable `id` does not exists or `force_create` is true
         let loc = match self.find_var(id) {
             Some(var) if !force_create => var.loc,
-            _ => self.new_var(id, ty.clone(), is_mutable),
+            _ => self.new_var(code.current_func_mut(), id, ty.clone(), is_mutable),
         };
 
-        insts.push(Inst::Load(loc));
-        insts.push(Inst::StoreWithSize(size));
+        code.insert_inst(opcode::LOAD_REF, loc as u8);
+        code.insert_inst(opcode::STORE, size as u8);
 
         (ty, loc)
     }
@@ -466,21 +458,21 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_field(&mut self, insts: &mut Vec<Inst>, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
+    fn walk_field(&mut self, code: &mut Bytecode, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let mut expr = match expr.kind {
             Expr::Field(expr, field) => {
-                self.walk_field(insts, field, *expr)?
+                self.walk_field(code, field, *expr)?
             },
             _ => {
-                let expr = self.walk_expr(insts, expr);
+                let expr = self.walk_expr(code, expr);
                 expr
             },
         };
 
         match &expr.ty {
             Type::Pointer(_, is_mutable) => {
-                self.insert_copy_inst(insts, &expr.ty);
-                insts.push(Inst::Dereference);
+                self.insert_copy_inst(code, &expr.ty);
+                code.insert_inst_noarg(opcode::DEREFERENCE);
                 expr.is_mutable = *is_mutable;
             },
             _ => {}
@@ -532,8 +524,8 @@ impl<'a> Analyzer<'a> {
             .fold(0, |acc, ty| acc + type_size(&self.types, &ty));
 
         if offset != 0 {
-            insts.push(Inst::Int(offset as i64));
-            insts.push(Inst::Offset);
+            code.insert_inst_ref(opcode::INT, offset);
+            code.insert_inst_noarg(opcode::OFFSET);
         }
 
         expr.ty = field_ty.clone();
@@ -545,43 +537,44 @@ impl<'a> Analyzer<'a> {
     // ====================================
 
     // 複数の値を返す可能性のある式はstoreしなければならない
-    fn walk_expr(&mut self, insts: &mut Vec<Inst>, expr: Spanned<Expr>) -> ExprInfo {
+    fn walk_expr(&mut self, code: &mut Bytecode, expr: Spanned<Expr>) -> ExprInfo {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
-                insts.push(Inst::Int(n));
+                code.insert_inst_ref(opcode::INT, n);
                 Type::Int
             },
-            Expr::Literal(Literal::String(s)) => {
-                insts.push(Inst::String(s));
+            Expr::Literal(Literal::String(_)) => {
+                // FIXME:
+                code.insert_inst_noarg(opcode::NOP);
                 Type::Pointer(Box::new(Type::String), false)
             },
             Expr::Literal(Literal::Unit) => {
-                insts.push(Inst::Int(0));
+                code.insert_inst(opcode::ZERO, 1);
                 Type::Unit
             },
             Expr::Literal(Literal::True) => {
-                insts.push(Inst::True);
+                code.insert_inst_noarg(opcode::TRUE);
                 Type::Bool
             },
             Expr::Literal(Literal::False) => {
-                insts.push(Inst::False);
+                code.insert_inst_noarg(opcode::FALSE);
                 Type::Bool
             },
             Expr::Literal(Literal::Null) => {
-                insts.push(Inst::Null);
+                code.insert_inst_noarg(opcode::NULL);
                 Type::Null
             },
             Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
                 let id = self.gen_temp_id();
                 let span = expr.span.clone();
-                let (ty, loc) = self.store_comp_literal(insts, id, expr, true, false);
+                let (ty, loc) = self.store_comp_literal(code, id, expr, true, false);
 
-                insts.push(Inst::Load(loc));
+                code.insert_inst(opcode::LOAD_REF, loc as u8);
 
                 return ExprInfo::new(ty, span);
             },
             Expr::Field(tuple_expr, field) => {
-                let field_expr = match self.walk_field(insts, field, *tuple_expr) {
+                let field_expr = match self.walk_field(code, field, *tuple_expr) {
                     Some(t) => t,
                     None => return ExprInfo::invalid(expr.span),
                 };
@@ -589,14 +582,14 @@ impl<'a> Analyzer<'a> {
                 return field_expr;
             },
             Expr::Subscript(expr, subscript_expr) => {
-                let mut expr = self.walk_expr(insts, *expr);
+                let mut expr = self.walk_expr(code, *expr);
 
                 let ty = match expr.ty {
                     Type::Array(ty, _) => *ty,
                     Type::Pointer(ty, is_mutable) => {
                         expr.is_mutable = is_mutable;
-                        self.insert_copy_inst(insts, &Type::Pointer(ty.clone(), is_mutable));
-                        insts.push(Inst::Dereference);
+                        self.insert_copy_inst(code, &Type::Pointer(ty.clone(), is_mutable));
+                        code.insert_inst_noarg(opcode::DEREFERENCE);
 
                         match *ty {
                             Type::Array(ty, _) => *ty,
@@ -612,12 +605,12 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                let subscript_expr = self.walk_expr(insts, *subscript_expr);
-                self.insert_copy_inst(insts, &subscript_expr.ty);
+                let subscript_expr = self.walk_expr(code, *subscript_expr);
+                self.insert_copy_inst(code, &subscript_expr.ty);
 
                 check_type(&mut self.errors, &Type::Int, &subscript_expr.ty, subscript_expr.span);
 
-                insts.push(Inst::Offset);
+                code.insert_inst_noarg(opcode::OFFSET);
 
                 expr.ty = ty;
                 return expr;
@@ -631,7 +624,7 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                insts.push(Inst::Load(var.loc));
+                code.insert_inst(opcode::LOAD_REF, var.loc as u8);
 
                 return ExprInfo::new_lvalue(var.ty.clone(), expr.span, var.is_mutable);
             },
@@ -647,28 +640,25 @@ impl<'a> Analyzer<'a> {
             // END:
             Expr::BinOp(BinOp::And, lhs, rhs) => {
                 // Jump to `B` if `lhs` is false
-                let lhs = self.walk_expr(insts, *lhs);
-                self.insert_copy_inst(insts, &lhs.ty);
-                let jump1 = insts.len();
-                insts.push(Inst::Int(0));
+                let lhs = self.walk_expr(code, *lhs);
+                self.insert_copy_inst(code, &lhs.ty);
+                let jump1 = code.jump();
 
                 // Jump to `B` if `rhs` is false
-                let rhs = self.walk_expr(insts, *rhs);
-                self.insert_copy_inst(insts, &lhs.ty);
-                let jump2 = insts.len();
-                insts.push(Inst::Int(0));
+                let rhs = self.walk_expr(code, *rhs);
+                self.insert_copy_inst(code, &lhs.ty);
+                let jump2 = code.jump();
 
                 // A: Push true
-                insts.push(Inst::True);
-                let jump_to_end = insts.len();
-                insts.push(Inst::Int(0));
+                code.insert_inst_noarg(opcode::TRUE);
+                let jump_to_end = code.jump();
 
                 // B: Push false
-                insts[jump1] = Inst::JumpIfZero(insts.len());
-                insts[jump2] = Inst::JumpIfZero(insts.len());
-                insts.push(Inst::False);
+                code.insert_jump_if_false_inst(jump1);
+                code.insert_jump_if_false_inst(jump2);
+                code.insert_inst_noarg(opcode::FALSE);
 
-                insts[jump_to_end] = Inst::Jump(insts.len());
+                code.insert_jump_inst(jump_to_end);
 
                 // Type check
                 match (lhs.ty, rhs.ty) {
@@ -693,28 +683,25 @@ impl<'a> Analyzer<'a> {
             // END:
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
                 // Jump to `B` if `lhs` is true
-                let lhs = self.walk_expr(insts, *lhs);
-                self.insert_copy_inst(insts, &lhs.ty);
-                let jump1 = insts.len();
-                insts.push(Inst::Int(0));
+                let lhs = self.walk_expr(code, *lhs);
+                self.insert_copy_inst(code, &lhs.ty);
+                let jump1 = code.jump();
 
                 // Jump to `B` if `rhs` is true
-                let rhs = self.walk_expr(insts, *rhs);
-                self.insert_copy_inst(insts, &lhs.ty);
-                let jump2 = insts.len();
-                insts.push(Inst::Int(0));
+                let rhs = self.walk_expr(code, *rhs);
+                self.insert_copy_inst(code, &lhs.ty);
+                let jump2 = code.jump();
 
                 // A: Push false
-                insts.push(Inst::False);
-                let jump_to_end = insts.len();
-                insts.push(Inst::Int(0));
+                code.insert_inst_noarg(opcode::FALSE);
+                let jump_to_end = code.jump();
 
                 // B: Push true
-                insts[jump1] = Inst::JumpIfNonZero(insts.len());
-                insts[jump2] = Inst::JumpIfNonZero(insts.len());
-                insts.push(Inst::True);
+                code.insert_jump_if_true_inst(jump1);
+                code.insert_jump_if_true_inst(jump2);
+                code.insert_inst_noarg(opcode::TRUE);
 
-                insts[jump_to_end] = Inst::Jump(insts.len());
+                code.insert_jump_inst(jump_to_end);
 
                 // Type check
                 match (lhs.ty, rhs.ty) {
@@ -728,26 +715,26 @@ impl<'a> Analyzer<'a> {
                 Type::Bool
             },
             Expr::BinOp(binop, lhs, rhs) => {
-                let lhs = self.walk_expr(insts, *lhs);
-                self.insert_copy_inst(insts, &lhs.ty);
-                let rhs = self.walk_expr(insts, *rhs);
-                self.insert_copy_inst(insts, &lhs.ty);
+                let lhs = self.walk_expr(code, *lhs);
+                self.insert_copy_inst(code, &lhs.ty);
+                let rhs = self.walk_expr(code, *rhs);
+                self.insert_copy_inst(code, &lhs.ty);
 
                 // Insert an instruction
-                let ibinop = match binop {
-                    BinOp::Add => IBinOp::Add,
-                    BinOp::Sub => IBinOp::Sub,
-                    BinOp::Mul => IBinOp::Mul,
-                    BinOp::Div => IBinOp::Div,
-                    BinOp::LessThan => IBinOp::LessThan,
-                    BinOp::LessThanOrEqual => IBinOp::LessThanOrEqual,
-                    BinOp::GreaterThan => IBinOp::GreaterThan,
-                    BinOp::GreaterThanOrEqual => IBinOp::GreaterThanOrEqual,
-                    BinOp::Equal => IBinOp::Equal,
-                    BinOp::NotEqual => IBinOp::NotEqual,
+                let opcode = match binop {
+                    BinOp::Add => opcode::BINOP_ADD,
+                    BinOp::Sub => opcode::BINOP_SUB,
+                    BinOp::Mul => opcode::BINOP_MUL,
+                    BinOp::Div => opcode::BINOP_DIV,
+                    BinOp::LessThan => opcode::BINOP_LT,
+                    BinOp::LessThanOrEqual => opcode::BINOP_LE,
+                    BinOp::GreaterThan => opcode::BINOP_GT,
+                    BinOp::GreaterThanOrEqual => opcode::BINOP_GE,
+                    BinOp::Equal => opcode::BINOP_EQ,
+                    BinOp::NotEqual => opcode::BINOP_NEQ,
                     _ => panic!(),
                 };
-                insts.push(Inst::BinOp(ibinop));
+                code.insert_inst_noarg(opcode);
 
                 let binop_symbol = binop.to_symbol();
                 match (binop, &lhs.ty, &rhs.ty) {
@@ -777,9 +764,9 @@ impl<'a> Analyzer<'a> {
             Expr::Call(name, args) => {
                 let name_str = IdMap::name(name);
 
-                let (return_ty, params, inst) = match self.stdlib_funcs.get(&*name_str) {
-                    Some(func) => {
-                        (func.return_ty.clone(), func.params.clone(), Inst::CallNative(name, func.body.clone(), func.params.len()))
+                let (return_ty, params) = match self.stdlib_funcs.get(&*name_str) {
+                    Some(_) => {
+                        unimplemented!();
                     },
                     None => {
                         // Get the callee function
@@ -792,11 +779,13 @@ impl<'a> Analyzer<'a> {
                         };
 
                         let return_value_size = type_size(&self.types, &callee_func.return_ty);
-                        for _ in 0..return_value_size {
-                            insts.push(Inst::Int(0));
+                        if return_value_size > std::u8::MAX as usize {
+                            panic!("too large return value");
                         }
 
-                        (callee_func.return_ty.clone(), callee_func.params.clone(), Inst::Call(name))
+                        code.insert_inst(opcode::ZERO, return_value_size as u8);
+
+                        (callee_func.return_ty.clone(), callee_func.params.clone())
                     },
                 };
 
@@ -811,27 +800,26 @@ impl<'a> Analyzer<'a> {
 
                 // Check parameter types
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
-                    let arg = self.walk_expr(insts, arg);
-                    self.insert_copy_inst(insts, &arg.ty);
+                    let arg = self.walk_expr(code, arg);
+                    self.insert_copy_inst(code, &arg.ty);
                     check_type(&mut self.errors, &param_ty, &arg.ty, arg.span.clone());
                 }
 
-                // Insert an instruction
-                insts.push(inst);
+                // TODO: Insert an instruction
 
                 // Store if the return value is compound data
                 if Self::should_store(&return_ty) {
                     let id = self.gen_temp_id();
-                    let loc = self.new_var(id, return_ty.clone(), false);
-                    insts.push(Inst::Load(loc));
-                    insts.push(Inst::StoreWithSize(type_size(&self.types, &return_ty)));
-                    insts.push(Inst::Load(loc));
+                    let loc = self.new_var(code.current_func_mut(), id, return_ty.clone(), false);
+                    code.insert_inst(opcode::LOAD_REF, loc as u8);
+                    code.insert_inst(opcode::STORE, type_size(&self.types, &return_ty) as u8);
+                    code.insert_inst(opcode::LOAD_REF, loc as u8);
                 }
 
                 return_ty
             },
             Expr::Address(expr, is_mutable) => {
-                let expr = self.walk_expr(insts, *expr);
+                let expr = self.walk_expr(code, *expr);
 
                 if !expr.is_lvalue {
                     error!(self, expr.span, "this expression is not lvalue");
@@ -840,17 +828,17 @@ impl<'a> Analyzer<'a> {
                     error!(self, expr.span, "this expression is immutable");
                     Type::Invalid
                 } else {
-                    insts.push(Inst::Pointer);
+                    code.insert_inst_noarg(opcode::POINTER);
                     Type::Pointer(Box::new(expr.ty), is_mutable)
                 }
             },
             Expr::Dereference(expr) => {
-                let expr = self.walk_expr(insts, *expr);
-                self.insert_copy_inst(insts, &expr.ty);
+                let expr = self.walk_expr(code, *expr);
+                self.insert_copy_inst(code, &expr.ty);
 
                 match expr.ty {
                     Type::Pointer(ty, is_mutable) => {
-                        insts.push(Inst::Dereference);
+                        code.insert_inst_noarg(opcode::DEREFERENCE);
                         return ExprInfo::new_lvalue(*ty, expr.span, is_mutable); // TODO:
                     }
                     Type::Invalid => Type::Invalid,
@@ -861,12 +849,12 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Negative(expr) => {
-                let expr = self.walk_expr(insts, *expr);
-                self.insert_copy_inst(insts, &expr.ty);
+                let expr = self.walk_expr(code, *expr);
+                self.insert_copy_inst(code, &expr.ty);
 
                 match expr.ty {
                     ty @ Type::Int /* | Type::Float */ => {
-                        insts.push(Inst::Negative);
+                        code.insert_inst_noarg(opcode::NEGATIVE);
                         ty
                     },
                     ty => {
@@ -876,9 +864,9 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Alloc(expr, is_mutable) => {
-                let expr = self.walk_expr(insts, *expr);
-                self.insert_copy_inst(insts, &expr.ty);
-                insts.push(Inst::Alloc(type_size(&self.types, &expr.ty)));
+                let expr = self.walk_expr(code, *expr);
+                self.insert_copy_inst(code, &expr.ty);
+                code.insert_inst(opcode::ALLOC, type_size(&self.types, &expr.ty) as u8);
 
                 Type::Pointer(Box::new(expr.ty), is_mutable)
             },
@@ -887,92 +875,87 @@ impl<'a> Analyzer<'a> {
         ExprInfo::new(ty, expr.span)
     }
 
-    fn walk_stmt(&mut self, insts: &mut Vec<Inst>, stmt: Spanned<Stmt>) {
+    fn walk_stmt(&mut self, code: &mut Bytecode, stmt: Spanned<Stmt>) {
         match stmt.kind {
             Stmt::Expr(expr) => {
-                let expr = self.walk_expr(insts, expr);
+                let expr = self.walk_expr(code, expr);
 
                 let pop_count = type_size(&self.types, &expr.ty);
                 for _ in 0..pop_count {
-                    insts.push(Inst::Pop);
+                    code.insert_inst_noarg(opcode::POP);
                 }
             },
             Stmt::If(cond, stmt, else_stmt) => {
                 // Condition
-                let expr = self.walk_expr(insts, cond);
-                self.insert_copy_inst(insts, &expr.ty);
+                let expr = self.walk_expr(code, cond);
+                self.insert_copy_inst(code, &expr.ty);
                 check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
 
-                // Insert dummy instruction to jump to else-clause or end
-                let jump_to_else = insts.len();
-                insts.push(Inst::Int(0));
+                let jump_to_else = code.jump();
 
                 // Then-clause
-                self.walk_stmt(insts, *stmt);
+                self.walk_stmt(code, *stmt);
 
                 if let Some(else_stmt) = else_stmt {
-                    // Insert dummy instruction to jump to end
-                    let jump_to_end = insts.len();
-                    insts.push(Inst::Int(0));
+                    let jump_to_end = code.jump();
 
-                    insts[jump_to_else] = Inst::JumpIfZero(insts.len());
+                    code.insert_jump_if_false_inst(jump_to_end);
 
                     // Insert else-clause instructions
-                    self.walk_stmt(insts, *else_stmt);
+                    self.walk_stmt(code, *else_stmt);
 
-                    insts[jump_to_end] = Inst::Jump(insts.len());
+                    code.insert_jump_inst(jump_to_end);
                 } else {
-                    // Insert instruction to jump to end
-                    insts[jump_to_else] = Inst::JumpIfZero(insts.len());
+                    code.insert_jump_if_false_inst(jump_to_else);
                 }
             },
             Stmt::While(cond, stmt) => {
-                let begin = insts.len();
+                let begin = code.code.len();
 
                 // Insert condition expression instruction
-                let cond = self.walk_expr(insts, cond);
-                self.insert_copy_inst(insts, &cond.ty);
+                let cond = self.walk_expr(code, cond);
+                self.insert_copy_inst(code, &cond.ty);
                 check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
 
                 // Insert dummy instruction to jump to end
-                let jump_to_end = insts.len();
-                insts.push(Inst::Int(0));
+                let jump_to_end = code.jump();
 
                 // Insert body statement instruction
-                self.walk_stmt(insts, *stmt);
+                self.walk_stmt(code, *stmt);
 
                 // Jump to begin
-                insts.push(Inst::Jump(begin));
+                code.insert_inst_ref(opcode::JUMP, begin);
 
                 // Insert instruction to jump to end
-                insts[jump_to_end] = Inst::JumpIfZero(insts.len());
+                code.insert_jump_if_false_inst(jump_to_end);
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
                 for stmt in stmts {
-                    self.walk_stmt(insts, stmt);
+                    self.walk_stmt(code, stmt);
                 }
                 self.pop_scope();
             },
             Stmt::Bind(name, expr, is_mutable) => {
                 match expr.kind {
                     Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
-                        self.store_comp_literal(insts, name, expr, true, is_mutable);
+                        self.store_comp_literal(code, name, expr, true, is_mutable);
                     },
                     _ => {
-                        let expr = self.walk_expr(insts, expr);
-                        self.insert_copy_inst(insts, &expr.ty);
+                        let expr = self.walk_expr(code, expr);
+                        self.insert_copy_inst(code, &expr.ty);
 
-                        let loc = self.new_var(name, expr.ty.clone(), is_mutable);
-                        insts.push(Inst::Load(loc as isize));
-                        insts.push(Inst::StoreWithSize(type_size(&self.types, &expr.ty)));
+                        let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
+                        code.insert_inst(opcode::LOAD_REF, loc as u8);
+                        code.insert_inst(opcode::STORE, type_size(&self.types, &expr.ty) as u8);
+                        // XXX: insts.push(Inst::Load(loc as isize));
                     }
                 }
             },
             Stmt::Assign(lhs, rhs) => {
-                let rhs = self.walk_expr(insts, rhs);
-                self.insert_copy_inst(insts, &rhs.ty);
-                let lhs = self.walk_expr(insts, lhs);
+                let rhs = self.walk_expr(code, rhs);
+                self.insert_copy_inst(code, &rhs.ty);
+                let lhs = self.walk_expr(code, lhs);
 
                 if !lhs.is_lvalue {
                     error!(self, lhs.span, "unassignable expression");
@@ -986,10 +969,10 @@ impl<'a> Analyzer<'a> {
 
                 check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span);
 
-                insts.push(Inst::StoreWithSize(type_size(&self.types, &lhs.ty)));
+                code.insert_inst(opcode::STORE, type_size(&self.types, &lhs.ty) as u8);
             },
             Stmt::Return(expr) => {
-                let func_name = self.functions[&self.current_func].name;
+                let func_name = code.current_func().name;
 
                 // Check if is outside function
                 if func_name == self.main_func_id {
@@ -998,13 +981,13 @@ impl<'a> Analyzer<'a> {
                 }
 
                 let expr = match expr {
-                    Some(expr) => self.walk_expr(insts, expr),
+                    Some(expr) => self.walk_expr(code, expr),
                     None => {
-                        insts.push(Inst::Int(0));
+                        code.insert_inst(opcode::ZERO, 1);
                         ExprInfo::new(Type::Unit, stmt.span)
                     }
                 };
-                self.insert_copy_inst(insts, &expr.ty);
+                self.insert_copy_inst(code, &expr.ty);
 
                 // Check type
                 let return_var = self.find_var(self.return_value_id).unwrap();
@@ -1013,9 +996,9 @@ impl<'a> Analyzer<'a> {
 
                 check_type(&mut self.errors, &ty, &expr.ty, expr.span);
 
-                insts.push(Inst::Load(loc));
-                insts.push(Inst::StoreWithSize(type_size(&self.types, &ty)));
-                insts.push(Inst::Return);
+                code.insert_inst(opcode::LOAD_REF, loc as u8);
+                code.insert_inst(opcode::STORE, type_size(&self.types, &ty) as u8);
+                code.insert_inst_noarg(opcode::RETURN);
             },
         }
     }
@@ -1046,12 +1029,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_toplevel(&mut self, main_insts: &mut Vec<Inst>, toplevel: Spanned<TopLevel>) {
+    fn walk_toplevel(&mut self, code: &mut Bytecode, toplevel: Spanned<TopLevel>) {
         match toplevel.kind {
-            TopLevel::Stmt(stmt) => {
-                self.current_func = self.main_func_id;
-                self.walk_stmt(main_insts, stmt);
-            },
             TopLevel::Function(name, params, return_ty, stmt) => {
                 self.current_func = name;
 
@@ -1061,27 +1040,33 @@ impl<'a> Analyzer<'a> {
                 self.insert_params(params, &return_ty);
 
                 // body
-                let mut insts = Vec::new();
-                self.walk_stmt(&mut insts, stmt);
+                code.begin_function(name);
+                self.walk_stmt(code, stmt);
+                code.end_function(name);
 
                 let return_var = self.get_return_var();
 
                 // insert a return instruction if the return value type is unit
                 if let Type::Unit = return_var.ty {
-                    insts.push(Inst::Return);
+                    code.insert_inst_noarg(opcode::RETURN);
                 }
-
-                self.functions.get_mut(&name).unwrap().insts = insts;
 
                 self.pop_scope();
             },
             TopLevel::Type(_, ty) => {
                 self.walk_type(&ty, &toplevel.span);
             },
+            _ => {},
         }
     }
 
-    fn insert_function_header(&mut self, toplevel: &TopLevel) {
+    fn walk_main_stmt(&mut self, code: &mut Bytecode, toplevel: Spanned<TopLevel>) {
+        if let TopLevel::Stmt(stmt) = toplevel.kind {
+            self.walk_stmt(code, stmt);
+        }
+    }
+
+    fn insert_function_header(&mut self, code: &mut Bytecode, toplevel: &TopLevel) {
         match toplevel {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
@@ -1096,7 +1081,7 @@ impl<'a> Analyzer<'a> {
 
                 // Insert function
                 let func = Function::new(*name, param_size);
-                self.functions.insert(*name, func);
+                code.new_function(func);
             },
             TopLevel::Type(name, ty) => {
                 self.types.insert(*name, ty.clone());
@@ -1105,7 +1090,9 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    pub fn analyze(mut self, program: Program) -> Result<HashMap<Id, Function>, Vec<Error>> {
+    pub fn analyze(mut self, mut program: Program) -> Result<Bytecode, Vec<Error>> {
+        let mut code = Bytecode::new();
+
         // Insert main function header
         let header = FunctionHeader {
             params: Vec::new(),
@@ -1115,28 +1102,31 @@ impl<'a> Analyzer<'a> {
 
         // Insert main function
         let func = Function::new(self.main_func_id, 0);
-        self.functions.insert(self.main_func_id, func);
+        code.new_function(func);
 
         // Insert function headers
         for toplevel in program.top.iter() {
-            self.insert_function_header(&toplevel.kind);
+            self.insert_function_header(&mut code, &toplevel.kind);
         }
 
         self.push_scope();
 
-        let mut main_insts = Vec::new();
-        for toplevel in program.top {
-            self.walk_toplevel(&mut main_insts, toplevel);
+        for toplevel in program.top.drain_filter(|toplevel| match toplevel.kind { TopLevel::Stmt(_) => false, _ => true }) {
+            self.walk_toplevel(&mut code, toplevel);
         }
 
-        self.pop_scope();
+        code.begin_function(self.main_func_id);
+        for toplevel in program.top {
+            self.walk_main_stmt(&mut code, toplevel);
+        }
+        code.end_function(self.main_func_id);
 
-        self.functions.get_mut(&self.main_func_id).unwrap().insts = main_insts;
+        self.pop_scope();
 
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(self.functions)
+            Ok(code)
         }
     }
 }
