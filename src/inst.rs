@@ -28,6 +28,7 @@ pub enum BinOp {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: Id,
+    pub code_id: u16,
     pub stack_size: usize,
     pub param_size: usize,
     pub pos: usize,
@@ -55,6 +56,7 @@ impl Function {
     pub fn new(name: Id, param_size: usize) -> Self {
         Self {
             name,
+            code_id: 0,
             param_size,
             stack_size: 0,
             pos: 0,
@@ -188,6 +190,8 @@ pub mod opcode {
     pub const JUMP_IF_TRUE: u8 = 0x20;
     pub const RETURN: u8 = 0x21;
     pub const ZERO: u8 = 0x22;
+
+    pub const END: u8 = 0x23;
 }
 
 macro_rules! impl_toref {
@@ -219,41 +223,73 @@ pub struct Bytecode {
     functions: HashMap<Id, Function>,
     refs: Vec<u64>,
     current_func_id: Option<Id>,
+    next_func_id: u16,
+    funcmap_start: usize,
 }
 
 impl Bytecode {
     pub fn new() -> Self {
         Self {
-            code: Vec::new(),
+            code: vec![0x4c, 0x32, 0x42, 0x43, 0, 0, 0, 0], // "L2BC"
             functions: HashMap::new(),
             refs: Vec::with_capacity(50),
             current_func_id: None,
+            next_func_id: 0,
+            funcmap_start: 8,
         }
     }
 
     // Function
 
-    pub fn new_function(&mut self, func: Function) {
+    pub fn new_function(&mut self, mut func: Function) {
+        if self.code.len() % 4 != 0 {
+            panic!("not algined");
+        }
+
+        if self.next_func_id > std::u16::MAX {
+            panic!("too many functions");
+        }
+
+        let id = self.next_func_id;
+        func.code_id = id;
         self.functions.insert(func.name, func);
+
+        self.code.reserve(8);
+        unsafe {
+            let ptr = self.code.as_mut_ptr().add(self.code.len()) as *mut u16;
+            *ptr = id.to_le();
+
+            *ptr.add(1) = 0;
+            *ptr.add(2) = 0;
+            *ptr.add(3) = 0;
+
+            self.code.set_len(self.code.len() + 8);
+        }
+
+        self.next_func_id += 1;
+    }
+
+    pub fn end_new_function(&mut self) {
+        self.code.resize(utils::align(self.code.len(), 8), 0);
+
+        // Set function count
+        self.code[5] = self.functions.len() as u8;
     }
 
     pub fn begin_function(&mut self, id: Id) {
-        self.functions.get_mut(&id).unwrap().pos = self.code.len();
+        let func = self.functions.get_mut(&id).unwrap();
+        func.pos = self.code.len();
         self.refs.clear();
         self.current_func_id = Some(id);
     }
 
     pub fn end_function(&mut self, id: Id) {
-        self.functions.get_mut(&id).unwrap().ref_start = self.code.len();
-        self.code.push(self.refs.len() as u8);
+        self.insert_inst_noarg(opcode::END);
 
-        // alignment
-        let mut padding = 8 - self.code.len() % 8;
-        if padding == 8 {
-            padding = 0
-        }
+        self.code.resize(utils::align(self.code.len(), 8), 0);
 
-        self.code.resize(self.code.len() + padding, 0);
+        let func = self.functions.get_mut(&id).unwrap();
+        func.ref_start = self.code.len();
 
         // Push refs
         let refs_size = self.refs.len() * 8; // in bytes
@@ -265,6 +301,24 @@ impl Bytecode {
             ptr::copy_nonoverlapping(src, dst, refs_size);
 
             self.code.set_len(self.code.len() + refs_size);
+        }
+
+        // Set function infomations
+        unsafe {
+            let ptr = self.code.as_mut_ptr().add(self.funcmap_start) as *mut u8;
+            let key = ptr.add(func.code_id as usize * 8) as *mut u16;
+
+            let stack_size = key.add(1) as *mut u8;
+            *stack_size = func.stack_size.to_le() as u8;
+
+            let param_size = stack_size.add(1);
+            *param_size = func.param_size.to_le() as u8;
+
+            let pos = param_size.add(1) as *mut u16;
+            *pos = func.pos.to_le() as u16;
+
+            let ref_start = pos.add(1);
+            *ref_start = func.ref_start.to_le() as u16;
         }
 
         self.current_func_id = None;
@@ -312,55 +366,76 @@ impl Bytecode {
 
     pub fn jump(&mut self) -> Jump {
         self.insert_inst_noarg(opcode::NOP);
-        Jump(self.code.len() - 3)
+        Jump(self.code.len() - 2)
     }
 
     pub fn insert_jump_inst(&mut self, jump: Jump) {
         let index = jump.0;
         self.code[index] = opcode::JUMP;
-        self.code[index + 1] = self.new_ref(index) as u8;
+        self.code[index + 1] = index as u8;
     }
 
 
     pub fn insert_jump_if_false_inst(&mut self, jump: Jump) {
         let index = jump.0;
         self.code[index] = opcode::JUMP_IF_FALSE;
-        self.code[index + 1] = self.new_ref(index) as u8;
+        self.code[index + 1] = index as u8;
     }
 
     pub fn insert_jump_if_true_inst(&mut self, jump: Jump) {
         let index = jump.0;
         self.code[index] = opcode::JUMP_IF_TRUE;
-        self.code[index + 1] = self.new_ref(index) as u8;
+        self.code[index + 1] = index as u8;
     }
 
     pub fn dump(&self) {
         let index_len = format!("{}", self.code.len()).len();
         let mut i = 0;
 
-        loop {
-            // Find the function
-            let mut current_func = None;
-            for func in self.functions.values() {
-                if i == func.pos {
-                    current_func = Some(func);
-                    break;
-                }
+        // Skip header
+        i += 8;
+
+        let func_count = self.code[5] as usize;
+
+        type Func = (u16, u8, u8, u16, u16); // id, stack_size, param_size, pos, ref_start
+        let mut functions: Vec<Func> = Vec::new();
+
+        // Function map
+        unsafe {
+            for j in 0..func_count {
+                let key = self.code.as_ptr().add(i).add(j * 8) as *const u16;
+                let func_id = key;
+                let stack_size = key.add(1) as *const u8;
+                let param_size = stack_size.add(1);
+                let pos = param_size.add(1) as *const u16;
+                let ref_start = pos.add(1);
+
+                println!("{:<width$}", i, width = index_len);
+                println!("  id: {}", *func_id);
+                println!("  stack_size: {}", *stack_size);
+                println!("  param_size: {}", *param_size);
+                println!("  pos: {}", *pos);
+                println!("  ref_start: {}", *ref_start);
+
+                functions.push((*func_id, *stack_size, *param_size, *pos, *ref_start));
             }
+        }
 
-            if current_func.is_none() {
-                break;
-            }
+        for (id, _, _, pos, ref_start) in functions {
+            i = pos as usize;
 
-            let current_func = current_func.unwrap();
+            let func = self.functions.values().find(|func| func.code_id == id).unwrap();
+            println!("{} ({}):", IdMap::name(func.name), id);
 
-            println!("{}:", IdMap::name(current_func.name));
-
-            while i < current_func.ref_start {
+            while self.code[i] != opcode::END {
                 print!("{:<width$}  ", i, width = index_len);
                 match self.code[i] {
                     opcode::NOP => println!("NOP"),
-                    opcode::INT => println!("INT &{}", self.code[i + 1]),
+                    opcode::INT => {
+                        let value = &self.code[ref_start as usize + self.code[i + 1] as usize * 8] as *const u8 as *const i64;
+                        let value = unsafe { *value };
+                        println!("INT {} ({})", self.code[i + 1], value);
+                    },
                     opcode::STRING => println!("STRING &{}", self.code[i + 1]),
                     opcode::TRUE => println!("TRUE"),
                     opcode::FALSE => println!("FALSE"),
@@ -371,7 +446,7 @@ impl Bytecode {
                     opcode::COPY => println!("COPY size={}", self.code[i + 1]),
                     opcode::OFFSET => println!("OFFSET"),
                     opcode::DUPLICATE => println!("DUPLICATE"),
-                    opcode::LOAD_REF => println!("LOAD_REF {}", self.code[i + 1]),
+                    opcode::LOAD_REF => println!("LOAD_REF {}", i8::from_le_bytes([self.code[i + 1]])),
                     opcode::LOAD_COPY => println!("LOAD_COPY unimplemented"),
                     opcode::STORE => println!("STORE size={}", self.code[i + 1]),
                     opcode::BINOP_ADD => println!("BINOP_ADD"),
@@ -387,34 +462,17 @@ impl Bytecode {
                     opcode::BINOP_NEQ => println!("BINOP_NEQ"),
                     opcode::POP => println!("POP"),
                     opcode::ALLOC => println!("ALLOC size={}", self.code[i + 1]),
-                    opcode::CALL => println!("CALL unimplemented"),
+                    opcode::CALL => println!("CALL {}", self.code[i + 1]),
                     opcode::CALL_NATIVE => println!("CALL_NATIVE unimplemented"),
                     opcode::JUMP => println!("JUMP &{}", self.code[i + 1]),
                     opcode::JUMP_IF_FALSE => println!("JUMP_IF_FALSE &{}", self.code[i + 1]),
                     opcode::JUMP_IF_TRUE => println!("JUMP_IF_TRUE &{}", self.code[i + 1]),
                     opcode::RETURN => println!("RETURN"),
-                    opcode::ZERO => println!("ZERO"),
-                    _ => println!("UNKNOWN"),
+                    opcode::ZERO => println!("ZERO count={}", self.code[i + 1]),
+                    _ => println!("UNKNOWN (0x{:x})", self.code[i]),
                 };
 
                 i += 2;
-            }
-
-            let ref_count = self.code[i] as usize;
-            i += 1;
-
-            // Skip padding
-            while i % 8 != 0 {
-                i += 1;
-            }
-
-            let index_start = i;
-            let limit = i + ref_count * 8;
-            while i < limit {
-                let index = (i - index_start) / 8;
-                let value = unsafe { *((self.code.as_ptr().add(i)) as *const i64) };
-                println!("{:<width$}({})  {}", i, index, value, width = index_len);
-                i += 8;
             }
         }
     }

@@ -199,11 +199,11 @@ impl<'a> Analyzer<'a> {
 
     // Insert a copy instruction if necessary
     fn insert_copy_inst(&self, bytecode: &mut Bytecode, ty: &Type) {
-        if bytecode.code.len() <= 2 {
+        if bytecode.code.len() < 2 {
             return;
         }
 
-        match *bytecode.code.get(bytecode.code.len() - 3).unwrap() {
+        match *bytecode.code.get(bytecode.code.len() - 2).unwrap() {
             // opcode::LOAD_REF => { }, TODO: Insert LOAD_COPY
             opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET | opcode::CALL | opcode::CALL_NATIVE => {
                 let size = type_size(&self.types, ty);
@@ -764,7 +764,7 @@ impl<'a> Analyzer<'a> {
             Expr::Call(name, args) => {
                 let name_str = IdMap::name(name);
 
-                let (return_ty, params) = match self.stdlib_funcs.get(&*name_str) {
+                let (return_ty, params, code_id) = match self.stdlib_funcs.get(&*name_str) {
                     Some(_) => {
                         unimplemented!();
                     },
@@ -785,7 +785,7 @@ impl<'a> Analyzer<'a> {
 
                         code.insert_inst(opcode::ZERO, return_value_size as u8);
 
-                        (callee_func.return_ty.clone(), callee_func.params.clone())
+                        (callee_func.return_ty.clone(), callee_func.params.clone(), code.get_function(name).unwrap().code_id)
                     },
                 };
 
@@ -806,6 +806,7 @@ impl<'a> Analyzer<'a> {
                 }
 
                 // TODO: Insert an instruction
+                code.insert_inst(opcode::CALL, code_id as u8);
 
                 // Store if the return value is compound data
                 if Self::should_store(&return_ty) {
@@ -924,7 +925,7 @@ impl<'a> Analyzer<'a> {
                 self.walk_stmt(code, *stmt);
 
                 // Jump to begin
-                code.insert_inst_ref(opcode::JUMP, begin);
+                code.insert_inst(opcode::JUMP, begin as u8);
 
                 // Insert instruction to jump to end
                 code.insert_jump_if_false_inst(jump_to_end);
@@ -1108,6 +1109,7 @@ impl<'a> Analyzer<'a> {
         for toplevel in program.top.iter() {
             self.insert_function_header(&mut code, &toplevel.kind);
         }
+        code.end_new_function();
 
         self.push_scope();
 
