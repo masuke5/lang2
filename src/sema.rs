@@ -543,9 +543,8 @@ impl<'a> Analyzer<'a> {
                 code.insert_inst_ref(opcode::INT, n);
                 Type::Int
             },
-            Expr::Literal(Literal::String(_)) => {
-                // FIXME:
-                code.insert_inst_noarg(opcode::NOP);
+            Expr::Literal(Literal::String(i)) => {
+                code.insert_inst(opcode::STRING, i as u8);
                 Type::Pointer(Box::new(Type::String), false)
             },
             Expr::Literal(Literal::Unit) => {
@@ -1092,7 +1091,7 @@ impl<'a> Analyzer<'a> {
     }
 
     pub fn analyze(mut self, mut program: Program) -> Result<Bytecode, Vec<Error>> {
-        let mut code = Bytecode::new();
+        let mut code = Bytecode::new(program.strings);
 
         // Insert main function header
         let header = FunctionHeader {

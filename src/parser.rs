@@ -22,6 +22,7 @@ pub struct Parser {
     tokens: Vec<Spanned<Token>>,
     pos: usize,
     errors: Vec<Error>,
+    strings: Vec<String>,
 }
 
 impl Parser {
@@ -30,6 +31,7 @@ impl Parser {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            strings: Vec::new(),
         }
     }
 
@@ -305,7 +307,8 @@ impl Parser {
             },
             Token::String(s) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::String(s)), token.span))
+                self.strings.push(s);
+                Some(spanned(Expr::Literal(Literal::String(self.strings.len() - 1)), token.span))
             },
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {
@@ -904,7 +907,10 @@ impl Parser {
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(Program { top: toplevels })
+            Ok(Program {
+                top: toplevels,
+                strings: self.strings,
+            })
         }
     }
 }

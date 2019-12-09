@@ -1,6 +1,8 @@
 use std::fmt;
 use std::ptr;
 use std::mem;
+use std::slice;
+use std::str;
 use std::collections::HashMap;
 
 use crate::ty::Type;
@@ -225,18 +227,76 @@ pub struct Bytecode {
     current_func_id: Option<Id>,
     next_func_id: u16,
     funcmap_start: usize,
+    string_map_start: usize,
+    strings: Vec<String>,
 }
 
 impl Bytecode {
-    pub fn new() -> Self {
-        Self {
-            code: vec![0x4c, 0x32, 0x42, 0x43, 0, 0, 0, 0], // "L2BC"
+    pub fn new(strings: Vec<String>) -> Self {
+        let mut slf = Self {
+            code: vec![
+                0x4c, 0x32, 0x42, 0x43, // "L2BC"
+                0, // the number of function
+                0, // the number of string
+                0, // funcmap_start (2byte)
+                0,
+                0, // string_map_start (2byte)
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
             functions: HashMap::new(),
             refs: Vec::with_capacity(50),
             current_func_id: None,
             next_func_id: 0,
-            funcmap_start: 8,
+            funcmap_start: 0,
+            string_map_start: 16,
+            strings,
+        };
+
+        slf.code[5] = slf.strings.len() as u8;
+
+        // Reserve string map
+        slf.code[8] = 16;
+        slf.code.resize(slf.code.len() + slf.strings.len() * 2, 0);
+
+        // Write string entities
+        unsafe {
+            slf.code.resize(utils::align(slf.code.len(), 8), 0);
+
+            for (i, string) in slf.strings.iter().enumerate() {
+                slf.code.reserve(string.len() + 8);
+
+                // Write string location
+                let map_ptr = slf.code.as_mut_ptr().add(slf.string_map_start) as *mut u16;
+                *map_ptr.add(i) = slf.code.len() as u16;
+
+                // Write string length
+                let len = slf.code.as_mut_ptr().add(slf.code.len()) as *mut usize;
+                *len = string.len().to_le();
+
+                // Write string bytes
+                let bytes_ptr = len.add(1) as *mut u8;
+                let src = string.as_bytes().as_ptr();
+                ptr::copy_nonoverlapping(src, bytes_ptr, string.len());
+
+                slf.code.set_len(slf.code.len() + string.len() + 8);
+                slf.code.resize(utils::align(slf.code.len(), 8), 0);
+            }
         }
+
+        // Write funcmap_start
+        slf.funcmap_start = slf.code.len();
+        unsafe {
+            let funcmap_start = &mut slf.code[6] as *mut u8 as *mut u16;
+            *funcmap_start = slf.funcmap_start as u16;
+        }
+
+        slf
     }
 
     // Function
@@ -273,7 +333,7 @@ impl Bytecode {
         self.code.resize(utils::align(self.code.len(), 8), 0);
 
         // Set function count
-        self.code[5] = self.functions.len() as u8;
+        self.code[4] = self.functions.len() as u8;
     }
 
     pub fn begin_function(&mut self, id: Id) {
@@ -390,27 +450,55 @@ impl Bytecode {
 
     pub fn dump(&self) {
         let index_len = format!("{}", self.code.len()).len();
-        let mut i = 0;
 
-        // Skip header
-        i += 8;
+        fn read<T: Copy>(code: &[u8], pos: usize) -> T {
+            if pos + mem::size_of::<T>() >= code.len() {
+                panic!("out of bounds");
+            }
 
-        let func_count = self.code[5] as usize;
+            unsafe { *(code.as_ptr().add(pos) as *const T) }
+        }
+        
+        fn get_ptr<T>(code: &[u8], pos: usize) -> *const T {
+            if pos + mem::size_of::<T>() >= code.len() {
+                panic!("out of bounds");
+            }
+
+            unsafe { code.as_ptr().add(pos) as *const T }
+        }
+
+        // String map
+        let string_count = read::<u8>(&self.code, 5) as usize;
+        let count_len = format!("{}", string_count).len();
+        for i in 0..string_count {
+            let loc = read::<u16>(&self.code, self.string_map_start + i * 2) as usize;
+            print!("{:<width$}  ", loc, width = index_len);
+
+            let len = read::<usize>(&self.code, loc);
+            let bytes = get_ptr::<u8>(&self.code, loc + 8);
+            let slice = unsafe { slice::from_raw_parts(bytes, len) };
+            let raw = str::from_utf8(slice).unwrap();
+
+            println!("{:<width$} \"{}\"", i, utils::escape_string(raw), width = count_len);
+        }
+
+        // Function map
+        let func_count = self.code[4] as usize;
 
         type Func = (u16, u8, u8, u16, u16); // id, stack_size, param_size, pos, ref_start
         let mut functions: Vec<Func> = Vec::new();
 
-        // Function map
         unsafe {
             for j in 0..func_count {
-                let key = self.code.as_ptr().add(i).add(j * 8) as *const u16;
+                let loc = self.funcmap_start + j * 8;
+                let key = self.code.as_ptr().add(loc) as *const u16;
                 let func_id = key;
                 let stack_size = key.add(1) as *const u8;
                 let param_size = stack_size.add(1);
                 let pos = param_size.add(1) as *const u16;
                 let ref_start = pos.add(1);
 
-                println!("{:<width$}", i, width = index_len);
+                println!("{:<width$}", loc, width = index_len);
                 println!("  id: {}", *func_id);
                 println!("  stack_size: {}", *stack_size);
                 println!("  param_size: {}", *param_size);
@@ -422,7 +510,7 @@ impl Bytecode {
         }
 
         for (id, _, _, pos, ref_start) in functions {
-            i = pos as usize;
+            let mut i = pos as usize;
 
             let func = self.functions.values().find(|func| func.code_id == id).unwrap();
             println!("{} ({}):", IdMap::name(func.name), id);
@@ -436,7 +524,22 @@ impl Bytecode {
                         let value = unsafe { *value };
                         println!("INT {} ({})", self.code[i + 1], value);
                     },
-                    opcode::STRING => println!("STRING &{}", self.code[i + 1]),
+                    opcode::STRING => {
+                        let (s, loc) = {
+                            let string_id = read::<u8>(&self.code, i + 1) as usize;
+                            let loc = read::<u16>(&self.code, self.string_map_start + string_id * 2) as usize;
+                            let len = read::<usize>(&self.code, loc);
+                            let bytes = get_ptr::<u8>(&self.code, loc + 8);
+
+                            let slice = unsafe { slice::from_raw_parts(bytes, len) };
+                            let raw = str::from_utf8(slice).unwrap();
+
+                            (raw, loc)
+                        };
+
+                        let escaped_string = utils::escape_string(s);
+                        println!("STRING {} (\"{}\") ({})", self.code[i + 1], escaped_string, loc);
+                    },
                     opcode::TRUE => println!("TRUE"),
                     opcode::FALSE => println!("FALSE"),
                     opcode::NULL => println!("NULL"),
