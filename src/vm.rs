@@ -68,8 +68,58 @@ impl Context {
     }
 }
 
+struct Bytecode {
+    bytecode: Vec<u8>,
+    func_count: usize,
+    string_count: usize,
+    func_map_start: usize,
+    string_map_start: usize,
+}
+
+impl Bytecode {
+    fn new(bytecode: Vec<u8>) -> Result<Self, &'static str> {
+        if !bytecode.starts_with(&[0x4c, 0x32, 0x42, 0x43]) { // "L2BC"
+            return Err("invalid header");
+        }
+
+        let mut slf = Self {
+            bytecode,
+            func_count: 0,
+            string_count: 0,
+            func_map_start: 0,
+            string_map_start: 0,
+        };
+        slf.init();
+
+        Ok(slf)
+    }
+
+    fn init(&mut self) {
+        self.func_count = self.bytecode[4] as usize;
+        self.string_count = self.bytecode[5] as usize;
+        self.func_map_start = self.read::<u16>(6) as usize;
+        self.string_map_start = self.read::<u16>(8) as usize;
+    }
+
+    fn read<T: Copy>(&self, pos: usize) -> T {
+        if pos + mem::size_of::<T>() >= self.bytecode.len() {
+            panic!("out of bounds");
+        }
+
+        unsafe { *(self.bytecode.as_ptr().add(pos) as *const T) }
+    }
+
+    fn get_ptr<T>(&self, pos: usize) -> *const T {
+        if pos + mem::size_of::<T>() >= self.bytecode.len() {
+            panic!("out of bounds");
+        }
+
+        unsafe { self.bytecode.as_ptr().add(pos) as *const T }
+    }
+}
+
 pub struct VM<'a> {
-    functions: HashMap<Id, Function>,
+    bytecode: Bytecode,
     
     // garbage collector
     gc: Gc,
@@ -86,9 +136,9 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
-    pub fn new(functions: HashMap<Id, Function>) -> Self {
+    pub fn new(bytecode: Bytecode) -> Self {
         Self {
-            functions,
+            bytecode,
             gc: Gc::new(),
             ip: 0,
             fp: 0,
@@ -132,281 +182,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn run(&'a mut self, enable_trace: bool) {
-        let main_id = IdMap::get("$main").unwrap();
-        if !self.functions.contains_key(&main_id) {
-            return;
-        }
-
-        let main_func = &self.functions[&main_id];
-        // extend stack for local variables
-        self.sp += main_func.stack_size;
-
-        let mut insts = &main_func.insts;
-
-        loop {
-            if self.ip >= insts.len() {
-                break;
-            }
-
-            let inst = &insts[self.ip];
-
-            if enable_trace {
-                Self::trace(inst);
-            }
-
-            match inst {
-                Inst::Int(n) => {
-                    push!(self, Value::Int(*n));
-                },
-                Inst::String(s) => {
-                    let size = mem::size_of::<usize>() + s.len();
-                    let mut region = self.gc.alloc::<u8>(size, &mut self.stack[..=self.sp]);
-
-                    unsafe {
-                        let new_str = region.as_mut().as_mut_ptr::<Lang2String>();
-                        (*new_str).write_string(s);
-                    }
-
-                    push!(self, Value::Pointer(Pointer::ToHeap(region)));
-                },
-                Inst::True => {
-                    push!(self, Value::Bool(true));
-                },
-                Inst::False => {
-                    push!(self, Value::Bool(false));
-                },
-                Inst::Null => {
-                    let nullptr = unsafe { NonNull::new_unchecked(ptr::null_mut()) };
-                    push!(self, Value::Pointer(Pointer::ToStack(nullptr)));
-                },
-                Inst::Load(loc) => {
-                    let loc = (self.fp as isize + *loc) as usize;
-                    if loc >= STACK_SIZE {
-                        panic!("out of bounds");
-                    }
-
-                    let value = &mut self.stack[loc];
-                    let ptr = unsafe { NonNull::new_unchecked(value as *mut _) };
-                    push!(self, Value::Ref(ptr));
-                },
-                Inst::LoadCopy(loc, size) => {
-                    let base = (self.fp as isize + *loc) as usize;
-                    if base + size >= STACK_SIZE || self.sp + size >= STACK_SIZE {
-                        panic!("out of bounds");
-                    }
-
-                    unsafe {
-                        let src = &self.stack[base] as *const _;
-                        let dst = &mut self.stack[self.sp + 1] as *mut _;
-                        ptr::copy_nonoverlapping(src, dst, *size);
-                    }
-
-                    self.sp += size;
-                },
-                Inst::Pointer => {
-                    let value_ptr = pop!(self, Value).expect_ref();
-
-                    push!(self, Value::Pointer(Pointer::ToStack(value_ptr)));
-                },
-                Inst::Dereference => {
-                    let ptr = pop!(self, Value).expect_ptr();
-                    push!(self, Value::Ref(ptr));
-                },
-                Inst::Negative => {
-                    let n = match self.stack[self.sp] {
-                        Value::Int(ref mut n) => n,
-                        _ => panic!("expected int"),
-                    };
-
-                    *n = -(*n);
-                },
-                Inst::Copy(size) => {
-                    // Copy if TOS is a reference
-                    match &self.stack[self.sp] {
-                        Value::Ref(ptr) if *size == 1 => {
-                            let value = unsafe { ptr.as_ref() };
-                            self.stack[self.sp] = value.clone();
-                        },
-                        Value::Ref(ptr) => {
-                            self.sp -= 1; // pop
-
-                            unsafe {
-                                let src = ptr.as_ptr();
-                                let dst = &mut self.stack[self.sp + 1] as *mut _;
-                                ptr::copy_nonoverlapping(src, dst, *size);
-                            }
-
-                            self.sp += size;
-                        },
-                        _ => {},
-                    };
-                },
-                Inst::Duplicate(size, count) => {
-                    let ptr = &self.stack[self.sp - (size - 1)] as *const Value;
-
-                    for i in 1..=*count {
-                        unsafe {
-                            let dest = ptr.add(i * size) as *mut _;
-                            ptr.copy_to_nonoverlapping(dest, *size);
-                        }
-                    }
-
-                    self.sp += size * count;
-                },
-                Inst::Offset => {
-                    let offset: i64 = pop!(self);
-
-                    let ptr = match &mut self.stack[self.sp] {
-                        Value::Ref(ptr) => ptr,
-                        _ => panic!("expected ref"),
-                    };
-
-                    let new_ptr = unsafe { ptr.as_ptr().add(offset as usize) };
-                    *ptr = NonNull::new(new_ptr).unwrap();
-                },
-                Inst::BinOp(binop) => {
-                    match pop!(self, Value) {
-                        Value::Int(rhs) => {
-                            let lhs: i64 = pop!(self);
-
-                            let result = match binop {
-                                BinOp::Add => Value::Int(lhs + rhs),
-                                BinOp::Sub => Value::Int(lhs - rhs),
-                                BinOp::Mul => Value::Int(lhs * rhs),
-                                BinOp::Div => Value::Int(lhs / rhs),
-                                BinOp::Mod => Value::Int(lhs % rhs),
-                                BinOp::LessThan => Value::Bool(lhs < rhs),
-                                BinOp::LessThanOrEqual => Value::Bool(lhs <= rhs),
-                                BinOp::GreaterThan => Value::Bool(lhs > rhs),
-                                BinOp::GreaterThanOrEqual => Value::Bool(lhs >= rhs),
-                                BinOp::Equal => Value::Bool(lhs == rhs),
-                                BinOp::NotEqual => Value::Bool(lhs != rhs),
-                            };
-
-                            push!(self, result);
-                        },
-                        Value::Pointer(lhs) => {
-                            let lhs = lhs.as_non_null();
-                            let rhs = pop!(self, Value).expect_ptr();
-
-                            let result = match binop {
-                                BinOp::Equal => Value::Bool(lhs == rhs),
-                                BinOp::NotEqual => Value::Bool(lhs != rhs),
-                                _ => panic!("unexpected binary operator"),
-                            };
-
-                            push!(self, result);
-                        },
-                        _ => panic!("expected int or pointer"),
-                    }
-                },
-                Inst::StoreWithSize(size) => {
-                    unsafe {
-                        let dst = pop!(self, Value).expect_ref().as_ptr();
-                        let src = &self.stack[self.sp - *size + 1] as *const _;
-                        ptr::copy_nonoverlapping(src, dst, *size);
-                    }
-
-                    self.sp -= size;
-                },
-                Inst::Alloc(size) => {
-                    let mut ptr_to_region = self.gc.alloc::<Value>(*size, &mut self.stack[..=self.sp]);
-
-                    unsafe {
-                        let dst = ptr_to_region.as_mut().as_mut_ptr::<Value>();
-                        let src = &self.stack[self.sp - *size + 1] as *const _;
-                        ptr::copy_nonoverlapping(src, dst, *size);
-                    }
-
-                    self.sp -= size;
-
-                    push!(self, Value::Pointer(Pointer::ToHeap(ptr_to_region)));
-                },
-                Inst::Call(name) => {
-                    let func = &self.functions[name];
-
-                    self.stack[self.sp + 1] = Value::Int(func.param_size as i64);
-                    self.stack[self.sp + 2] = Value::Int(self.ip as i64);
-                    self.stack[self.sp + 3] = Value::Int(self.fp as i64);
-                    self.sp += 3;
-                    self.insts_stack.push(insts);
-
-                    // Allocate stack frame
-                    self.ip = 0;
-                    self.fp = self.sp + 1;
-                    self.sp += func.stack_size;
-
-                    insts = &func.insts;
-
-                    continue;
-                },
-                Inst::CallNative(_, func, param_size) => {
-                    let mut ctx = Context {
-                        stack: unsafe { NonNull::new_unchecked(&mut self.stack[0] as *mut _) },
-                        gc: unsafe { NonNull::new_unchecked(&mut self.gc as *mut _) },
-                        current_param: 0,
-                        param_size: *param_size,
-                        sp: self.sp,
-                    };
-
-                    let return_values = func.0(&mut ctx);
-
-                    // Pop arguments
-                    self.sp -= param_size;
-
-                    let rv_size = return_values.len();
-
-                    unsafe {
-                        let src = return_values.as_ptr();
-                        let dst = &mut self.stack[self.sp + 1] as *mut _;
-                        ptr::copy_nonoverlapping(src, dst, rv_size);
-                    }
-                    
-                    self.sp += rv_size;
-                },
-                Inst::Pop => {
-                    pop!(self, Value);
-                },
-                Inst::Return => {
-                    // Restore stack frame
-                    self.sp = self.fp - 1;
-                    self.fp = pop!(self, i64) as usize;
-                    self.ip = pop!(self, i64) as usize;
-                    insts = self.insts_stack.pop().unwrap();
-
-                    // Pop arguments
-                    let param_size = pop!(self, i64) as usize;
-                    self.sp -= param_size;
-                }
-                Inst::Jump(loc) => {
-                    self.ip = *loc;
-                    continue;
-                },
-                Inst::JumpIfZero(loc) => {
-                    let cond: bool = pop!(self);
-                    if !cond {
-                        self.ip = *loc;
-                        continue;
-                    }
-                },
-                Inst::JumpIfNonZero(loc) => {
-                    let cond: bool = pop!(self);
-                    if cond {
-                        self.ip = *loc;
-                        continue;
-                    }
-                },
-            }
-
-            self.ip += 1;
-        }
-
-        assert!(self.insts_stack.is_empty());
-        assert_eq!(self.sp, main_func.stack_size);
-        self.sp = self.fp;
-    }
-
-    fn trace(inst: &Inst) {
-        eprintln!("{}", inst);
+        unimplemented!();
     }
 }

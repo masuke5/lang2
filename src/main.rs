@@ -10,10 +10,12 @@ mod ty;
 mod sema;
 mod id;
 mod inst;
-mod vm;
+// mod vm;
+#[allow(dead_code)]
 mod value;
-mod stdlib;
+// mod stdlib;
 mod utils;
+#[allow(dead_code)]
 mod gc;
 
 use std::process::exit;
@@ -28,7 +30,7 @@ use parser::Parser;
 use ast::*;
 use sema::Analyzer;
 use id::{Id, IdMap};
-use vm::VM;
+// use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
 
@@ -89,10 +91,10 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
         exit(0);
     }
 
-    let stdlib_funcs = stdlib::functions();
+    // let stdlib_funcs = stdlib::functions();
 
     // Semantic analysis and translate to instructions
-    let analyzer = Analyzer::new(&stdlib_funcs);
+    let analyzer = Analyzer::new();
     let bytecode = analyzer.analyze(program)?;
 
     if matches.is_present("dump-insts") {
@@ -101,8 +103,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     }
 
     // Execute
-    let mut vm = VM::new(std::collections::HashMap::new());
-    vm.run(matches.is_present("trace"));
+    // let mut vm = VM::new(std::collections::HashMap::new());
+    // vm.run(matches.is_present("trace"));
 
     Ok(())
 }

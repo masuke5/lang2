@@ -1,15 +1,11 @@
-use std::fmt;
 use std::ptr;
 use std::mem;
 use std::slice;
 use std::str;
 use std::collections::HashMap;
 
-use crate::ty::Type;
 use crate::id::{Id, IdMap};
-use crate::value::Value;
 use crate::utils;
-use crate::vm::Context;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -35,23 +31,6 @@ pub struct Function {
     pub param_size: usize,
     pub pos: usize,
     pub ref_start: usize,
-    pub insts: Vec<Inst>, // TODO: remove later
-}
-
-#[derive(Clone)]
-pub struct NativeFunctionBody(pub fn(&mut Context) -> Vec<Value>);
-
-impl fmt::Debug for NativeFunctionBody {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[funcition pointer]") 
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct NativeFunction {
-    pub params: Vec<Type>,
-    pub return_ty: Type,
-    pub body: NativeFunctionBody,
 }
 
 impl Function {
@@ -63,96 +42,7 @@ impl Function {
             stack_size: 0,
             pos: 0,
             ref_start: 0,
-            insts: Vec::new(),
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub enum Inst {
-    Int(i64),
-    String(String),
-    True,
-    False,
-    Null,
-    // make a pointer from a reference
-    Pointer,
-    // dereference a pointer
-    Dereference,
-    Negative,
-    Copy(usize),
-    Offset,
-    Duplicate(usize, usize),
-    Load(isize),
-    LoadCopy(isize, usize),
-    StoreWithSize(usize),
-    BinOp(BinOp),
-    Pop,
-    Alloc(usize),
-
-    Call(Id),
-    CallNative(Id, NativeFunctionBody, usize),
-
-    Jump(usize),
-    JumpIfZero(usize),
-    JumpIfNonZero(usize),
-    Return,
-}
-
-impl fmt::Display for Inst {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Inst::Int(n) => write!(f, "int {}", n),
-            Inst::String(s) => write!(f, "string \"{}\"", utils::escape_string(s)),
-            Inst::True => write!(f, "true"),
-            Inst::False => write!(f, "false"),
-            Inst::Null => write!(f, "__null__"),
-            Inst::Load(loc) => write!(f, "load_ref {}", loc),
-            Inst::LoadCopy(loc, size) => write!(f, "load_copy {} size={}", loc, size),
-            Inst::Pointer => write!(f, "pointer"),
-            Inst::Dereference => write!(f, "deref"),
-            Inst::Negative => write!(f, "neg"),
-            Inst::Copy(size) => write!(f, "copy size={}", size),
-            Inst::Duplicate(size, count) => write!(f, "duplicate size={}, count={}", size, count),
-            Inst::Offset => write!(f, "offset"),
-            Inst::BinOp(binop) => {
-                match binop {
-                    BinOp::Add => write!(f, "add"),
-                    BinOp::Sub => write!(f, "sub"),
-                    BinOp::Mul => write!(f, "mul"),
-                    BinOp::Div => write!(f, "div"),
-                    BinOp::Mod => write!(f, "mod"),
-                    BinOp::LessThan => write!(f, "less_than"),
-                    BinOp::LessThanOrEqual => write!(f, "less_than_or_equal"),
-                    BinOp::GreaterThan => write!(f, "greater_than"),
-                    BinOp::GreaterThanOrEqual => write!(f, "greater_than_or_equal"),
-                    BinOp::Equal => write!(f, "equal"),
-                    BinOp::NotEqual => write!(f, "not_equal"),
-                }
-            },
-            Inst::StoreWithSize(size) => write!(f, "store size={}", size),
-            Inst::Alloc(size) => write!(f, "alloc size={}", size),
-            Inst::Call(name) => {
-                write!(f, "call {}", IdMap::name(*name))
-            },
-            Inst::CallNative(name, _, param_count) => {
-                write!(f, "call_native {} params={}", IdMap::name(*name), param_count)
-            },
-            Inst::Pop => write!(f, "pop"),
-            Inst::Jump(i) => write!(f, "jump {}", i),
-            Inst::JumpIfZero(i) => write!(f, "jump_if_zero {}", i),
-            Inst::JumpIfNonZero(i) => write!(f, "jump_if_non_zero {}", i),
-            Inst::Return => write!(f, "return"),
-        }
-    }
-}
-
-pub fn dump_insts(insts: &[Inst]) {
-    let index_len = format!("{}", insts.len()).len();
-
-    for (i, inst) in insts.iter().enumerate() {
-        println!("{:<width$} {}", i, inst, width = index_len);
     }
 }
 

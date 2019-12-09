@@ -34,6 +34,7 @@ impl IdMap {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get(id_str: &str) -> Option<Id> {
         let str_map = STR_MAP.read().expect("STR_MAP poisoned");
         str_map.get(id_str).copied()

@@ -6,7 +6,6 @@ use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
 use crate::inst::{Function, opcode, Bytecode};
-use crate::stdlib::NativeFuncMap;
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
@@ -143,7 +142,6 @@ impl Variable {
 
 #[derive(Debug)]
 pub struct Analyzer<'a> {
-    stdlib_funcs: &'a NativeFuncMap,
     function_headers: HashMap<Id, FunctionHeader>,
     types: HashMap<Id, Type>,
     variables: Vec<HashMap<Id, Variable>>,
@@ -152,15 +150,15 @@ pub struct Analyzer<'a> {
     return_value_id: Id,
     current_func: Id,
     next_temp_num: u32,
+    _phantom: &'a std::marker::PhantomData<Self>,
 }
 
 impl<'a> Analyzer<'a> {
-    pub fn new(stdlib_funcs: &'a NativeFuncMap) -> Self {
+    pub fn new() -> Self {
         let main_func_id = IdMap::new_id("$main");
         let return_value_id = IdMap::new_id("$rv");
 
         Self {
-            stdlib_funcs,
             function_headers: HashMap::new(),
             variables: Vec::with_capacity(5),
             types: HashMap::new(),
@@ -169,6 +167,7 @@ impl<'a> Analyzer<'a> {
             return_value_id,
             current_func: main_func_id, 
             next_temp_num: 0,
+            _phantom: &std::marker::PhantomData,
         }
     }
 
@@ -761,31 +760,24 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Call(name, args) => {
-                let name_str = IdMap::name(name);
+                let (return_ty, params, code_id) = {
+                    // Get the callee function
+                    let callee_func = match self.function_headers.get(&name) {
+                        Some(func) => func,
+                        None => {
+                            error!(self, expr.span.clone(), "undefined function");
+                            return ExprInfo::invalid(expr.span);
+                        },
+                    };
 
-                let (return_ty, params, code_id) = match self.stdlib_funcs.get(&*name_str) {
-                    Some(_) => {
-                        unimplemented!();
-                    },
-                    None => {
-                        // Get the callee function
-                        let callee_func = match self.function_headers.get(&name) {
-                            Some(func) => func,
-                            None => {
-                                error!(self, expr.span.clone(), "undefined function");
-                                return ExprInfo::invalid(expr.span);
-                            },
-                        };
+                    let return_value_size = type_size(&self.types, &callee_func.return_ty);
+                    if return_value_size > std::u8::MAX as usize {
+                        panic!("too large return value");
+                    }
 
-                        let return_value_size = type_size(&self.types, &callee_func.return_ty);
-                        if return_value_size > std::u8::MAX as usize {
-                            panic!("too large return value");
-                        }
+                    code.insert_inst(opcode::ZERO, return_value_size as u8);
 
-                        code.insert_inst(opcode::ZERO, return_value_size as u8);
-
-                        (callee_func.return_ty.clone(), callee_func.params.clone(), code.get_function(name).unwrap().code_id)
-                    },
+                    (callee_func.return_ty.clone(), callee_func.params.clone(), code.get_function(name).unwrap().code_id)
                 };
 
                 // Check parameter length
