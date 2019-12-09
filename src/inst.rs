@@ -110,7 +110,7 @@ impl_toref!(isize);
 pub struct Jump(usize);
 
 #[derive(Debug)]
-pub struct Bytecode {
+pub struct BytecodeBuilder {
     pub code: Vec<u8>,
     functions: HashMap<Id, Function>,
     refs: Vec<u64>,
@@ -121,9 +121,9 @@ pub struct Bytecode {
     strings: Vec<String>,
 }
 
-impl Bytecode {
+impl BytecodeBuilder {
     pub fn new(strings: Vec<String>) -> Self {
-        let mut slf = Self {
+        let mut slf = BytecodeBuilder {
             code: vec![
                 0x4c, 0x32, 0x42, 0x43, // "L2BC"
                 0, // the number of function
