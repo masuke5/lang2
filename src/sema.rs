@@ -6,7 +6,7 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::inst::{Function, opcode, BytecodeBuilder, Bytecode};
+use crate::bytecode::{Function, opcode, BytecodeBuilder, Bytecode};
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {

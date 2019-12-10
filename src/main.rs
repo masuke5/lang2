@@ -9,7 +9,7 @@ mod parser;
 mod ty;
 mod sema;
 mod id;
-mod inst;
+mod bytecode;
 // mod vm;
 #[allow(dead_code)]
 mod value;
