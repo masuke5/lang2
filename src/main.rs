@@ -1,4 +1,4 @@
-#![feature(box_patterns, slice_concat_trait, drain_filter)]
+#![feature(box_patterns, slice_concat_trait, drain_filter, seek_convenience)]
 
 mod span;
 mod error;
@@ -20,7 +20,7 @@ mod gc;
 
 use std::process::exit;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Cursor};
 use std::borrow::Cow;
 
 use lexer::Lexer;
@@ -93,16 +93,17 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // let stdlib_funcs = stdlib::functions();
 
-    // Semantic analysis and translate to instructions
+    // Analyze semantics and translate to a bytecode
     let analyzer = Analyzer::new();
-    let bytecode = analyzer.analyze(program)?;
-
+    let bytecode: Vec<u8> = Vec::new();
+    let bytecode = Cursor::new(bytecode);
+    let mut bytecode = analyzer.analyze(bytecode, program)?;
     if matches.is_present("dump-insts") {
         bytecode.dump();
         exit(0);
     }
 
-    // Execute
+    // Execute the bytecode
     // let mut vm = VM::new(std::collections::HashMap::new());
     // vm.run(matches.is_present("trace"));
 

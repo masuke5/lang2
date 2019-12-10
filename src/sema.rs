@@ -1,3 +1,4 @@
+use std::io::{Read, Write, Seek};
 use std::collections::HashMap;
 
 use crate::ty::Type;
@@ -5,7 +6,7 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::inst::{Function, opcode, Bytecode};
+use crate::inst::{Function, opcode, BytecodeBuilder, Bytecode};
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
@@ -197,12 +198,12 @@ impl<'a> Analyzer<'a> {
     }
 
     // Insert a copy instruction if necessary
-    fn insert_copy_inst(&self, bytecode: &mut Bytecode, ty: &Type) {
+    fn insert_copy_inst<W: Read + Write + Seek>(&self, bytecode: &mut BytecodeBuilder<W>, ty: &Type) {
         if bytecode.code.len() < 2 {
             return;
         }
 
-        match *bytecode.code.get(bytecode.code.len() - 2).unwrap() {
+        match bytecode.prev_opcode() {
             // opcode::LOAD_REF => { }, TODO: Insert LOAD_COPY
             opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET | opcode::CALL | opcode::CALL_NATIVE => {
                 let size = type_size(&self.types, ty);
@@ -231,7 +232,7 @@ impl<'a> Analyzer<'a> {
             },
             _ => {
                 let loc = current_func.stack_size as isize;
-                current_func.stack_size += new_var_size;
+                current_func.stack_size += new_var_size as u8;
                 loc
             },
         };
@@ -268,7 +269,7 @@ impl<'a> Analyzer<'a> {
     //  Tuple
     // ====================================
 
-    fn walk_tuple(&mut self, code: &mut Bytecode, exprs: Vec<Spanned<Expr>>) -> (Type, usize) {
+    fn walk_tuple<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, exprs: Vec<Spanned<Expr>>) -> (Type, usize) {
         let mut types = Vec::new();
         let mut size = 0;
 
@@ -297,7 +298,7 @@ impl<'a> Analyzer<'a> {
         (Type::Tuple(types), size)
     }
 
-    fn walk_struct(&mut self, code: &mut Bytecode, name: Id, exprs: Vec<(Spanned<Id>, Spanned<Expr>)>, span: Span) -> (Type, usize) {
+    fn walk_struct<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, name: Id, exprs: Vec<(Spanned<Id>, Spanned<Expr>)>, span: Span) -> (Type, usize) {
         let ty = match self.types.get(&name) {
             Some(ty) => ty,
             None => {
@@ -366,7 +367,7 @@ impl<'a> Analyzer<'a> {
         (Type::Named(name), size)
     }
 
-    fn walk_array(&mut self, code: &mut Bytecode, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
+    fn walk_array<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
         let init_expr = self.walk_expr(code, init_expr);
         let expr_size = type_size(&self.types, &init_expr.ty);
 
@@ -376,9 +377,9 @@ impl<'a> Analyzer<'a> {
         (Type::Array(Box::new(init_expr.ty), size), expr_size * size)
     }
 
-    fn store_comp_literal(
+    fn store_comp_literal<W: Read + Write + Seek>(
         &mut self,
-        code: &mut Bytecode,
+        code: &mut BytecodeBuilder<W>,
         id: Id,
         expr: Spanned<Expr>,
         force_create: bool,
@@ -457,7 +458,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_field(&mut self, code: &mut Bytecode, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
+    fn walk_field<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let mut expr = match expr.kind {
             Expr::Field(expr, field) => {
                 self.walk_field(code, field, *expr)?
@@ -536,7 +537,7 @@ impl<'a> Analyzer<'a> {
     // ====================================
 
     // 複数の値を返す可能性のある式はstoreしなければならない
-    fn walk_expr(&mut self, code: &mut Bytecode, expr: Spanned<Expr>) -> ExprInfo {
+    fn walk_expr<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, expr: Spanned<Expr>) -> ExprInfo {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
                 code.insert_inst_ref(opcode::INT, n);
@@ -867,7 +868,7 @@ impl<'a> Analyzer<'a> {
         ExprInfo::new(ty, expr.span)
     }
 
-    fn walk_stmt(&mut self, code: &mut Bytecode, stmt: Spanned<Stmt>) {
+    fn walk_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, stmt: Spanned<Stmt>) {
         match stmt.kind {
             Stmt::Expr(expr) => {
                 let expr = self.walk_expr(code, expr);
@@ -1021,7 +1022,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_toplevel(&mut self, code: &mut Bytecode, toplevel: Spanned<TopLevel>) {
+    fn walk_toplevel<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: Spanned<TopLevel>) {
         match toplevel.kind {
             TopLevel::Function(name, params, return_ty, stmt) => {
                 self.current_func = name;
@@ -1052,13 +1053,13 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_main_stmt(&mut self, code: &mut Bytecode, toplevel: Spanned<TopLevel>) {
+    fn walk_main_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: Spanned<TopLevel>) {
         if let TopLevel::Stmt(stmt) = toplevel.kind {
             self.walk_stmt(code, stmt);
         }
     }
 
-    fn insert_function_header(&mut self, code: &mut Bytecode, toplevel: &TopLevel) {
+    fn insert_function_header<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: &TopLevel) {
         match toplevel {
             TopLevel::Function(name, params, return_ty, _) => {
                 let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
@@ -1082,8 +1083,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    pub fn analyze(mut self, mut program: Program) -> Result<Bytecode, Vec<Error>> {
-        let mut code = Bytecode::new(program.strings);
+    pub fn analyze<W: Read + Write + Seek>(mut self, code: W, mut program: Program) -> Result<Bytecode<W>, Vec<Error>> {
+        let mut code = BytecodeBuilder::new(Bytecode::new(code), &program.strings);
 
         // Insert main function header
         let header = FunctionHeader {
@@ -1119,7 +1120,7 @@ impl<'a> Analyzer<'a> {
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(code)
+            Ok(code.build())
         }
     }
 }
