@@ -156,8 +156,10 @@ impl<W: Read + Seek> VM<W> {
         }
 
         self.current_func = 0;
-        self.ip = self.functions[0].pos;
-        self.sp = self.functions[0].stack_size as usize - 1;
+
+        let func = &self.functions[0];
+        self.ip = func.pos;
+        self.sp = func.stack_size as usize;
 
         loop {
             let [opcode, arg] = self.next_inst();
@@ -348,11 +350,10 @@ impl<W: Read + Seek> VM<W> {
                     self.fp = pop!(self, i64) as usize;
 
                     self.ip = pop!(self, i64) as u64;
+                    self.current_func = pop!(self, i64) as usize;
 
                     // Pop arguments
                     self.sp -= self.functions[self.current_func].param_size as usize;
-
-                    self.current_func = pop!(self, i64) as usize;
                 },
                 opcode::CALL_NATIVE => {
                     unimplemented!();
@@ -382,7 +383,7 @@ impl<W: Read + Seek> VM<W> {
         }
 
         self.dump_stack(self.sp);
-        assert_eq!(self.sp as u64 + 1, self.functions[0].stack_size);
+        assert_eq!(self.sp, self.functions[0].stack_size as usize);
         self.sp = self.fp;
     }
 }

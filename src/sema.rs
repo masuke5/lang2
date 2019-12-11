@@ -896,7 +896,7 @@ impl<'a> Analyzer<'a> {
                 if let Some(else_stmt) = else_stmt {
                     let jump_to_end = code.jump();
 
-                    code.insert_jump_if_false_inst(jump_to_end);
+                    code.insert_jump_if_false_inst(jump_to_else);
 
                     // Insert else-clause instructions
                     self.walk_stmt(code, *else_stmt);
