@@ -27,6 +27,7 @@ impl Pointer {
         }
     }
 
+    #[allow(dead_code)]
     pub unsafe fn expect_to_heap<T>(&self) -> *mut T {
         match self {
             Pointer::ToHeap(ptr) => {
@@ -124,6 +125,7 @@ pub struct Lang2String {
 }
 
 impl Lang2String {
+    #[allow(dead_code)]
     pub unsafe fn write_string(&mut self, s: &String) {
         self.len = s.len();
         ptr::copy_nonoverlapping(s.as_bytes().as_ptr(), self.bytes.as_mut_ptr(), s.len());

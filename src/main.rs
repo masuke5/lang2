@@ -10,8 +10,7 @@ mod ty;
 mod sema;
 mod id;
 mod bytecode;
-// mod vm;
-#[allow(dead_code)]
+mod vm;
 mod value;
 // mod stdlib;
 mod utils;
@@ -30,7 +29,7 @@ use parser::Parser;
 use ast::*;
 use sema::Analyzer;
 use id::{Id, IdMap};
-// use vm::VM;
+use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
 
@@ -104,8 +103,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     }
 
     // Execute the bytecode
-    // let mut vm = VM::new(std::collections::HashMap::new());
-    // vm.run(matches.is_present("trace"));
+    let mut vm = VM::new(bytecode);
+    vm.run(matches.is_present("trace"));
 
     Ok(())
 }

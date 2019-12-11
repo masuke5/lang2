@@ -1,12 +1,13 @@
-use std::collections::HashMap;
-use std::ptr;
 use std::ptr::NonNull;
 use std::mem;
+use std::mem::size_of;
 use std::slice;
+use std::ptr;
+use std::io::{Read, Seek};
 
-use crate::id::{Id, IdMap};
-use crate::inst::{Inst, BinOp, Function};
-use crate::value::{FromValue, Value, Pointer, Lang2String};
+use crate::bytecode;
+use crate::bytecode::{Bytecode, opcode};
+use crate::value::{FromValue, Value, Pointer};
 use crate::gc::Gc;
 
 const STACK_SIZE: usize = 10000;
@@ -35,108 +36,35 @@ macro_rules! push {
     };
 }
 
-pub struct Context {
-    stack: NonNull<Value>,
-    #[allow(dead_code)] // remove later
-    gc: NonNull<Gc>,
-    current_param: usize,
-    param_size: usize,
-    sp: usize,
+#[derive(Debug)]
+struct Function {
+    stack_size: u64,
+    param_size: u64,
+    pos: u64,
+    ref_start: u64,
 }
 
-impl Context {
-    pub fn next_param<T: FromValue>(&mut self) -> T {
-        let stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
-        let v = mem::replace(&mut stack[self.sp - self.param_size + 1 + self.current_param], Value::Unintialized);
-        self.current_param += 1;
-        FromValue::from_value(v)
-    }
-
-    pub fn next_string_ptr(&mut self) -> &mut Lang2String {
-        let stack = unsafe { slice::from_raw_parts_mut(self.stack.as_mut(), STACK_SIZE) };
-        let value = mem::replace(&mut stack[self.sp - self.param_size + 1 + self.current_param], Value::Unintialized);
-        self.current_param += 1;
-
-        unsafe {
-            let ptr = match value {
-                Value::Pointer(ptr) => ptr.expect_to_heap::<Lang2String>(),
-                _ => panic!(),
-            };
-
-            &mut *ptr
-        }
-    }
-}
-
-struct Bytecode {
-    bytecode: Vec<u8>,
-    func_count: usize,
-    string_count: usize,
-    func_map_start: usize,
-    string_map_start: usize,
-}
-
-impl Bytecode {
-    fn new(bytecode: Vec<u8>) -> Result<Self, &'static str> {
-        if !bytecode.starts_with(&[0x4c, 0x32, 0x42, 0x43]) { // "L2BC"
-            return Err("invalid header");
-        }
-
-        let mut slf = Self {
-            bytecode,
-            func_count: 0,
-            string_count: 0,
-            func_map_start: 0,
-            string_map_start: 0,
-        };
-        slf.init();
-
-        Ok(slf)
-    }
-
-    fn init(&mut self) {
-        self.func_count = self.bytecode[4] as usize;
-        self.string_count = self.bytecode[5] as usize;
-        self.func_map_start = self.read::<u16>(6) as usize;
-        self.string_map_start = self.read::<u16>(8) as usize;
-    }
-
-    fn read<T: Copy>(&self, pos: usize) -> T {
-        if pos + mem::size_of::<T>() >= self.bytecode.len() {
-            panic!("out of bounds");
-        }
-
-        unsafe { *(self.bytecode.as_ptr().add(pos) as *const T) }
-    }
-
-    fn get_ptr<T>(&self, pos: usize) -> *const T {
-        if pos + mem::size_of::<T>() >= self.bytecode.len() {
-            panic!("out of bounds");
-        }
-
-        unsafe { self.bytecode.as_ptr().add(pos) as *const T }
-    }
-}
-
-pub struct VM<'a> {
-    bytecode: Bytecode,
+pub struct VM<W: Read + Seek> {
+    bytecode: Bytecode<W>,
     
     // garbage collector
     gc: Gc,
 
     // instruction pointer
-    ip: usize,
+    ip: u64,
     // frame pointer
     fp: usize,
     // stack pointer
     sp: usize,
 
     stack: [Value; STACK_SIZE],
-    insts_stack: Vec<&'a Vec<Inst>>,
+
+    functions: Vec<Function>,
+    current_func: usize,
 }
 
-impl<'a> VM<'a> {
-    pub fn new(bytecode: Bytecode) -> Self {
+impl<W: Read + Seek> VM<W> {
+    pub fn new(bytecode: Bytecode<W>) -> Self {
         Self {
             bytecode,
             gc: Gc::new(),
@@ -144,7 +72,8 @@ impl<'a> VM<'a> {
             fp: 0,
             sp: 0,
             stack: unsafe { mem::zeroed() },
-            insts_stack: Vec::new(),
+            functions: Vec::new(),
+            current_func: 0,
         }
     }
 
@@ -172,7 +101,7 @@ impl<'a> VM<'a> {
                 break;
             }
 
-            if i == self.fp {
+            if i == self.fp as usize {
                 print!("(fp) ");
             }
 
@@ -181,7 +110,279 @@ impl<'a> VM<'a> {
         println!("-------- END DUMP ----------");
     }
 
-    pub fn run(&'a mut self, enable_trace: bool) {
-        unimplemented!();
+    fn read_functions(&mut self) {
+        let func_map_start = self.bytecode.read_u8(bytecode::POS_FUNC_MAP_START) as u64;
+        let func_count = self.bytecode.read_u8(bytecode::POS_FUNC_COUNT) as u64;
+
+        for i in 0..func_count {
+            let base = func_map_start + i * 8;
+            let stack_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE) as u64;
+            let param_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE) as u64;
+            let pos = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as u64;
+            let ref_start = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START) as u64;
+
+            self.functions.push(Function {
+                stack_size,
+                param_size,
+                pos,
+                ref_start,
+            });
+        }
+    }
+
+    fn next_inst(&mut self) -> [u8; 2] {
+        let mut buf = [0u8; 2];
+        self.bytecode.read_bytes(self.ip, &mut buf);
+
+        self.ip += 2;
+
+        buf
+    }
+
+    fn get_ref_value_i64(&mut self, ref_id: u8) -> i64 {
+        let ref_start = self.functions[self.current_func].ref_start;
+        let mut bytes = [0u8; 8];
+        self.bytecode.read_bytes(ref_start + ref_id as u64 * 8, &mut bytes);
+        i64::from_le_bytes(bytes)
+    }
+    
+    pub fn run(&mut self, enable_trace: bool) {
+        self.read_functions();
+
+        let string_map_start = self.bytecode.read_u16(bytecode::POS_STRING_MAP_START) as u64;
+
+        if self.functions.is_empty() {
+            panic!("the bytecode need an entrypoint");
+        }
+
+        self.current_func = 0;
+        self.ip = self.functions[0].pos;
+        self.sp = self.functions[0].stack_size as usize - 1;
+
+        loop {
+            let [opcode, arg] = self.next_inst();
+            if opcode == opcode::END {
+                break;
+            }
+
+            if enable_trace {
+                println!("TRACE 0x{:x}", opcode);
+            }
+
+            match opcode {
+                opcode::NOP => {},
+                opcode::ZERO => {
+                    push!(self, Value::Int(0));
+                },
+                opcode::INT => {
+                    let value = self.get_ref_value_i64(arg);
+                    push!(self, Value::Int(value));
+                },
+                opcode::STRING => {
+                    let loc = self.bytecode.read_u16(string_map_start + arg as u64 * 2) as u64;
+
+                    // Read the string length
+                    let len = self.bytecode.read_u64(loc) as usize;
+
+                    let size = len + size_of::<u64>();
+                    let mut region = self.gc.alloc::<u8>(size, &mut self.stack[..=self.sp]);
+
+                    // Read the string bytes
+                    unsafe {
+                        let bytes_ptr = region.as_mut().as_mut_ptr::<u8>().add(size_of::<u64>());
+                        let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
+                        self.bytecode.read_bytes(loc + size_of::<u64>() as u64, &mut bytes);
+                    }
+                    
+                    push!(self, Value::Pointer(Pointer::ToHeap(region)));
+                },
+                opcode::TRUE => {
+                    push!(self, Value::Bool(true));
+                },
+                opcode::FALSE => {
+                    push!(self, Value::Bool(false));
+                },
+                opcode::NULL => {
+                    let nullptr = unsafe { NonNull::new_unchecked(ptr::null_mut()) };
+                    push!(self, Value::Pointer(Pointer::ToStack(nullptr)));
+                },
+                opcode::POINTER => {
+                    let value = pop!(self, Value).expect_ref();
+                    push!(self, Value::Pointer(Pointer::ToStack(value)));
+                },
+                opcode::DEREFERENCE => {
+                    let ptr = pop!(self, Value).expect_ptr();
+                    push!(self, Value::Ref(ptr));
+                },
+                opcode::NEGATIVE => {
+                    match self.stack[self.sp] {
+                        Value::Int(ref mut n) => *n = -*n,
+                        _ => panic!("expected int"),
+                    };
+                },
+                opcode::COPY => {
+                    let size = arg as usize;
+                    if self.sp + size >= STACK_SIZE {
+                        panic!("stack overflow");
+                    }
+
+                    let value_ref = pop!(self, Value).expect_ref();
+
+                    unsafe {
+                        let value_ref = value_ref.as_ptr();
+                        let dst = &mut self.stack[self.sp + 1];
+                        ptr::copy_nonoverlapping(value_ref, dst, size);
+                    }
+
+                    self.sp += size;
+                },
+                opcode::OFFSET => {
+                    let offset: i64 = pop!(self);
+                    if offset < 0 {
+                        panic!("negative offset");
+                    }
+
+                    let ptr = match self.stack[self.sp] {
+                        Value::Ref(ref mut ptr) => ptr,
+                        _ => panic!("expected ref"),
+                    };
+
+                    let new_ptr = unsafe { ptr.as_ptr().add(offset as usize) };
+                    *ptr = NonNull::new(new_ptr).unwrap();
+                },
+                // opcode::DUPLICATE => {}
+                opcode::LOAD_REF => {
+                    let loc = (self.fp as isize + i8::from_le_bytes([arg]) as isize) as usize;
+                    if loc >= STACK_SIZE {
+                        panic!("out of bounds");
+                    }
+
+                    let value = &mut self.stack[loc];
+                    let ptr = unsafe { NonNull::new_unchecked(value as *mut _) };
+                    push!(self, Value::Ref(ptr));
+                },
+                // opcode::LOAD_COPY => {},
+                opcode::STORE => {
+                    let size = arg as usize;
+
+                    unsafe {
+                        let dst = pop!(self, Value).expect_ref().as_ptr();
+                        let src = &self.stack[self.sp - size + 1] as *const _;
+                        ptr::copy_nonoverlapping(src, dst, size);
+                    }
+
+                    self.sp -= size;
+                },
+                opcode::BINOP_ADD..=opcode::BINOP_NEQ => {
+                    match pop!(self, Value) {
+                        Value::Int(rhs) => {
+                            let lhs: i64 = pop!(self);
+
+                            let result = match opcode {
+                                opcode::BINOP_ADD => Value::Int(lhs + rhs),
+                                opcode::BINOP_SUB => Value::Int(lhs - rhs),
+                                opcode::BINOP_MUL => Value::Int(lhs * rhs),
+                                opcode::BINOP_DIV => Value::Int(lhs / rhs),
+                                opcode::BINOP_MOD => Value::Int(lhs % rhs),
+                                opcode::BINOP_LT => Value::Bool(lhs < rhs),
+                                opcode::BINOP_LE => Value::Bool(lhs <= rhs),
+                                opcode::BINOP_GT => Value::Bool(lhs > rhs),
+                                opcode::BINOP_GE => Value::Bool(lhs >= rhs),
+                                opcode::BINOP_EQ => Value::Bool(lhs == rhs),
+                                opcode::BINOP_NEQ => Value::Bool(lhs != rhs),
+                                _ => panic!("bug"),
+                            };
+
+                            push!(self, result);
+                        },
+                        Value::Pointer(lhs) => {
+                            let lhs = lhs.as_non_null();
+                            let rhs = pop!(self, Value).expect_ptr();
+
+                            let result = match opcode {
+                                opcode::BINOP_EQ => Value::Bool(lhs == rhs),
+                                opcode::BINOP_NEQ => Value::Bool(lhs != rhs),
+                                _ => panic!("unexpected binary operator"),
+                            };
+
+                            push!(self, result);
+                        },
+                        _ => panic!("expected int or pointer"),
+                    }
+                },
+                opcode::POP => {
+                    self.sp -= 1;
+                },
+                opcode::ALLOC => {
+                    let size = arg as usize;
+
+                    let mut region = self.gc.alloc::<Value>(size, &mut self.stack[..=self.sp]);
+
+                    unsafe {
+                        let dst = region.as_mut().as_mut_ptr::<Value>();
+                        let src = &self.stack[self.sp - size + 1] as *const _;
+                        ptr::copy_nonoverlapping(src, dst, size);
+                    }
+
+                    self.sp -= size;
+
+                    push!(self, Value::Pointer(Pointer::ToHeap(region)));
+                },
+                opcode::CALL => {
+                    let func = &self.functions[arg as usize];
+                    self.current_func = arg as usize;
+
+                    push!(self, Value::Int(self.current_func as i64));
+                    push!(self, Value::Int(self.ip as i64));
+                    push!(self, Value::Int(self.fp as i64));
+
+                    self.ip = func.pos;
+
+                    // Allocate stack frame
+                    self.fp = self.sp + 1;
+                    self.sp += func.stack_size as usize;
+                },
+                opcode::RETURN => {
+                    // Restore stack frame
+                    self.sp = self.fp - 1;
+                    self.fp = pop!(self, i64) as usize;
+
+                    self.ip = pop!(self, i64) as u64;
+
+                    // Pop arguments
+                    self.sp -= self.functions[self.current_func].param_size as usize;
+
+                    self.current_func = pop!(self, i64) as usize;
+                },
+                opcode::CALL_NATIVE => {
+                    unimplemented!();
+                },
+                opcode::JUMP => {
+                    let func = &self.functions[self.current_func];
+                    self.ip = func.pos + arg as u64;
+                },
+                opcode::JUMP_IF_FALSE => {
+                    let cond: bool = pop!(self);
+                    if !cond {
+                        let func = &self.functions[self.current_func];
+                        self.ip = func.pos + arg as u64;
+                    }
+                },
+                opcode::JUMP_IF_TRUE => {
+                    let cond: bool = pop!(self);
+                    if cond {
+                        let func = &self.functions[self.current_func];
+                        self.ip = func.pos + arg as u64;
+                    }
+                },
+                _ => {
+                    panic!("Unknown opcode (0x{:x})", opcode);
+                },
+            }
+        }
+
+        self.dump_stack(self.sp);
+        assert_eq!(self.sp as u64 + 1, self.functions[0].stack_size);
+        self.sp = self.fp;
     }
 }

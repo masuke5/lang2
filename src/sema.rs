@@ -205,7 +205,11 @@ impl<'a> Analyzer<'a> {
 
         match bytecode.prev_opcode() {
             // opcode::LOAD_REF => { }, TODO: Insert LOAD_COPY
-            opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET | opcode::CALL | opcode::CALL_NATIVE => {
+            opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET => {
+                let size = type_size(&self.types, ty);
+                bytecode.insert_inst(opcode::COPY, size as u8);
+            },
+            opcode::CALL | opcode::CALL_NATIVE if Self::should_store(ty) => {
                 let size = type_size(&self.types, ty);
                 bytecode.insert_inst(opcode::COPY, size as u8);
             },

@@ -34,7 +34,6 @@ impl GcRegion {
         ptr
     }
 
-    #[allow(dead_code)] // remove later
     pub fn as_ptr<T>(&self) -> *const T {
         self.data.as_ptr() as *const c_void as *const T
     }
