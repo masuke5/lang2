@@ -91,14 +91,14 @@ pub const FUNC_OFFSET_POS: u64 = 4;
 pub const FUNC_OFFSET_REF_START: u64 = 6;
 
 #[derive(Debug)]
-pub struct Bytecode<W> {
+pub struct BytecodeStream<W> {
     code: W,
     len: u64,
 }
 
-impl<W: Seek> Bytecode<W> {
+impl<W: Seek> BytecodeStream<W> {
     pub fn new(code: W) -> Self {
-        Self {
+        BytecodeStream {
             code,
             len: 0,
         }
@@ -110,7 +110,7 @@ impl<W: Seek> Bytecode<W> {
 }
 
 // FIXME: Avoid unwrap()
-impl<W: Write + Seek> Bytecode<W> {
+impl<W: Write + Seek> BytecodeStream<W> {
     pub fn push_header(&mut self) {
         if self.len > 0 {
             panic!("pushed the header already");
@@ -178,7 +178,7 @@ impl<W: Write + Seek> Bytecode<W> {
     }
 }
 
-impl<R: Read + Seek> Bytecode<R> {
+impl<R: Read + Seek> BytecodeStream<R> {
     // FIXME: Avoid panic!
     #[allow(dead_code)]
     pub fn from(mut code: R) -> Result<Self, io::Error> {
@@ -191,7 +191,7 @@ impl<R: Read + Seek> Bytecode<R> {
 
         let len = code.seek(SeekFrom::End(0)).unwrap();
 
-        Ok(Self {
+        Ok(BytecodeStream {
             code,
             len,
         })
@@ -398,7 +398,7 @@ pub struct Jump(u64);
 
 #[derive(Debug)]
 pub struct BytecodeBuilder<W: Read + Write + Seek> {
-    pub code: Bytecode<W>,
+    pub code: BytecodeStream<W>,
     functions: HashMap<Id, Function>,
     refs: Vec<u64>,
     current_func_id: Option<Id>,
@@ -409,7 +409,7 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
 }
 
 impl<W: Read + Write + Seek> BytecodeBuilder<W> {
-    pub fn new(mut code: Bytecode<W>, strings: &[String]) -> Self {
+    pub fn new(mut code: BytecodeStream<W>, strings: &[String]) -> Self {
         if code.len() > 0 {
             panic!("written bytecode already");
         }
@@ -587,7 +587,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.code.write_bytes(index, &[opcode::JUMP_IF_TRUE, (self.code.len() - func_pos) as u8]);
     }
 
-    pub fn build(self) -> Bytecode<W> {
+    pub fn build(self) -> BytecodeStream<W> {
         self.code
     }
 }

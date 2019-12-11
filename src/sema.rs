@@ -6,7 +6,7 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::bytecode::{Function, opcode, BytecodeBuilder, Bytecode};
+use crate::bytecode::{Function, opcode, BytecodeBuilder, BytecodeStream};
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
@@ -1087,8 +1087,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    pub fn analyze<W: Read + Write + Seek>(mut self, code: W, mut program: Program) -> Result<Bytecode<W>, Vec<Error>> {
-        let mut code = BytecodeBuilder::new(Bytecode::new(code), &program.strings);
+    pub fn analyze<W: Read + Write + Seek>(mut self, code: W, mut program: Program) -> Result<BytecodeStream<W>, Vec<Error>> {
+        let mut code = BytecodeBuilder::new(BytecodeStream::new(code), &program.strings);
 
         // Insert main function header
         let header = FunctionHeader {

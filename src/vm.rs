@@ -6,7 +6,7 @@ use std::ptr;
 use std::io::{Read, Seek};
 
 use crate::bytecode;
-use crate::bytecode::{Bytecode, opcode};
+use crate::bytecode::{BytecodeStream, opcode};
 use crate::value::{FromValue, Value, Pointer};
 use crate::gc::Gc;
 
@@ -45,7 +45,7 @@ struct Function {
 }
 
 pub struct VM<W: Read + Seek> {
-    bytecode: Bytecode<W>,
+    bytecode: BytecodeStream<W>,
     
     // garbage collector
     gc: Gc,
@@ -64,7 +64,7 @@ pub struct VM<W: Read + Seek> {
 }
 
 impl<W: Read + Seek> VM<W> {
-    pub fn new(bytecode: Bytecode<W>) -> Self {
+    pub fn new(bytecode: BytecodeStream<W>) -> Self {
         Self {
             bytecode,
             gc: Gc::new(),
