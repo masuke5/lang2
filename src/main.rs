@@ -29,7 +29,7 @@ use parser::Parser;
 use ast::*;
 use sema::Analyzer;
 use id::{Id, IdMap};
-use vm::VM;
+use vm::{VM, Bytecode};
 
 use clap::{Arg, App, ArgMatches};
 
@@ -103,6 +103,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     }
 
     // Execute the bytecode
+    let bytecode = Bytecode::from_stream(bytecode);
     let mut vm = VM::new(bytecode);
     vm.run(matches.is_present("trace"));
 

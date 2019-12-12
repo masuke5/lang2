@@ -213,6 +213,11 @@ impl<R: Read + Seek> BytecodeStream<R> {
         self.code.read_exact(bytes).unwrap();
     }
 
+    pub fn read_to_end(&mut self, buf: &mut Vec<u8>) {
+        self.code.seek(SeekFrom::Start(0)).unwrap();
+        self.code.read_to_end(buf).unwrap();
+    }
+
     pub fn dump(&mut self) {
         let index_len = format!("{}", self.len).len();
 
@@ -601,7 +606,7 @@ mod tests {
     fn bytecode_write() {
         let bytecode: Vec<u8> = Vec::new();
         let bytecode = Cursor::new(bytecode);
-        let mut bytecode = Bytecode::new(bytecode);
+        let mut bytecode = BytecodeStream::new(bytecode);
         bytecode.push_header();
         let base = bytecode.len();
         bytecode.push_u64(123123123123);

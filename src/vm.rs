@@ -36,22 +36,68 @@ macro_rules! push {
     };
 }
 
-#[derive(Debug)]
-struct Function {
-    stack_size: u64,
-    param_size: u64,
-    pos: u64,
-    ref_start: u64,
+macro_rules! fn_read {
+    ($ty:ty, $name:ident) => {
+        #[allow(dead_code)]
+        fn $name(&self, pos: usize) -> $ty {
+            let ptr = self.bytes.as_ptr();
+            unsafe {
+                let ptr = ptr.add(pos) as *const $ty;
+                *ptr
+            }
+        }
+    };
 }
 
-pub struct VM<W: Read + Seek> {
-    bytecode: BytecodeStream<W>,
+pub struct Bytecode {
+    bytes: Vec<u8>,
+}
+
+impl Bytecode {
+    pub fn from_stream<W: Read + Seek>(mut stream: BytecodeStream<W>) -> Self {
+        // TODO: with_capacity
+        let mut bytecode = Self { bytes: Vec::new() };
+        stream.read_to_end(&mut bytecode.bytes);
+
+        bytecode
+    }
+
+    fn_read!(u8, read_u8);
+    fn_read!(i8, read_i8);
+    fn_read!(u16, read_u16);
+    fn_read!(i16, read_i16);
+    fn_read!(u32, read_u32);
+    fn_read!(i32, read_i32);
+    fn_read!(u64, read_u64);
+    fn_read!(i64, read_i64);
+    fn_read!(u128, read_u128);
+    fn_read!(i128, read_i128);
+
+    fn read_bytes(&self, pos: usize, bytes: &mut [u8]) {
+        unsafe {
+            let src = self.bytes.as_ptr().add(pos);
+            let dst = bytes.as_mut_ptr();
+            ptr::copy_nonoverlapping(src, dst, bytes.len());
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Function {
+    stack_size: usize,
+    param_size: usize,
+    pos: usize,
+    ref_start: usize,
+}
+
+pub struct VM {
+    bytecode: Bytecode,
     
     // garbage collector
     gc: Gc,
 
     // instruction pointer
-    ip: u64,
+    ip: usize,
     // frame pointer
     fp: usize,
     // stack pointer
@@ -63,8 +109,8 @@ pub struct VM<W: Read + Seek> {
     current_func: usize,
 }
 
-impl<W: Read + Seek> VM<W> {
-    pub fn new(bytecode: BytecodeStream<W>) -> Self {
+impl VM {
+    pub fn new(bytecode: Bytecode) -> Self {
         Self {
             bytecode,
             gc: Gc::new(),
@@ -111,15 +157,15 @@ impl<W: Read + Seek> VM<W> {
     }
 
     fn read_functions(&mut self) {
-        let func_map_start = self.bytecode.read_u8(bytecode::POS_FUNC_MAP_START) as u64;
-        let func_count = self.bytecode.read_u8(bytecode::POS_FUNC_COUNT) as u64;
+        let func_map_start = self.bytecode.read_u8(bytecode::POS_FUNC_MAP_START as usize) as usize;
+        let func_count = self.bytecode.read_u8(bytecode::POS_FUNC_COUNT as usize) as usize;
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
-            let stack_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE) as u64;
-            let param_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE) as u64;
-            let pos = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as u64;
-            let ref_start = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START) as u64;
+            let stack_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE as usize) as usize;
+            let param_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE as usize) as usize;
+            let pos = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS as usize) as usize;
+            let ref_start = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START as usize) as usize;
 
             self.functions.push(Function {
                 stack_size,
@@ -142,14 +188,14 @@ impl<W: Read + Seek> VM<W> {
     fn get_ref_value_i64(&mut self, ref_id: u8) -> i64 {
         let ref_start = self.functions[self.current_func].ref_start;
         let mut bytes = [0u8; 8];
-        self.bytecode.read_bytes(ref_start + ref_id as u64 * 8, &mut bytes);
+        self.bytecode.read_bytes(ref_start + ref_id as usize * 8, &mut bytes);
         i64::from_le_bytes(bytes)
     }
     
     pub fn run(&mut self, enable_trace: bool) {
         self.read_functions();
 
-        let string_map_start = self.bytecode.read_u16(bytecode::POS_STRING_MAP_START) as u64;
+        let string_map_start = self.bytecode.read_u16(bytecode::POS_STRING_MAP_START as usize) as usize;
 
         if self.functions.is_empty() {
             panic!("the bytecode need an entrypoint");
@@ -181,7 +227,7 @@ impl<W: Read + Seek> VM<W> {
                     push!(self, Value::Int(value));
                 },
                 opcode::STRING => {
-                    let loc = self.bytecode.read_u16(string_map_start + arg as u64 * 2) as u64;
+                    let loc = self.bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 
                     // Read the string length
                     let len = self.bytecode.read_u64(loc) as usize;
@@ -193,7 +239,7 @@ impl<W: Read + Seek> VM<W> {
                     unsafe {
                         let bytes_ptr = region.as_mut().as_mut_ptr::<u8>().add(size_of::<u64>());
                         let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
-                        self.bytecode.read_bytes(loc + size_of::<u64>() as u64, &mut bytes);
+                        self.bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
                     }
                     
                     push!(self, Value::Pointer(Pointer::ToHeap(region)));
@@ -349,7 +395,7 @@ impl<W: Read + Seek> VM<W> {
                     self.sp = self.fp - 1;
                     self.fp = pop!(self, i64) as usize;
 
-                    self.ip = pop!(self, i64) as u64;
+                    self.ip = pop!(self, i64) as usize;
                     self.current_func = pop!(self, i64) as usize;
 
                     // Pop arguments
@@ -360,20 +406,20 @@ impl<W: Read + Seek> VM<W> {
                 },
                 opcode::JUMP => {
                     let func = &self.functions[self.current_func];
-                    self.ip = func.pos + arg as u64;
+                    self.ip = func.pos + arg as usize;
                 },
                 opcode::JUMP_IF_FALSE => {
                     let cond: bool = pop!(self);
                     if !cond {
                         let func = &self.functions[self.current_func];
-                        self.ip = func.pos + arg as u64;
+                        self.ip = func.pos + arg as usize;
                     }
                 },
                 opcode::JUMP_IF_TRUE => {
                     let cond: bool = pop!(self);
                     if cond {
                         let func = &self.functions[self.current_func];
-                        self.ip = func.pos + arg as u64;
+                        self.ip = func.pos + arg as usize;
                     }
                 },
                 _ => {
