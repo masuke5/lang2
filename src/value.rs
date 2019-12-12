@@ -11,54 +11,35 @@ pub trait FromValue {
 }
 
 #[derive(Debug, Clone)]
-pub enum Pointer {
-    ToStack(NonNull<Value>),
-    ToHeap(NonNull<GcRegion>),
-}
-
-impl Pointer {
-    pub fn as_non_null(&self) -> NonNull<Value> {
-        match self {
-            Pointer::ToStack(ptr) => *ptr,
-            Pointer::ToHeap(mut ptr) => {
-                let region = unsafe { ptr.as_mut() };
-                region.as_non_null()
-            },
-        }
-    }
-
-    #[allow(dead_code)]
-    pub unsafe fn expect_to_heap<T>(&self) -> *mut T {
-        match self {
-            Pointer::ToHeap(ptr) => {
-                (*ptr.as_ptr()).as_mut_ptr::<T>()
-            },
-            _ => panic!("expected to heap"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum Value {
     Unintialized,
     Int(i64),
     Bool(bool),
     Ref(NonNull<Value>),
-    Pointer(Pointer),
+    PointerToStack(NonNull<Value>),
+    PointerToHeap(NonNull<GcRegion>),
 }
 
 impl Value {
     #[allow(dead_code)]
     pub fn expect_ptr_ref(&self) -> NonNull<Value> {
         match self {
-            Value::Pointer(ptr) => ptr.as_non_null(),
+            Value::PointerToStack(ptr) => *ptr,
+            Value::PointerToHeap(mut ptr) => {
+                let region = unsafe { ptr.as_mut() };
+                region.as_non_null()
+            },
             _ => panic!("expected pointer"),
         }
     }
 
     pub fn expect_ptr(self) -> NonNull<Value> {
         match self {
-            Value::Pointer(ptr) => ptr.as_non_null(),
+            Value::PointerToStack(ptr) => ptr,
+            Value::PointerToHeap(mut ptr) => {
+                let region = unsafe { ptr.as_mut() };
+                region.as_non_null()
+            },
             _ => panic!("expected pointer"),
         }
     }
@@ -108,10 +89,6 @@ impl_from_value! {i64, "expected int",
 
 impl_from_value! {bool, "expected bool",
     Value::Bool(b) => b,
-}
-
-impl_from_value! {Pointer, "expected pointer",
-    Value::Pointer(ptr) => ptr,
 }
 
 impl_from_value! {Value, "",

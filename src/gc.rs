@@ -4,7 +4,7 @@ use std::mem;
 use std::ptr::NonNull;
 use std::ffi::c_void;
 use libc;
-use crate::value::{Value, Pointer};
+use crate::value::{Value};
 
 #[derive(Debug)]
 pub struct GcRegion {
@@ -94,7 +94,7 @@ impl Gc {
     fn mark(&mut self, stack: &mut [Value]) {
         fn mark(value: &mut Value) {
             match value {
-                Value::Pointer(Pointer::ToHeap(ptr)) => {
+                Value::PointerToHeap(ptr) => {
                     let region = unsafe { ptr.as_mut() };
                     region.is_marked = true;
 
@@ -185,16 +185,16 @@ mod tests {
         let region1 = gc.alloc::<Value>(2, &mut []);
         write(region1, &[Value::Int(1), Value::Int(2)]);
 
-        let region2 = gc.alloc::<Value>(2, &mut [Value::Pointer(Pointer::ToHeap(region1))]);
-        write(region2, &[Value::Int(3), Value::Pointer(Pointer::ToHeap(region1))]);
+        let region2 = gc.alloc::<Value>(2, &mut [Value::PointerToHeap(region1)]);
+        write(region2, &[Value::Int(3), Value::PointerToHeap(region1)]);
 
-        let region3 = gc.alloc::<Value>(1, &mut [Value::Pointer(Pointer::ToHeap(region1)), Value::Pointer(Pointer::ToHeap(region2))]);
+        let region3 = gc.alloc::<Value>(1, &mut [Value::PointerToHeap(region1), Value::PointerToHeap(region2)]);
         write(region3, &[Value::Int(190419041)]);
 
         let mut stack = vec![
             Value::Int(5),
             Value::Int(6),
-            Value::Pointer(Pointer::ToHeap(region2)),
+            Value::PointerToHeap(region2),
         ];
 
         gc.gc(&mut stack);

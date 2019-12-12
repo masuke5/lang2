@@ -7,7 +7,7 @@ use std::io::{Read, Seek};
 
 use crate::bytecode;
 use crate::bytecode::{BytecodeStream, opcode};
-use crate::value::{FromValue, Value, Pointer};
+use crate::value::{FromValue, Value};
 use crate::gc::Gc;
 
 const STACK_SIZE: usize = 10000;
@@ -134,7 +134,8 @@ impl VM {
                 let value = unsafe { ptr.as_ref() };
                 Self::dump_value(value, depth + 1);
             },
-            Value::Pointer(ptr) => println!("ptr {:p}", ptr.as_non_null()),
+            Value::PointerToStack(ptr) => println!("ptr {:p}", ptr.as_ptr()),
+            Value::PointerToHeap(ptr) => unsafe { println!("ptr {:p}", ptr.as_ref().as_ptr::<Value>()) },
             Value::Unintialized => println!("uninitialized"),
         }
     }
@@ -242,7 +243,7 @@ impl VM {
                         self.bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
                     }
                     
-                    push!(self, Value::Pointer(Pointer::ToHeap(region)));
+                    push!(self, Value::PointerToHeap(region));
                 },
                 opcode::TRUE => {
                     push!(self, Value::Bool(true));
@@ -252,11 +253,11 @@ impl VM {
                 },
                 opcode::NULL => {
                     let nullptr = unsafe { NonNull::new_unchecked(ptr::null_mut()) };
-                    push!(self, Value::Pointer(Pointer::ToStack(nullptr)));
+                    push!(self, Value::PointerToStack(nullptr));
                 },
                 opcode::POINTER => {
                     let value = pop!(self, Value).expect_ref();
-                    push!(self, Value::Pointer(Pointer::ToStack(value)));
+                    push!(self, Value::PointerToStack(value));
                 },
                 opcode::DEREFERENCE => {
                     let ptr = pop!(self, Value).expect_ptr();
@@ -343,8 +344,8 @@ impl VM {
 
                             push!(self, result);
                         },
-                        Value::Pointer(lhs) => {
-                            let lhs = lhs.as_non_null();
+                        lhs => {
+                            let lhs = lhs.expect_ptr();
                             let rhs = pop!(self, Value).expect_ptr();
 
                             let result = match opcode {
@@ -355,7 +356,6 @@ impl VM {
 
                             push!(self, result);
                         },
-                        _ => panic!("expected int or pointer"),
                     }
                 },
                 opcode::POP => {
@@ -374,7 +374,7 @@ impl VM {
 
                     self.sp -= size;
 
-                    push!(self, Value::Pointer(Pointer::ToHeap(region)));
+                    push!(self, Value::PointerToHeap(region));
                 },
                 opcode::CALL => {
                     let func = &self.functions[arg as usize];
