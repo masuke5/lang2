@@ -1,4 +1,5 @@
 use std::mem;
+use std::ptr;
 use std::str;
 use std::collections::HashMap;
 use std::io;
@@ -48,6 +49,205 @@ pub mod opcode {
     pub const END: u8 = 0x23;
 }
 
+pub const HEADER: [u8; 4] = *b"L2BC";
+pub const POS_FUNC_COUNT: u64 = 4;
+pub const POS_STRING_COUNT: u64 = 5;
+pub const POS_FUNC_MAP_START: u64 = 6;
+pub const POS_STRING_MAP_START: u64 = 8;
+
+pub const FUNC_OFFSET_STACK_SIZE: u64 = 2;
+pub const FUNC_OFFSET_PARAM_SIZE: u64 = 3;
+pub const FUNC_OFFSET_POS: u64 = 4;
+pub const FUNC_OFFSET_REF_START: u64 = 6;
+
+macro_rules! bfn_read {
+    ($ty:ty, $name:ident) => {
+        #[allow(dead_code)]
+        pub fn $name(&self, pos: usize) -> $ty {
+            let ptr = self.bytes.as_ptr();
+            unsafe {
+                let ptr = ptr.add(pos) as *const $ty;
+                *ptr
+            }
+        }
+    };
+}
+
+pub struct Bytecode {
+    bytes: Vec<u8>,
+}
+
+impl Bytecode {
+    pub fn from_stream<W: Read + Seek>(mut stream: BytecodeStream<W>) -> Self {
+        // TODO: with_capacity
+        let mut bytecode = Self { bytes: Vec::new() };
+        stream.read_to_end(&mut bytecode.bytes);
+
+        bytecode
+    }
+
+    bfn_read!(u8, read_u8);
+    bfn_read!(i8, read_i8);
+    bfn_read!(u16, read_u16);
+    bfn_read!(i16, read_i16);
+    bfn_read!(u32, read_u32);
+    bfn_read!(i32, read_i32);
+    bfn_read!(u64, read_u64);
+    bfn_read!(i64, read_i64);
+    bfn_read!(u128, read_u128);
+    bfn_read!(i128, read_i128);
+
+    pub fn read_bytes(&self, pos: usize, bytes: &mut [u8]) {
+        unsafe {
+            let src = self.bytes.as_ptr().add(pos);
+            let dst = bytes.as_mut_ptr();
+            ptr::copy_nonoverlapping(src, dst, bytes.len());
+        }
+    }
+
+    pub fn dump_inst(&self, opcode: u8, arg: u8, pos: usize, ref_start: usize, string_map_start: usize) {
+        match opcode {
+            opcode::NOP => println!("NOP"),
+            opcode::INT => {
+                let value = self.read_i64(ref_start + arg as usize * 8);
+                println!("INT {} ({})", arg, value);
+            },
+            opcode::STRING => {
+                let string_id = arg as usize;
+                // Read string location from string map
+                let loc = self.read_u16(string_map_start + string_id * 2) as usize;
+                // Read string length
+                let len = self.read_u64(loc) as usize;
+
+                // Read string bytes
+                let mut buf = Vec::with_capacity(len);
+                buf.resize(len, 0);
+                self.read_bytes(loc + 8, &mut buf[..]);
+
+                // Convert to string
+                let raw = str::from_utf8(&buf).unwrap();
+
+                let escaped_string = utils::escape_string(&raw);
+                println!("STRING {} (\"{}\") ({})", string_id, escaped_string, loc);
+            },
+            opcode::TRUE => println!("TRUE"),
+            opcode::FALSE => println!("FALSE"),
+            opcode::NULL => println!("NULL"),
+            opcode::POINTER => println!("POINTER"),
+            opcode::DEREFERENCE => println!("DEREFERENCE"),
+            opcode::NEGATIVE => println!("NEGATIVE"),
+            opcode::COPY => println!("COPY size={}", arg),
+            opcode::OFFSET => println!("OFFSET"),
+            opcode::DUPLICATE => println!("DUPLICATE"),
+            opcode::LOAD_REF => println!("LOAD_REF {}", i8::from_le_bytes([arg])),
+            opcode::LOAD_COPY => {
+                let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
+                let size = arg & 0b00000111;
+                println!("LOAD_COPY {} size={}", loc, size);
+            },
+            opcode::STORE => println!("STORE size={}", arg),
+            opcode::BINOP_ADD => println!("BINOP_ADD"),
+            opcode::BINOP_SUB => println!("BINOP_SUB"),
+            opcode::BINOP_MUL => println!("BINOP_MUL"),
+            opcode::BINOP_DIV => println!("BINOP_DIV"),
+            opcode::BINOP_MOD => println!("BINOP_MOD"),
+            opcode::BINOP_LT => println!("BINOP_LT"),
+            opcode::BINOP_LE => println!("BINOP_LE"),
+            opcode::BINOP_GT => println!("BINOP_GT"),
+            opcode::BINOP_GE => println!("BINOP_GE"),
+            opcode::BINOP_EQ => println!("BINOP_EQ"),
+            opcode::BINOP_NEQ => println!("BINOP_NEQ"),
+            opcode::POP => println!("POP"),
+            opcode::ALLOC => println!("ALLOC size={}", arg),
+            opcode::CALL => println!("CALL {}", arg),
+            opcode::CALL_NATIVE => println!("CALL_NATIVE unimplemented"),
+            opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
+                let opcode = match opcode {
+                    opcode::JUMP => "JUMP",
+                    opcode::JUMP_IF_FALSE => "JUMP_IF_FALSE",
+                    opcode::JUMP_IF_TRUE => "JUMP_IF_TRUE",
+                    _ => unreachable!(),
+                };
+
+                println!("{} {} ({})", opcode, arg, pos + arg as usize);
+            },
+            opcode::RETURN => println!("RETURN"),
+            opcode::ZERO => println!("ZERO count={}", arg),
+            _ => println!("UNKNOWN (0x{:x})", opcode),
+        };
+    }
+
+    pub fn dump(&self) {
+        let index_len = format!("{}", self.bytes.len()).len();
+
+        // String map
+        let string_map_start = self.read_u16(POS_STRING_MAP_START as usize) as usize;
+        let string_count = self.read_u8(POS_STRING_COUNT as usize) as usize;
+
+        let count_len = format!("{}", string_count).len();
+        for i in 0..string_count {
+            let loc = self.read_u16(string_map_start + i * 2) as usize;
+            print!("{:<width$}  ", loc, width = index_len);
+
+            // Read the string length
+            let len = self.read_u64(loc) as usize;
+
+            // Read the string bytes
+            let mut buf = Vec::with_capacity(len);
+            buf.resize(len, 0);
+            self.read_bytes(loc + 8, &mut buf[..]);
+
+            let raw = str::from_utf8(&buf).unwrap();
+
+            println!("{:<width$} \"{}\"", i, utils::escape_string(raw), width = count_len);
+        }
+
+        // Function map
+        let func_map_start = self.read_u16(POS_FUNC_MAP_START as usize) as usize;
+        let func_count = self.read_u8(POS_FUNC_COUNT as usize) as usize;
+
+        type Func = (u16, u8, u8, usize, usize); // id, stack_size, param_size, pos, ref_start
+        let mut functions: Vec<Func> = Vec::new();
+
+        for j in 0..func_count {
+            let loc = func_map_start + j * 8;
+            let func_id = self.read_u16(loc);
+            let stack_size = self.read_u8(loc + FUNC_OFFSET_STACK_SIZE as usize);
+            let param_size = self.read_u8(loc + FUNC_OFFSET_PARAM_SIZE as usize);
+            let pos = self.read_u16(loc + FUNC_OFFSET_POS as usize) as usize;
+            let ref_start = self.read_u16(loc + FUNC_OFFSET_REF_START as usize) as usize;
+
+            println!("{:<width$}", loc, width = index_len);
+            println!("  id: {}", func_id);
+            println!("  stack_size: {}", stack_size);
+            println!("  param_size: {}", param_size);
+            println!("  pos: {}", pos);
+            println!("  ref_start: {}", ref_start);
+
+            functions.push((func_id, stack_size, param_size, pos, ref_start));
+        }
+
+        for (id, _, _, pos, ref_start) in functions {
+            println!("FUNC {}:", id);
+
+            let mut inst = [0u8; 2];
+            let mut i = 0;
+
+            // Load first instruction
+            self.read_bytes(pos + i * 2, &mut inst);
+
+            while inst[0] != opcode::END {
+                print!("{:<width$}  ", pos + i * 2, width = index_len);
+
+                self.dump_inst(inst[0], inst[1], pos, ref_start, string_map_start);
+
+                i += 1;
+                self.read_bytes(pos + i * 2, &mut inst);
+            }
+        }
+    }
+}
+
 // FIXME: Avoid unwrap()
 macro_rules! fn_write {
     ($ty:ty, $write:ident, $push:ident) => {
@@ -78,17 +278,6 @@ macro_rules! fn_read {
         }
     };
 }
-
-pub const HEADER: [u8; 4] = *b"L2BC";
-pub const POS_FUNC_COUNT: u64 = 4;
-pub const POS_STRING_COUNT: u64 = 5;
-pub const POS_FUNC_MAP_START: u64 = 6;
-pub const POS_STRING_MAP_START: u64 = 8;
-
-pub const FUNC_OFFSET_STACK_SIZE: u64 = 2;
-pub const FUNC_OFFSET_PARAM_SIZE: u64 = 3;
-pub const FUNC_OFFSET_POS: u64 = 4;
-pub const FUNC_OFFSET_REF_START: u64 = 6;
 
 #[derive(Debug)]
 pub struct BytecodeStream<W> {
@@ -208,154 +397,9 @@ impl<R: Read + Seek> BytecodeStream<R> {
     fn_read!(i128, read_i128);
     fn_read!(u128, read_u128);
 
-    pub fn read_bytes(&mut self, pos: u64, bytes: &mut [u8]) {
-        self.code.seek(SeekFrom::Start(pos)).unwrap();
-        self.code.read_exact(bytes).unwrap();
-    }
-
     pub fn read_to_end(&mut self, buf: &mut Vec<u8>) {
         self.code.seek(SeekFrom::Start(0)).unwrap();
         self.code.read_to_end(buf).unwrap();
-    }
-
-    pub fn dump(&mut self) {
-        let index_len = format!("{}", self.len).len();
-
-        // String map
-        let string_map_start = self.read_u16(POS_STRING_MAP_START) as u64;
-        let string_count = self.read_u8(POS_STRING_COUNT) as u64;
-
-        let count_len = format!("{}", string_count).len();
-        for i in 0..string_count {
-            let loc = self.read_u16(string_map_start + i * 2) as u64;
-            print!("{:<width$}  ", loc, width = index_len);
-
-            // Read the string length
-            let len = self.read_u64(loc) as usize;
-
-            // Read the string bytes
-            let mut buf = Vec::with_capacity(len);
-            buf.resize(len, 0);
-            self.read_bytes(loc + 8, &mut buf[..]);
-
-            let raw = str::from_utf8(&buf).unwrap();
-
-            println!("{:<width$} \"{}\"", i, utils::escape_string(raw), width = count_len);
-        }
-
-        // Function map
-        let func_map_start = self.read_u16(POS_FUNC_MAP_START) as u64;
-        let func_count = self.read_u8(POS_FUNC_COUNT) as u64;
-
-        type Func = (u16, u8, u8, u64, u64); // id, stack_size, param_size, pos, ref_start
-        let mut functions: Vec<Func> = Vec::new();
-
-        for j in 0..func_count {
-            let loc = func_map_start + j * 8;
-            let func_id = self.read_u16(loc);
-            let stack_size = self.read_u8(loc + FUNC_OFFSET_STACK_SIZE);
-            let param_size = self.read_u8(loc + FUNC_OFFSET_PARAM_SIZE);
-            let pos = self.read_u16(loc + FUNC_OFFSET_POS) as u64;
-            let ref_start = self.read_u16(loc + FUNC_OFFSET_REF_START) as u64;
-
-            println!("{:<width$}", loc, width = index_len);
-            println!("  id: {}", func_id);
-            println!("  stack_size: {}", stack_size);
-            println!("  param_size: {}", param_size);
-            println!("  pos: {}", pos);
-            println!("  ref_start: {}", ref_start);
-
-            functions.push((func_id, stack_size, param_size, pos, ref_start));
-        }
-
-        for (id, _, _, pos, ref_start) in functions {
-            println!("FUNC {}:", id);
-
-            let mut inst = [0u8; 2];
-            let mut i = 0;
-
-            // Load first instruction
-            self.read_bytes(pos + i * 2, &mut inst);
-
-            while inst[0] != opcode::END {
-                let opcode = inst[0];
-                let arg = inst[1];
-
-                print!("{:<width$}  ", pos + i * 2, width = index_len);
-                match opcode {
-                    opcode::NOP => println!("NOP"),
-                    opcode::INT => {
-                        let value = self.read_i64(ref_start + arg as u64 * 8);
-                        println!("INT {} ({})", arg, value);
-                    },
-                    opcode::STRING => {
-                        let string_id = arg as u64;
-                        // Read string location from string map
-                        let loc = self.read_u16(string_map_start + string_id * 2) as u64;
-                        // Read string length
-                        let len = self.read_u64(loc) as usize;
-
-                        // Read string bytes
-                        let mut buf = Vec::with_capacity(len);
-                        buf.resize(len, 0);
-                        self.read_bytes(loc + 8, &mut buf[..]);
-
-                        // Convert to string
-                        let raw = str::from_utf8(&buf).unwrap();
-
-                        let escaped_string = utils::escape_string(&raw);
-                        println!("STRING {} (\"{}\") ({})", string_id, escaped_string, loc);
-                    },
-                    opcode::TRUE => println!("TRUE"),
-                    opcode::FALSE => println!("FALSE"),
-                    opcode::NULL => println!("NULL"),
-                    opcode::POINTER => println!("POINTER"),
-                    opcode::DEREFERENCE => println!("DEREFERENCE"),
-                    opcode::NEGATIVE => println!("NEGATIVE"),
-                    opcode::COPY => println!("COPY size={}", arg),
-                    opcode::OFFSET => println!("OFFSET"),
-                    opcode::DUPLICATE => println!("DUPLICATE"),
-                    opcode::LOAD_REF => println!("LOAD_REF {}", i8::from_le_bytes([arg])),
-                    opcode::LOAD_COPY => {
-                        let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
-                        let size = arg & 0b00000111;
-                        println!("LOAD_COPY {} size={}", loc, size);
-                    },
-                    opcode::STORE => println!("STORE size={}", arg),
-                    opcode::BINOP_ADD => println!("BINOP_ADD"),
-                    opcode::BINOP_SUB => println!("BINOP_SUB"),
-                    opcode::BINOP_MUL => println!("BINOP_MUL"),
-                    opcode::BINOP_DIV => println!("BINOP_DIV"),
-                    opcode::BINOP_MOD => println!("BINOP_MOD"),
-                    opcode::BINOP_LT => println!("BINOP_LT"),
-                    opcode::BINOP_LE => println!("BINOP_LE"),
-                    opcode::BINOP_GT => println!("BINOP_GT"),
-                    opcode::BINOP_GE => println!("BINOP_GE"),
-                    opcode::BINOP_EQ => println!("BINOP_EQ"),
-                    opcode::BINOP_NEQ => println!("BINOP_NEQ"),
-                    opcode::POP => println!("POP"),
-                    opcode::ALLOC => println!("ALLOC size={}", arg),
-                    opcode::CALL => println!("CALL {}", arg),
-                    opcode::CALL_NATIVE => println!("CALL_NATIVE unimplemented"),
-                    opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
-                        let opcode = match opcode {
-                            opcode::JUMP => "JUMP",
-                            opcode::JUMP_IF_FALSE => "JUMP_IF_FALSE",
-                            opcode::JUMP_IF_TRUE => "JUMP_IF_TRUE",
-                            _ => unreachable!(),
-                        };
-
-                        println!("{} {} ({})", opcode, arg, pos + arg as u64);
-                    },
-                    opcode::RETURN => println!("RETURN"),
-                    opcode::ZERO => println!("ZERO count={}", arg),
-                    _ => println!("UNKNOWN (0x{:x})", opcode),
-                };
-
-                i += 1;
-                self.read_bytes(pos + i * 2, &mut inst);
-            }
-        }
     }
 }
 

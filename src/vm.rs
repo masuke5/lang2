@@ -3,10 +3,9 @@ use std::mem;
 use std::mem::size_of;
 use std::slice;
 use std::ptr;
-use std::io::{Read, Seek};
 
 use crate::bytecode;
-use crate::bytecode::{BytecodeStream, opcode};
+use crate::bytecode::{Bytecode, opcode};
 use crate::value::{FromValue, Value};
 use crate::gc::Gc;
 
@@ -36,51 +35,6 @@ macro_rules! push {
     };
 }
 
-macro_rules! fn_read {
-    ($ty:ty, $name:ident) => {
-        #[allow(dead_code)]
-        fn $name(&self, pos: usize) -> $ty {
-            let ptr = self.bytes.as_ptr();
-            unsafe {
-                let ptr = ptr.add(pos) as *const $ty;
-                *ptr
-            }
-        }
-    };
-}
-
-pub struct Bytecode {
-    bytes: Vec<u8>,
-}
-
-impl Bytecode {
-    pub fn from_stream<W: Read + Seek>(mut stream: BytecodeStream<W>) -> Self {
-        // TODO: with_capacity
-        let mut bytecode = Self { bytes: Vec::new() };
-        stream.read_to_end(&mut bytecode.bytes);
-
-        bytecode
-    }
-
-    fn_read!(u8, read_u8);
-    fn_read!(i8, read_i8);
-    fn_read!(u16, read_u16);
-    fn_read!(i16, read_i16);
-    fn_read!(u32, read_u32);
-    fn_read!(i32, read_i32);
-    fn_read!(u64, read_u64);
-    fn_read!(i64, read_i64);
-    fn_read!(u128, read_u128);
-    fn_read!(i128, read_i128);
-
-    fn read_bytes(&self, pos: usize, bytes: &mut [u8]) {
-        unsafe {
-            let src = self.bytes.as_ptr().add(pos);
-            let dst = bytes.as_mut_ptr();
-            ptr::copy_nonoverlapping(src, dst, bytes.len());
-        }
-    }
-}
 
 #[derive(Debug)]
 struct Function {

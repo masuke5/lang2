@@ -29,7 +29,8 @@ use parser::Parser;
 use ast::*;
 use sema::Analyzer;
 use id::{Id, IdMap};
-use vm::{VM, Bytecode};
+use bytecode::Bytecode;
+use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
 
@@ -93,17 +94,20 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     // let stdlib_funcs = stdlib::functions();
 
     // Analyze semantics and translate to a bytecode
-    let analyzer = Analyzer::new();
     let bytecode: Vec<u8> = Vec::new();
     let bytecode = Cursor::new(bytecode);
-    let mut bytecode = analyzer.analyze(bytecode, program)?;
+
+    let analyzer = Analyzer::new();
+    let bytecode = analyzer.analyze(bytecode, program)?;
+
+    let bytecode = Bytecode::from_stream(bytecode);
+
     if matches.is_present("dump-insts") {
         bytecode.dump();
         exit(0);
     }
 
     // Execute the bytecode
-    let bytecode = Bytecode::from_stream(bytecode);
     let mut vm = VM::new(bytecode);
     vm.run(matches.is_present("trace"));
 
