@@ -109,7 +109,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // Execute the bytecode
     let mut vm = VM::new(bytecode);
-    vm.run(matches.is_present("trace"));
+    vm.run(matches.is_present("trace"), matches.is_present("measure"));
 
     Ok(())
 }
@@ -157,6 +157,9 @@ fn main() {
         .arg(Arg::with_name("trace")
              .long("trace")
              .help("Traces instructions"))
+        .arg(Arg::with_name("measure")
+             .long("measure")
+             .help("Measures the performance"))
         .get_matches();
 
     let (file, input) = match get_input(&matches) {

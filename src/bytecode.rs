@@ -49,6 +49,49 @@ pub mod opcode {
     pub const END: u8 = 0x23;
 }
 
+#[inline]
+pub fn opcode_name(opcode: u8) -> &'static str {
+    match opcode {
+        opcode::NOP => "NOP",
+        opcode::INT => "INT",
+        opcode::STRING => "STRING",
+        opcode::TRUE => "TRUE",
+        opcode::FALSE => "FALSE",
+        opcode::NULL => "NULL",
+        opcode::POINTER => "POINTER",
+        opcode::DEREFERENCE => "DEREFERENCE",
+        opcode::NEGATIVE => "NEGATIVE",
+        opcode::COPY => "COPY",
+        opcode::OFFSET => "OFFSET",
+        opcode::DUPLICATE => "DUPLICATE",
+        opcode::LOAD_REF => "LOAD_REF",
+        opcode::LOAD_COPY => "LOAD_COPY",
+        opcode::STORE => "STORE",
+        opcode::BINOP_ADD => "BINOP_ADD",
+        opcode::BINOP_SUB => "BINOP_SUB",
+        opcode::BINOP_MUL => "BINOP_MUL",
+        opcode::BINOP_DIV => "BINOP_DIV",
+        opcode::BINOP_MOD => "BINOP_MOD",
+        opcode::BINOP_LT => "BINOP_LT",
+        opcode::BINOP_LE => "BINOP_LE",
+        opcode::BINOP_GT => "BINOP_GT",
+        opcode::BINOP_GE => "BINOP_GE",
+        opcode::BINOP_EQ => "BINOP_EQ",
+        opcode::BINOP_NEQ => "BINOP_NEQ",
+        opcode::POP => "POP",
+        opcode::ALLOC => "ALLOC",
+        opcode::CALL => "CALL",
+        opcode::CALL_NATIVE => "CALL_NATIVE",
+        opcode::JUMP => "JUMP",
+        opcode::JUMP_IF_FALSE => "JUMP_IF_FALSE",
+        opcode::JUMP_IF_TRUE => "JUMP_IF_TRUE",
+        opcode::RETURN => "RETURN",
+        opcode::ZERO => "ZERO",
+        opcode::END => "END",
+        _ => "UNKNOWN",
+    }
+}
+
 pub const HEADER: [u8; 4] = *b"L2BC";
 pub const POS_FUNC_COUNT: u64 = 4;
 pub const POS_STRING_COUNT: u64 = 5;
@@ -106,11 +149,13 @@ impl Bytecode {
     }
 
     pub fn dump_inst(&self, opcode: u8, arg: u8, pos: usize, ref_start: usize, string_map_start: usize) {
+        print!("{} ", opcode_name(opcode));
+
         match opcode {
-            opcode::NOP => println!("NOP"),
+            opcode::NOP => println!(),
             opcode::INT => {
                 let value = self.read_i64(ref_start + arg as usize * 8);
-                println!("INT {} ({})", arg, value);
+                println!("{} ({})", arg, value);
             },
             opcode::STRING => {
                 let string_id = arg as usize;
@@ -128,52 +173,45 @@ impl Bytecode {
                 let raw = str::from_utf8(&buf).unwrap();
 
                 let escaped_string = utils::escape_string(&raw);
-                println!("STRING {} (\"{}\") ({})", string_id, escaped_string, loc);
+                println!("{} (\"{}\") ({})", string_id, escaped_string, loc);
             },
-            opcode::TRUE => println!("TRUE"),
-            opcode::FALSE => println!("FALSE"),
-            opcode::NULL => println!("NULL"),
-            opcode::POINTER => println!("POINTER"),
-            opcode::DEREFERENCE => println!("DEREFERENCE"),
-            opcode::NEGATIVE => println!("NEGATIVE"),
-            opcode::COPY => println!("COPY size={}", arg),
-            opcode::OFFSET => println!("OFFSET"),
-            opcode::DUPLICATE => println!("DUPLICATE"),
-            opcode::LOAD_REF => println!("LOAD_REF {}", i8::from_le_bytes([arg])),
+            opcode::TRUE => println!(),
+            opcode::FALSE => println!(),
+            opcode::NULL => println!(),
+            opcode::POINTER => println!(),
+            opcode::DEREFERENCE => println!(),
+            opcode::NEGATIVE => println!(),
+            opcode::COPY => println!("size={}", arg),
+            opcode::OFFSET => println!(),
+            opcode::DUPLICATE => println!(" unimplemented"),
+            opcode::LOAD_REF => println!("{}", i8::from_le_bytes([arg])),
             opcode::LOAD_COPY => {
                 let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
                 let size = arg & 0b00000111;
-                println!("LOAD_COPY {} size={}", loc, size);
+                println!("{} size={}", loc, size);
             },
-            opcode::STORE => println!("STORE size={}", arg),
-            opcode::BINOP_ADD => println!("BINOP_ADD"),
-            opcode::BINOP_SUB => println!("BINOP_SUB"),
-            opcode::BINOP_MUL => println!("BINOP_MUL"),
-            opcode::BINOP_DIV => println!("BINOP_DIV"),
-            opcode::BINOP_MOD => println!("BINOP_MOD"),
-            opcode::BINOP_LT => println!("BINOP_LT"),
-            opcode::BINOP_LE => println!("BINOP_LE"),
-            opcode::BINOP_GT => println!("BINOP_GT"),
-            opcode::BINOP_GE => println!("BINOP_GE"),
-            opcode::BINOP_EQ => println!("BINOP_EQ"),
-            opcode::BINOP_NEQ => println!("BINOP_NEQ"),
-            opcode::POP => println!("POP"),
-            opcode::ALLOC => println!("ALLOC size={}", arg),
-            opcode::CALL => println!("CALL {}", arg),
-            opcode::CALL_NATIVE => println!("CALL_NATIVE unimplemented"),
+            opcode::STORE => println!("size={}", arg),
+            opcode::BINOP_ADD => println!(),
+            opcode::BINOP_SUB => println!(),
+            opcode::BINOP_MUL => println!(),
+            opcode::BINOP_DIV => println!(),
+            opcode::BINOP_MOD => println!(),
+            opcode::BINOP_LT => println!(),
+            opcode::BINOP_LE => println!(),
+            opcode::BINOP_GT => println!(),
+            opcode::BINOP_GE => println!(),
+            opcode::BINOP_EQ => println!(),
+            opcode::BINOP_NEQ => println!(),
+            opcode::POP => println!(),
+            opcode::ALLOC => println!("size={}", arg),
+            opcode::CALL => println!("{}", arg),
+            opcode::CALL_NATIVE => println!(" unimplemented"),
             opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
-                let opcode = match opcode {
-                    opcode::JUMP => "JUMP",
-                    opcode::JUMP_IF_FALSE => "JUMP_IF_FALSE",
-                    opcode::JUMP_IF_TRUE => "JUMP_IF_TRUE",
-                    _ => unreachable!(),
-                };
-
-                println!("{} {} ({})", opcode, arg, pos + arg as usize);
+                println!("{} ({})", arg, pos + arg as usize);
             },
-            opcode::RETURN => println!("RETURN"),
-            opcode::ZERO => println!("ZERO count={}", arg),
-            _ => println!("UNKNOWN (0x{:x})", opcode),
+            opcode::RETURN => println!(),
+            opcode::ZERO => println!("count={}", arg),
+            _ => println!("(0x{:x})", opcode),
         };
     }
 

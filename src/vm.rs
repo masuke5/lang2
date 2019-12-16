@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::time::Instant;
 use std::ptr::NonNull;
 use std::mem;
 use std::mem::size_of;
@@ -5,7 +7,7 @@ use std::slice;
 use std::ptr;
 
 use crate::bytecode;
-use crate::bytecode::{Bytecode, opcode};
+use crate::bytecode::{Bytecode, opcode, opcode_name};
 use crate::value::{FromValue, Value};
 use crate::gc::Gc;
 
@@ -44,7 +46,64 @@ struct Function {
     ref_start: usize,
 }
 
+#[derive(Debug)]
+pub struct InstPerformance {
+    count: u32,
+    average: f32,
+    total: f32,
+}
+
+impl InstPerformance {
+    fn new() -> Self {
+        Self {
+            count: 0,
+            average: 0.0,
+            total: 0.0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Performance {
+    insts: HashMap<u8, InstPerformance>,
+    current_opcode: u8,
+    started_time: Instant,
+    total: f32,
+}
+
+impl Performance {
+    pub fn new() -> Self {
+        Performance {
+            insts: HashMap::new(),
+            current_opcode: opcode::NOP,
+            started_time: Instant::now(),
+            total: 0.0,
+        }
+    }
+
+    pub fn new_inst(&mut self, opcode: u8) {
+        self.current_opcode = opcode;
+        self.started_time = Instant::now();
+    }
+
+    pub fn end_inst(&mut self) {
+        let now = Instant::now();
+        let elapsed = now - self.started_time;
+        let elapsed = elapsed.as_nanos() as f32;
+
+        let p = self.insts.entry(self.current_opcode).or_insert(InstPerformance::new());
+        let count = p.count as f32;
+
+        p.average = 1.0 / (count + 1.0) * (count * p.average + elapsed);
+        p.count += 1;
+        p.total += elapsed;
+
+        self.total += elapsed;
+    }
+}
+
 pub struct VM {
+    performance: Performance,
     bytecode: Bytecode,
     
     // garbage collector
@@ -66,6 +125,7 @@ pub struct VM {
 impl VM {
     pub fn new(bytecode: Bytecode) -> Self {
         Self {
+            performance: Performance::new(),
             bytecode,
             gc: Gc::new(),
             ip: 0,
@@ -147,7 +207,7 @@ impl VM {
         i64::from_le_bytes(bytes)
     }
     
-    pub fn run(&mut self, enable_trace: bool) {
+    pub fn run(&mut self, enable_trace: bool, enable_measure: bool) {
         self.read_functions();
 
         let string_map_start = self.bytecode.read_u16(bytecode::POS_STRING_MAP_START as usize) as usize;
@@ -171,6 +231,10 @@ impl VM {
             if enable_trace {
                 let func = &self.functions[self.current_func];
                 self.bytecode.dump_inst(opcode, arg, func.pos, func.ref_start, string_map_start);
+            }
+
+            if enable_measure {
+                self.performance.new_inst(opcode);
             }
 
             match opcode {
@@ -397,10 +461,29 @@ impl VM {
                     panic!("Unknown opcode (0x{:x})", opcode);
                 },
             }
+
+            if enable_measure {
+                self.performance.end_inst();
+            }
         }
 
         self.dump_stack(self.sp);
         assert_eq!(self.sp, self.functions[0].stack_size as usize);
         self.sp = self.fp;
+
+        if enable_measure {
+            let total = self.performance.total;
+            // Print as CSV
+            for (opcode, p) in &self.performance.insts {
+                let average = p.average.floor();
+                eprintln!(
+                    "{},{},{},{}",
+                    opcode_name(*opcode),
+                    p.count,
+                    average,
+                    p.total / total * 100.0,
+                );
+            }
+        }
     }
 }
