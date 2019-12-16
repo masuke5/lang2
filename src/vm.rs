@@ -169,7 +169,8 @@ impl VM {
             }
 
             if enable_trace {
-                println!("TRACE 0x{:x}", opcode);
+                let func = &self.functions[self.current_func];
+                self.bytecode.dump_inst(opcode, arg, func.pos, func.ref_start, string_map_start);
             }
 
             match opcode {
