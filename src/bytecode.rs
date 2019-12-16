@@ -316,7 +316,11 @@ impl<R: Read + Seek> BytecodeStream<R> {
                     opcode::OFFSET => println!("OFFSET"),
                     opcode::DUPLICATE => println!("DUPLICATE"),
                     opcode::LOAD_REF => println!("LOAD_REF {}", i8::from_le_bytes([arg])),
-                    opcode::LOAD_COPY => println!("LOAD_COPY unimplemented"),
+                    opcode::LOAD_COPY => {
+                        let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
+                        let size = arg & 0b00000111;
+                        println!("LOAD_COPY {} size={}", loc, size);
+                    },
                     opcode::STORE => println!("STORE size={}", arg),
                     opcode::BINOP_ADD => println!("BINOP_ADD"),
                     opcode::BINOP_SUB => println!("BINOP_SUB"),
@@ -410,7 +414,7 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
     next_func_id: u16,
     funcmap_start: u16,
     string_map_start: u16,
-    prev_opcode: u8,
+    prev_inst: [u8; 2],
 }
 
 impl<W: Read + Write + Seek> BytecodeBuilder<W> {
@@ -429,7 +433,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
             next_func_id: 0,
             funcmap_start: 0,
             string_map_start: 16,
-            prev_opcode: 0,
+            prev_inst: [0; 2],
         };
         slf.write_strings(strings);
 
@@ -466,8 +470,8 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.code.write_u16(POS_FUNC_MAP_START, self.funcmap_start as u16);
     }
 
-    pub fn prev_opcode(&self) -> u8 {
-        self.prev_opcode
+    pub fn prev_inst(&self) -> [u8; 2] {
+        self.prev_inst
     }
     
     // Function
@@ -543,15 +547,20 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
     // Insert
 
     #[inline]
+    pub fn replace_last_inst_with(&mut self, opcode: u8, arg: u8) {
+        self.code.write_bytes(self.code.len() - 2, &[opcode, arg]);
+    }
+
+    #[inline]
     pub fn insert_inst_noarg(&mut self, opcode: u8) {
         self.code.push_bytes(&[opcode, 0]);
-        self.prev_opcode = opcode;
+        self.prev_inst = [opcode, 0];
     }
 
     #[inline]
     pub fn insert_inst(&mut self, opcode: u8, arg: u8) {
         self.code.push_bytes(&[opcode, arg]);
-        self.prev_opcode = opcode;
+        self.prev_inst = [opcode, arg];
     }
 
     #[inline]
@@ -559,7 +568,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         let arg = self.new_ref(arg);
         // TODO: Add support for values above u8
         self.insert_inst(opcode, arg as u8);
-        self.prev_opcode = opcode;
+        self.prev_inst = [opcode, arg as u8];
     }
 
     pub fn new_ref(&mut self, value: impl ToRef) -> usize {

@@ -203,14 +203,19 @@ impl<'a> Analyzer<'a> {
             return;
         }
 
-        match bytecode.prev_opcode() {
-            // opcode::LOAD_REF => { }, TODO: Insert LOAD_COPY
+        let size = type_size(&self.types, ty);
+        let [opcode, arg] = bytecode.prev_inst();
+        let loc = i8::from_le_bytes([arg]);
+
+        match opcode {
+            opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
+                let arg = (loc << 3) | size as i8;
+                bytecode.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
+            },
             opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET => {
-                let size = type_size(&self.types, ty);
                 bytecode.insert_inst(opcode::COPY, size as u8);
             },
             opcode::CALL | opcode::CALL_NATIVE if Self::should_store(ty) => {
-                let size = type_size(&self.types, ty);
                 bytecode.insert_inst(opcode::COPY, size as u8);
             },
             _ => {},

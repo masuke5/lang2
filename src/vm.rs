@@ -310,7 +310,23 @@ impl VM {
                     let ptr = unsafe { NonNull::new_unchecked(value as *mut _) };
                     push!(self, Value::Ref(ptr));
                 },
-                // opcode::LOAD_COPY => {},
+                opcode::LOAD_COPY => {
+                    let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
+                    let size = (arg & 0b00000111) as usize;
+
+                    let loc = (self.fp as isize + loc as isize) as usize;
+                    if loc >= STACK_SIZE {
+                        panic!("out of bounds");
+                    }
+
+                    unsafe {
+                        let src = self.stack.as_ptr().add(loc);
+                        let dst = &mut self.stack[self.sp + 1];
+                        ptr::copy_nonoverlapping(src, dst, size);
+                    }
+
+                    self.sp += size;
+                },
                 opcode::STORE => {
                     let size = arg as usize;
 
