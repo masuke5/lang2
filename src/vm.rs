@@ -228,12 +228,12 @@ impl VM {
                 break;
             }
 
-            if enable_trace {
+            if cfg!(debug_assertions) && enable_trace {
                 let func = &self.functions[self.current_func];
                 self.bytecode.dump_inst(opcode, arg, func.pos, func.ref_start, string_map_start);
             }
 
-            if enable_measure {
+            if cfg!(debug_assertions) && enable_measure {
                 self.performance.new_inst(opcode);
             }
 
@@ -462,7 +462,7 @@ impl VM {
                 },
             }
 
-            if enable_measure {
+            if cfg!(debug_assertions) && enable_measure {
                 self.performance.end_inst();
             }
         }

@@ -75,6 +75,12 @@ fn print_errors(input: &str, errors: Vec<Error>) {
 }
 
 fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>> {
+    let enable_trace = matches.is_present("trace");
+    let enable_measure = matches.is_present("measure");
+    if !cfg!(debug_assertions) && (enable_measure || enable_trace) {
+        eprintln!("warning: \"--trace\" and \"--measure\" are enabled only when the interpreter is built on debug mode");
+    }
+
     // Lex
     let lexer = Lexer::new(input, file);
     let tokens = lexer.lex()?;
@@ -109,7 +115,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // Execute the bytecode
     let mut vm = VM::new(bytecode);
-    vm.run(matches.is_present("trace"), matches.is_present("measure"));
+    vm.run(enable_trace, enable_measure);
 
     Ok(())
 }
