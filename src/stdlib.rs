@@ -1,60 +1,68 @@
 use std::collections::HashMap;
 
+use crate::id::{Id, IdMap};
 use crate::ty::Type;
-use crate::inst::{NativeFunction, NativeFunctionBody as FuncBody};
-use crate::value::Value;
-use crate::vm::Context;
+use crate::vm::VM;
+use crate::module::{Module, ModuleHeader, FunctionHeader, NativeFunctionBody as Body};
 
-pub type NativeFuncMap = HashMap<&'static str, NativeFunction>;
-
-fn printnln(ctx: &mut Context) -> Vec<Value> {
-    let n: i64 = ctx.next_param();
+fn printnln(vm: &mut VM) {
+    let n: i64 = vm.get_value(vm.arg_loc(0, 1));
 
     println!("{}", n);
-
-    vec![Value::Int(0)]
 }
 
-fn printn(ctx: &mut Context) -> Vec<Value> {
-    let n: i64 = ctx.next_param();
+fn printn(vm: &mut VM) {
+    let n: i64 = vm.get_value(vm.arg_loc(0, 1));
 
     print!("{}", n);
-
-    vec![Value::Int(0)]
 }
 
-fn print(ctx: &mut Context) -> Vec<Value> {
-    let s = ctx.next_string_ptr();
+fn print(vm: &mut VM) {
+    let s = vm.get_string(vm.arg_loc(0, 1));
 
     print!("{}", s);
-
-    vec![Value::Int(0)]
 }
 
 
-fn println(ctx: &mut Context) -> Vec<Value> {
-    let s = ctx.next_string_ptr();
+fn println(vm: &mut VM) {
+    let s = vm.get_string(vm.arg_loc(0, 1));
 
     println!("{}", s);
-
-    vec![Value::Int(0)]
 }
 
-fn func(params: Vec<Type>, return_ty: Type, body: FuncBody) -> NativeFunction {
-    NativeFunction {
+fn func(
+    funcs: &mut (&mut Vec<(usize, Body)>, &mut HashMap<Id, (u16, FunctionHeader)>),
+    name: &'static str,
+    param_size: usize,
+    params: Vec<Type>,
+    return_ty: Type,
+    body: Body
+) {
+    let id = IdMap::new_id(name);
+    let header = FunctionHeader {
         params,
         return_ty,
-        body,
-    }
+    };
+    
+    funcs.0.push((param_size, body));
+    funcs.1.insert(id, (funcs.0.len() as u16 - 1, header));
 }
 
-pub fn functions() -> NativeFuncMap {
+pub fn module() -> (Module, ModuleHeader) {
     let mut funcs = HashMap::new();
+    let mut bodies = Vec::new();
+    let mut f = (&mut bodies, &mut funcs);
 
-    funcs.insert("printn", func(vec![Type::Int], Type::Unit, FuncBody(printn)));
-    funcs.insert("printnln", func(vec![Type::Int], Type::Unit, FuncBody(printnln)));
-    funcs.insert("print", func(vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, FuncBody(print)));
-    funcs.insert("println", func(vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, FuncBody(println)));
+    func(&mut f, "printn", 1, vec![Type::Int], Type::Unit, Body(printn));
+    func(&mut f, "printnln", 1, vec![Type::Int], Type::Unit, Body(printnln));
+    func(&mut f, "print", 1, vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, Body(print));
+    func(&mut f, "println", 1, vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, Body(println));
 
-    funcs
+    let module = Module::Native(bodies);
+    let header = ModuleHeader {
+        id: IdMap::new_id("$std"),
+        functions: funcs,
+    };
+
+    (module, header)
 }

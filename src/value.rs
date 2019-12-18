@@ -1,5 +1,4 @@
-use std::str;
-use std::fmt;
+use std::str; use std::fmt;
 use std::slice;
 use std::ptr;
 use std::ptr::NonNull;

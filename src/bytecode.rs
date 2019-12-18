@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{Read, Write, Seek, SeekFrom};
 
-use crate::id::Id;
+use crate::id::{Id, IdMap};
 use crate::utils;
+use crate::module::ModuleHeader;
 
 #[allow(dead_code)]
 pub mod opcode {
@@ -45,8 +46,9 @@ pub mod opcode {
     pub const JUMP_IF_TRUE: u8 = 0x20;
     pub const RETURN: u8 = 0x21;
     pub const ZERO: u8 = 0x22;
+    pub const CALL_EXTERN: u8 = 0x23;
 
-    pub const END: u8 = 0x23;
+    pub const END: u8 = 0x24;
 }
 
 #[inline]
@@ -87,6 +89,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::JUMP_IF_TRUE => "JUMP_IF_TRUE",
         opcode::RETURN => "RETURN",
         opcode::ZERO => "ZERO",
+        opcode::CALL_EXTERN => "CALL_EXTERN",
         opcode::END => "END",
         _ => "UNKNOWN",
     }
@@ -95,8 +98,10 @@ pub fn opcode_name(opcode: u8) -> &'static str {
 pub const HEADER: [u8; 4] = *b"L2BC";
 pub const POS_FUNC_COUNT: u64 = 4;
 pub const POS_STRING_COUNT: u64 = 5;
+pub const POS_MODULE_COUNT: u64 = 13;
 pub const POS_FUNC_MAP_START: u64 = 6;
 pub const POS_STRING_MAP_START: u64 = 8;
+pub const POS_MODULE_MAP_START: u64 = 10;
 
 pub const FUNC_OFFSET_STACK_SIZE: u64 = 2;
 pub const FUNC_OFFSET_PARAM_SIZE: u64 = 3;
@@ -206,6 +211,11 @@ impl Bytecode {
             opcode::ALLOC => println!("size={}", arg),
             opcode::CALL => println!("{}", arg),
             opcode::CALL_NATIVE => println!(" unimplemented"),
+            opcode::CALL_EXTERN => {
+                let module = (arg & 0b11110000) >> 4;
+                let func = arg & 0b00001111;
+                println!("{} module={}", func, module);
+            },
             opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
                 println!("{} ({})", arg, pos + arg as usize);
             },
@@ -238,6 +248,27 @@ impl Bytecode {
             let raw = str::from_utf8(&buf).unwrap();
 
             println!("{:<width$} \"{}\"", i, utils::escape_string(raw), width = count_len);
+        }
+
+        // Module map
+        let module_map_start = self.read_u16(POS_MODULE_MAP_START as usize) as usize;
+        let module_count = self.read_u8(POS_MODULE_COUNT as usize) as usize;
+
+        for i in 0..module_count {
+            let loc = self.read_u16(module_map_start + i * 2) as usize;
+            print!("{:<width$}  ", loc, width = index_len);
+
+            // Read the string length
+            let len = self.read_u16(loc) as usize;
+
+            // Read the string bytes
+            let mut buf = Vec::with_capacity(len);
+            buf.resize(len, 0);
+            self.read_bytes(loc + 2, &mut buf[..]);
+
+            let raw = str::from_utf8(&buf).unwrap();
+
+            println!("{:<width$} import {}", i, utils::escape_string(raw), width = count_len);
         }
 
         // Function map
@@ -351,7 +382,7 @@ impl<W: Write + Seek> BytecodeStream<W> {
             0,
             0, // string_map_start (2byte)
             0,
-            0,
+            0, // the number of module
             0,
             0,
             0,
@@ -496,11 +527,12 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
     next_func_id: u16,
     funcmap_start: u16,
     string_map_start: u16,
+    module_map_start: u16,
     prev_inst: [u8; 2],
 }
 
 impl<W: Read + Write + Seek> BytecodeBuilder<W> {
-    pub fn new(mut code: BytecodeStream<W>, strings: &[String]) -> Self {
+    pub fn new(mut code: BytecodeStream<W>, strings: &[String], modules: &[&ModuleHeader]) -> Self {
         if code.len() > 0 {
             panic!("written bytecode already");
         }
@@ -515,9 +547,15 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
             next_func_id: 0,
             funcmap_start: 0,
             string_map_start: 16,
+            module_map_start: 0,
             prev_inst: [0; 2],
         };
         slf.write_strings(strings);
+        slf.write_modules(modules);
+
+        // Write function map start
+        slf.funcmap_start = slf.code.len() as u16;
+        slf.code.write_u16(POS_FUNC_MAP_START, slf.funcmap_start as u16);
 
         slf
     }
@@ -546,10 +584,33 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
 
             self.code.align(8);
         }
+    }
 
-        // Write function map start
-        self.funcmap_start = self.code.len() as u16;
-        self.code.write_u16(POS_FUNC_MAP_START, self.funcmap_start as u16);
+    fn write_modules(&mut self, modules: &[&ModuleHeader]) {
+        if modules.len() > 0b1111 {
+            panic!("too many modules");
+        }
+
+        self.code.write_u8(POS_MODULE_COUNT, modules.len() as u8);
+
+        self.code.align(8);
+
+        self.module_map_start = self.code.len() as u16;
+        self.code.write_u16(POS_MODULE_MAP_START, self.code.len() as u16);
+
+        self.code.reserve(modules.len() as u64 * 2);
+        self.code.align(8);
+
+        for (id, module) in modules.iter().enumerate() {
+            self.code.write_u16(self.module_map_start as u64 + id as u64 * 2, self.code.len() as u16);
+
+            let module_name = IdMap::name(module.id);
+
+            self.code.push_u16(module_name.len() as u16);
+            self.code.push_bytes(module_name.as_bytes());
+
+            self.code.align(8);
+        }
     }
 
     pub fn prev_inst(&self) -> [u8; 2] {

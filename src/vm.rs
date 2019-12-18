@@ -4,12 +4,14 @@ use std::ptr::NonNull;
 use std::mem;
 use std::mem::size_of;
 use std::slice;
+use std::str;
 use std::ptr;
 
 use crate::bytecode;
 use crate::bytecode::{Bytecode, opcode, opcode_name};
-use crate::value::{FromValue, Value};
+use crate::value::{FromValue, Value, Lang2String};
 use crate::gc::Gc;
+use crate::module::Module;
 
 const STACK_SIZE: usize = 10000;
 
@@ -36,7 +38,6 @@ macro_rules! push {
         $self.stack[$self.sp] = $value;
     };
 }
-
 
 #[derive(Debug)]
 struct Function {
@@ -104,7 +105,6 @@ impl Performance {
 
 pub struct VM {
     performance: Performance,
-    bytecode: Bytecode,
     
     // garbage collector
     gc: Gc,
@@ -123,10 +123,9 @@ pub struct VM {
 }
 
 impl VM {
-    pub fn new(bytecode: Bytecode) -> Self {
+    pub fn new() -> Self {
         Self {
             performance: Performance::new(),
-            bytecode,
             gc: Gc::new(),
             ip: 0,
             fp: 0,
@@ -135,6 +134,31 @@ impl VM {
             functions: Vec::new(),
             current_func: 0,
         }
+    }
+
+    pub fn arg_loc(&self, n: usize, args_size: usize) -> usize {
+        self.fp - args_size - n
+    }
+
+    pub fn get_value<V: FromValue>(&self, loc: usize) -> V {
+        let value = self.stack[loc].clone();
+        FromValue::from_value(value)
+    }
+
+    #[allow(dead_code)]
+    pub fn get_value_ref<V: FromValue>(&self, loc: usize) -> &V {
+        let value = &self.stack[loc];
+        FromValue::from_value_ref(value)
+    }
+
+    pub fn get_string(&self, loc: usize) -> &Lang2String {
+        let value = &self.stack[loc];
+        let ptr = match value {
+            Value::PointerToHeap(ptr) => ptr,
+            _ => panic!(),
+        };
+
+        unsafe { &*ptr.as_ref().as_ptr::<Lang2String>() }
     }
 
     fn dump_value(value: &Value, depth: usize) {
@@ -171,16 +195,16 @@ impl VM {
         println!("-------- END DUMP ----------");
     }
 
-    fn read_functions(&mut self) {
-        let func_map_start = self.bytecode.read_u8(bytecode::POS_FUNC_MAP_START as usize) as usize;
-        let func_count = self.bytecode.read_u8(bytecode::POS_FUNC_COUNT as usize) as usize;
+    fn read_functions(&mut self, bytecode: &Bytecode) {
+        let func_map_start = bytecode.read_u8(bytecode::POS_FUNC_MAP_START as usize) as usize;
+        let func_count = bytecode.read_u8(bytecode::POS_FUNC_COUNT as usize) as usize;
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
-            let stack_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE as usize) as usize;
-            let param_size = self.bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE as usize) as usize;
-            let pos = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS as usize) as usize;
-            let ref_start = self.bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START as usize) as usize;
+            let stack_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE as usize) as usize;
+            let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE as usize) as usize;
+            let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS as usize) as usize;
+            let ref_start = bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START as usize) as usize;
 
             self.functions.push(Function {
                 stack_size,
@@ -191,30 +215,62 @@ impl VM {
         }
     }
 
-    fn next_inst(&mut self) -> [u8; 2] {
+    fn read_modules(&mut self, bytecode: &Bytecode, all_module_id: &HashMap<String, usize>) -> Vec<usize> {
+        let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START as usize) as usize;
+        let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT as usize) as usize;
+
+        let mut modules = Vec::with_capacity(module_count);
+
+        for i in 0..module_count {
+            let loc = bytecode.read_u16(module_map_start + i * 2) as usize;
+            let len = bytecode.read_u16(loc) as usize;
+
+            let mut buf = Vec::with_capacity(len);
+            buf.resize(len, 0);
+            bytecode.read_bytes(loc + 2, &mut buf[..]);
+            let name = str::from_utf8(&buf[..]).unwrap(); // TODO: Avoid unwrap
+
+            let module_id = all_module_id[name];
+            modules.push(module_id);
+        }
+
+        modules
+    }
+
+    #[inline]
+    fn next_inst(&mut self, bytecode: &Bytecode) -> [u8; 2] {
         let mut buf = [0u8; 2];
-        self.bytecode.read_bytes(self.ip, &mut buf);
+        bytecode.read_bytes(self.ip, &mut buf);
 
         self.ip += 2;
 
         buf
     }
 
-    fn get_ref_value_i64(&mut self, ref_id: u8) -> i64 {
+    #[inline]
+    fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8) -> i64 {
         let ref_start = self.functions[self.current_func].ref_start;
         let mut bytes = [0u8; 8];
-        self.bytecode.read_bytes(ref_start + ref_id as usize * 8, &mut bytes);
+        bytecode.read_bytes(ref_start + ref_id as usize * 8, &mut bytes);
         i64::from_le_bytes(bytes)
     }
     
-    pub fn run(&mut self, enable_trace: bool, enable_measure: bool) {
-        self.read_functions();
+    pub fn run(&mut self, bytecode: Bytecode, std_module: Module, enable_trace: bool, enable_measure: bool) {
+        // Module
+        let mut all_modules = vec![std_module];
 
-        let string_map_start = self.bytecode.read_u16(bytecode::POS_STRING_MAP_START as usize) as usize;
+        let mut all_module_id = HashMap::new();
+        all_module_id.insert(String::from("$std"), 0);
 
+        let modules = self.read_modules(&bytecode, &all_module_id);
+
+        // Function
+        self.read_functions(&bytecode);
         if self.functions.is_empty() {
             panic!("the bytecode need an entrypoint");
         }
+
+        let string_map_start = bytecode.read_u16(bytecode::POS_STRING_MAP_START as usize) as usize;
 
         self.current_func = 0;
 
@@ -223,14 +279,14 @@ impl VM {
         self.sp = func.stack_size as usize;
 
         loop {
-            let [opcode, arg] = self.next_inst();
+            let [opcode, arg] = self.next_inst(&bytecode);
             if opcode == opcode::END {
                 break;
             }
 
             if cfg!(debug_assertions) && enable_trace {
                 let func = &self.functions[self.current_func];
-                self.bytecode.dump_inst(opcode, arg, func.pos, func.ref_start, string_map_start);
+                bytecode.dump_inst(opcode, arg, func.pos, func.ref_start, string_map_start);
             }
 
             if cfg!(debug_assertions) && enable_measure {
@@ -243,23 +299,30 @@ impl VM {
                     push!(self, Value::Int(0));
                 },
                 opcode::INT => {
-                    let value = self.get_ref_value_i64(arg);
+                    let value = self.get_ref_value_i64(&bytecode, arg);
                     push!(self, Value::Int(value));
                 },
                 opcode::STRING => {
-                    let loc = self.bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
+                    let loc = bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 
                     // Read the string length
-                    let len = self.bytecode.read_u64(loc) as usize;
+                    let len = bytecode.read_u64(loc) as usize;
 
                     let size = len + size_of::<u64>();
                     let mut region = self.gc.alloc::<u8>(size, &mut self.stack[..=self.sp]);
 
                     // Read the string bytes
                     unsafe {
-                        let bytes_ptr = region.as_mut().as_mut_ptr::<u8>().add(size_of::<u64>());
+                        let region = region.as_mut();
+
+                        // Write the string length
+                        let len_ptr = region.as_mut_ptr::<u64>();
+                        *len_ptr = len as u64;
+
+                        // Write the string bytes
+                        let bytes_ptr = region.as_mut_ptr::<u8>().add(size_of::<u64>());
                         let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
-                        self.bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
+                        bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
                     }
                     
                     push!(self, Value::PointerToHeap(region));
@@ -424,6 +487,28 @@ impl VM {
                     // Allocate stack frame
                     self.fp = self.sp + 1;
                     self.sp += func.stack_size as usize;
+                },
+                opcode::CALL_EXTERN => {
+                    let module_id = ((arg & 0b11110000) >> 4) as usize;
+                    let func_id = (arg & 0b00001111) as usize;
+
+                    let actual_module_id = modules[module_id];
+                    let module = &mut all_modules[actual_module_id];
+
+                    match module {
+                        Module::Normal => unimplemented!(),
+                        Module::Native(funcs) => {
+                            let (param_size, func) = &funcs[func_id];
+
+                            let fp = self.fp;
+                            self.fp = self.sp + 1;
+
+                            func.0(self);
+
+                            self.fp = fp;
+                            self.sp -= param_size;
+                        },
+                    }
                 },
                 opcode::RETURN => {
                     // Restore stack frame

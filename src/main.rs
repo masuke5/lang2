@@ -12,10 +12,10 @@ mod id;
 mod bytecode;
 mod vm;
 mod value;
-// mod stdlib;
+mod stdlib;
 mod utils;
-#[allow(dead_code)]
 mod gc;
+mod module;
 
 use std::process::exit;
 use std::fs::File;
@@ -81,6 +81,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
         eprintln!("warning: \"--trace\" and \"--measure\" are enabled only when the interpreter is built on debug mode");
     }
 
+    let (std_module, std_module_header) = stdlib::module();
+
     // Lex
     let lexer = Lexer::new(input, file);
     let tokens = lexer.lex()?;
@@ -103,7 +105,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     let bytecode: Vec<u8> = Vec::new();
     let bytecode = Cursor::new(bytecode);
 
-    let analyzer = Analyzer::new();
+    let analyzer = Analyzer::new(std_module_header);
     let bytecode = analyzer.analyze(bytecode, program)?;
 
     let bytecode = Bytecode::from_stream(bytecode);
@@ -114,8 +116,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     }
 
     // Execute the bytecode
-    let mut vm = VM::new(bytecode);
-    vm.run(enable_trace, enable_measure);
+    let mut vm = VM::new();
+    vm.run(bytecode, std_module, enable_trace, enable_measure);
 
     Ok(())
 }

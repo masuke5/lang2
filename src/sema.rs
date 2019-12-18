@@ -7,6 +7,7 @@ use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
 use crate::bytecode::{Function, opcode, BytecodeBuilder, BytecodeStream};
+use crate::module::{FunctionHeader, ModuleHeader};
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
@@ -87,12 +88,6 @@ fn type_size(types: &HashMap<Id, Type>, ty: &Type) -> usize {
 }
 
 #[derive(Debug)]
-struct FunctionHeader {
-    pub params: Vec<Type>,
-    pub return_ty: Type,
-}
-
-#[derive(Debug)]
 struct ExprInfo {
     pub ty: Type,
     pub span: Span,
@@ -151,11 +146,12 @@ pub struct Analyzer<'a> {
     return_value_id: Id,
     current_func: Id,
     next_temp_num: u32,
+    std_module: ModuleHeader,
     _phantom: &'a std::marker::PhantomData<Self>,
 }
 
 impl<'a> Analyzer<'a> {
-    pub fn new() -> Self {
+    pub fn new(std_module: ModuleHeader) -> Self {
         let main_func_id = IdMap::new_id("$main");
         let return_value_id = IdMap::new_id("$rv");
 
@@ -168,6 +164,7 @@ impl<'a> Analyzer<'a> {
             return_value_id,
             current_func: main_func_id, 
             next_temp_num: 0,
+            std_module,
             _phantom: &std::marker::PhantomData,
         }
     }
@@ -770,13 +767,17 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Call(name, args) => {
-                let (return_ty, params, code_id) = {
+                let (return_ty, params, code_id, module_id) = {
                     // Get the callee function
-                    let callee_func = match self.function_headers.get(&name) {
-                        Some(func) => func,
+                    let (callee_func, code_id, module_id) = match self.function_headers.get(&name) {
+                        Some(func) => (func, code.get_function(name).unwrap().code_id, None),
                         None => {
-                            error!(self, expr.span.clone(), "undefined function");
-                            return ExprInfo::invalid(expr.span);
+                            if let Some((id, func)) = self.std_module.find_func(name) {
+                                (func, *id, Some(0))
+                            } else {
+                                error!(self, expr.span.clone(), "undefined function");
+                                return ExprInfo::invalid(expr.span);
+                            }
                         },
                     };
 
@@ -787,7 +788,12 @@ impl<'a> Analyzer<'a> {
 
                     code.insert_inst(opcode::ZERO, return_value_size as u8);
 
-                    (callee_func.return_ty.clone(), callee_func.params.clone(), code.get_function(name).unwrap().code_id)
+                    (
+                        callee_func.return_ty.clone(),
+                        callee_func.params.clone(),
+                        code_id,
+                        module_id,
+                    )
                 };
 
                 // Check parameter length
@@ -806,8 +812,13 @@ impl<'a> Analyzer<'a> {
                     check_type(&mut self.errors, &param_ty, &arg.ty, arg.span.clone());
                 }
 
-                // TODO: Insert an instruction
-                code.insert_inst(opcode::CALL, code_id as u8);
+                if let Some(module_id) = module_id {
+                    let code_id = code_id as u8;
+                    let arg = (module_id << 4) | code_id;
+                    code.insert_inst(opcode::CALL_EXTERN, arg);
+                } else {
+                    code.insert_inst(opcode::CALL, code_id as u8);
+                }
 
                 // Store if the return value is compound data
                 if Self::should_store(&return_ty) {
@@ -1093,7 +1104,7 @@ impl<'a> Analyzer<'a> {
     }
 
     pub fn analyze<W: Read + Write + Seek>(mut self, code: W, mut program: Program) -> Result<BytecodeStream<W>, Vec<Error>> {
-        let mut code = BytecodeBuilder::new(BytecodeStream::new(code), &program.strings);
+        let mut code = BytecodeBuilder::new(BytecodeStream::new(code), &program.strings, &[&self.std_module]);
 
         // Insert main function header
         let header = FunctionHeader {
