@@ -634,36 +634,33 @@ impl<'a> Analyzer<'a> {
                 return ExprInfo::new_lvalue(var.ty.clone(), expr.span, var.is_mutable);
             },
             //   lhs
-            //   jump_if_zero B
+            //   jump_if_zero A
             //   rhs
-            //   jump_if_zero B
-            // A:
+            //   jump_if_zero A
             //   true
             //   jump END
-            // B:
+            // A:
             //   false
             // END:
             Expr::BinOp(BinOp::And, lhs, rhs) => {
-                // Jump to `B` if `lhs` is false
+                let a = code.new_label();
+                let end = code.new_label();
+
                 let lhs = self.walk_expr(code, *lhs);
                 self.insert_copy_inst(code, &lhs.ty);
-                let jump1 = code.jump();
+                code.jump_if_false_to(a);
 
-                // Jump to `B` if `rhs` is false
                 let rhs = self.walk_expr(code, *rhs);
                 self.insert_copy_inst(code, &lhs.ty);
-                let jump2 = code.jump();
+                code.jump_if_false_to(a);
 
-                // A: Push true
                 code.insert_inst_noarg(opcode::TRUE);
-                let jump_to_end = code.jump();
+                code.jump_to(end);
 
-                // B: Push false
-                code.insert_jump_if_false_inst(jump1);
-                code.insert_jump_if_false_inst(jump2);
+                code.insert_label(a);
                 code.insert_inst_noarg(opcode::FALSE);
 
-                code.insert_jump_inst(jump_to_end);
+                code.insert_label(end);
 
                 // Type check
                 match (lhs.ty, rhs.ty) {
@@ -677,36 +674,33 @@ impl<'a> Analyzer<'a> {
                 Type::Bool
             },
             //   lhs
-            //   jump_non_zero B
+            //   jump_non_zero A
             //   rhs
-            //   jump_non_zero B
-            // A:
+            //   jump_non_zero A
             //   false
             //   jump END
-            // B:
+            // A:
             //   true
             // END:
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
-                // Jump to `B` if `lhs` is true
+                let a = code.new_label();
+                let end = code.new_label();
+
                 let lhs = self.walk_expr(code, *lhs);
                 self.insert_copy_inst(code, &lhs.ty);
-                let jump1 = code.jump();
+                code.jump_if_true_to(a);
 
-                // Jump to `B` if `rhs` is true
                 let rhs = self.walk_expr(code, *rhs);
                 self.insert_copy_inst(code, &lhs.ty);
-                let jump2 = code.jump();
+                code.jump_if_true_to(a);
 
-                // A: Push false
                 code.insert_inst_noarg(opcode::FALSE);
-                let jump_to_end = code.jump();
+                code.jump_to(end);
 
-                // B: Push true
-                code.insert_jump_if_true_inst(jump1);
-                code.insert_jump_if_true_inst(jump2);
+                code.insert_label(a);
                 code.insert_inst_noarg(opcode::TRUE);
 
-                code.insert_jump_inst(jump_to_end);
+                code.insert_label(end);
 
                 // Type check
                 match (lhs.ty, rhs.ty) {
@@ -898,49 +892,62 @@ impl<'a> Analyzer<'a> {
                     code.insert_inst_noarg(opcode::POP);
                 }
             },
-            Stmt::If(cond, stmt, else_stmt) => {
+            Stmt::If(cond, stmt, None) => {
+                let end = code.new_label();
+
                 // Condition
                 let expr = self.walk_expr(code, cond);
                 self.insert_copy_inst(code, &expr.ty);
-                check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
+                code.jump_if_false_to(end);
 
-                let jump_to_else = code.jump();
+                check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
 
                 // Then-clause
                 self.walk_stmt(code, *stmt);
 
-                if let Some(else_stmt) = else_stmt {
-                    let jump_to_end = code.jump();
+                code.insert_label(end);
+            },
+            Stmt::If(cond, then_stmt, Some(else_stmt)) => {
+                let els = code.new_label();
+                let end = code.new_label();
 
-                    code.insert_jump_if_false_inst(jump_to_else);
+                // Condition
+                let expr = self.walk_expr(code, cond);
+                self.insert_copy_inst(code, &expr.ty);
+                code.jump_if_false_to(els);
 
-                    // Insert else-clause instructions
-                    self.walk_stmt(code, *else_stmt);
+                check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
 
-                    code.insert_jump_inst(jump_to_end);
-                } else {
-                    code.insert_jump_if_false_inst(jump_to_else);
-                }
+                // Then-clause
+                self.walk_stmt(code, *then_stmt);
+                code.jump_to(end);
+                
+                // Else-clause
+                code.insert_label(els);
+                self.walk_stmt(code, *else_stmt);
+
+                code.insert_label(end);
             },
             Stmt::While(cond, stmt) => {
-                let begin = code.code.len();
+                let end = code.new_label();
+                let begin = code.new_label();
+
+                code.insert_label(begin);
 
                 // Insert condition expression instruction
                 let cond = self.walk_expr(code, cond);
                 self.insert_copy_inst(code, &cond.ty);
-                check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
+                code.jump_if_false_to(end);
 
-                // Insert dummy instruction to jump to end
-                let jump_to_end = code.jump();
+                check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
 
                 // Insert body statement instruction
                 self.walk_stmt(code, *stmt);
 
                 // Jump to begin
-                code.insert_inst(opcode::JUMP, begin as u8);
+                code.jump_to(begin);
 
-                // Insert instruction to jump to end
-                code.insert_jump_if_false_inst(jump_to_end);
+                code.insert_label(end);
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
@@ -961,7 +968,6 @@ impl<'a> Analyzer<'a> {
                         let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
                         code.insert_inst(opcode::LOAD_REF, loc as u8);
                         code.insert_inst(opcode::STORE, type_size(&self.types, &expr.ty) as u8);
-                        // XXX: insts.push(Inst::Load(loc as isize));
                     }
                 }
             },

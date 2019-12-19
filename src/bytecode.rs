@@ -516,7 +516,7 @@ impl_toref!(usize);
 impl_toref!(isize);
 
 #[derive(Debug, Copy, Clone)]
-pub struct Jump(u64);
+pub struct Label(usize);
 
 #[derive(Debug)]
 pub struct BytecodeBuilder<W: Read + Write + Seek> {
@@ -529,6 +529,11 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
     string_map_start: u16,
     module_map_start: u16,
     prev_inst: [u8; 2],
+    // When function insert_label is called, the label will be pushed.
+    label_locations: Vec<Option<u64>>,
+    // Location list of JUMP, JUMP_IF_FALSE and JUMP_IF_TRUE
+    // These don't resolve jump destination.
+    jump_insts: Vec<u64>,
 }
 
 impl<W: Read + Write + Seek> BytecodeBuilder<W> {
@@ -549,6 +554,8 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
             string_map_start: 16,
             module_map_start: 0,
             prev_inst: [0; 2],
+            label_locations: Vec::new(),
+            jump_insts: Vec::new(),
         };
         slf.write_strings(strings);
         slf.write_modules(modules);
@@ -672,6 +679,23 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
             self.code.push_u64(int_ref);
         }
 
+        // Resolve jump destinations
+        for jump_inst_loc in &self.jump_insts {
+            let label = self.code.read_u8(jump_inst_loc + 1);
+
+            match self.label_locations[label as usize] {
+                Some(loc) => {
+                    let relative_loc = loc as u16 - func.pos;
+                    self.code.write_u8(jump_inst_loc + 1, relative_loc as u8);
+                },
+                None => panic!("label {} is not resolved", label),
+            }
+        }
+
+        // Reset fields about label
+        self.jump_insts.clear();
+        self.label_locations.clear();
+
         self.current_func_id = None;
     }
 
@@ -685,6 +709,33 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
 
     pub fn current_func_mut(&mut self) -> &mut Function {
         self.functions.get_mut(self.current_func_id.as_ref().unwrap()).unwrap()
+    }
+
+    // Label
+
+    pub fn new_label(&mut self) -> Label {
+        let label = Label(self.label_locations.len());
+        self.label_locations.push(None);
+        label
+    }
+
+    pub fn insert_label(&mut self, label: Label) {
+        self.label_locations[label.0] = Some(self.code.len());
+    }
+
+    pub fn jump_to(&mut self, label: Label) {
+        self.jump_insts.push(self.code.len());
+        self.insert_inst(opcode::JUMP, label.0 as u8);
+    }
+
+    pub fn jump_if_false_to(&mut self, label: Label) {
+        self.jump_insts.push(self.code.len());
+        self.insert_inst(opcode::JUMP_IF_FALSE, label.0 as u8);
+    }
+
+    pub fn jump_if_true_to(&mut self, label: Label) {
+        self.jump_insts.push(self.code.len());
+        self.insert_inst(opcode::JUMP_IF_TRUE, label.0 as u8);
     }
 
     // Insert
@@ -717,31 +768,6 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
     pub fn new_ref(&mut self, value: impl ToRef) -> usize {
         self.refs.push(value.convert());
         self.refs.len() - 1
-    }
-
-    // Jump
-
-    pub fn jump(&mut self) -> Jump {
-        self.insert_inst_noarg(opcode::NOP);
-        Jump(self.code.len() - 2)
-    }
-
-    pub fn insert_jump_inst(&mut self, jump: Jump) {
-        let index = jump.0;
-        let func_pos = self.current_func().pos as u64;
-        self.code.write_bytes(index, &[opcode::JUMP, (self.code.len() - func_pos) as u8]);
-    }
-
-    pub fn insert_jump_if_false_inst(&mut self, jump: Jump) {
-        let index = jump.0;
-        let func_pos = self.current_func().pos as u64;
-        self.code.write_bytes(index, &[opcode::JUMP_IF_FALSE, (self.code.len() - func_pos) as u8]);
-    }
-
-    pub fn insert_jump_if_true_inst(&mut self, jump: Jump) {
-        let index = jump.0;
-        let func_pos = self.current_func().pos as u64;
-        self.code.write_bytes(index, &[opcode::JUMP_IF_TRUE, (self.code.len() - func_pos) as u8]);
     }
 
     pub fn build(self) -> BytecodeStream<W> {
