@@ -7,31 +7,54 @@ use libc;
 use crate::value::{Value};
 
 #[derive(Debug)]
+#[repr(C)]
 pub struct GcRegion {
+    // first bit: this region is marked or not
+    // second bit: this region consists of Value
+    bits: u8,
     pub size: usize,
-    is_marked: bool,
     data: [c_void; 0],
 }
 
 impl PartialEq for GcRegion {
     fn eq(&self, other: &Self) -> bool {
         self.size == other.size &&
-            self.is_marked == other.is_marked &&
+            self.is_marked() == other.is_marked() &&
             self.data.as_ptr() == other.data.as_ptr()
     }
 }
 
 impl GcRegion {
-    fn new(size: usize) -> NonNull<Self> {
+    fn new(size: usize, consists_of_value: bool) -> NonNull<Self> {
         let ptr = unsafe {
             let ptr = libc::malloc(mem::size_of::<Self>() + size) as *mut Self;
             (*ptr).size = size;
-            (*ptr).is_marked = false;
+            (*ptr).bits = if consists_of_value {
+                0b01000000
+            } else {
+                0
+            };
 
             NonNull::new(ptr).unwrap()
         };
 
         ptr
+    }
+
+    fn mark(&mut self) {
+        self.bits |= 0b10000000;
+    }
+
+    fn unmark(&mut self) {
+        self.bits &= !0b10000000;
+    }
+
+    fn is_marked(&self) -> bool {
+        (self.bits & 0b10000000) != 0
+    }
+
+    fn consists_of_value(&self) -> bool {
+        (self.bits & 0b01000000) != 0
     }
 
     pub fn as_ptr<T>(&self) -> *const T {
@@ -70,7 +93,7 @@ impl Gc {
         }
     }
 
-    pub fn alloc<T>(&mut self, count: usize, stack: &mut [Value]) -> NonNull<GcRegion> {
+    pub fn alloc<T>(&mut self, count: usize, consists_of_value: bool, stack: &mut [Value]) -> NonNull<GcRegion> {
         let size = count * mem::size_of::<T>();
 
         // Search from freelist
@@ -81,7 +104,7 @@ impl Gc {
 
                 match self.pop_region(size) {
                     Some(region) => region,
-                    None => GcRegion::new(size),
+                    None => GcRegion::new(size, consists_of_value),
                 }
             },
         };
@@ -96,12 +119,15 @@ impl Gc {
             match value {
                 Value::PointerToHeap(ptr) => {
                     let region = unsafe { ptr.as_mut() };
-                    region.is_marked = true;
+                    region.mark();
 
-                    unsafe {
-                        let base = region.as_mut_ptr::<Value>();
-                        for i in 0..region.size {
-                            mark(&mut *base.add(i));
+                    // Regions can consist of string and more
+                    if region.consists_of_value() {
+                        unsafe {
+                            let base = region.as_mut_ptr::<Value>();
+                            for i in 0..region.size {
+                                mark(&mut *base.add(i));
+                            }
                         }
                     }
                 },
@@ -117,8 +143,8 @@ impl Gc {
     fn sweep(&mut self) {
         let free_regions = self.values.drain_filter(|value| {
             let value = unsafe { value.as_mut() };
-            if value.is_marked {
-                value.is_marked = false;
+            if value.is_marked() {
+                value.unmark();
                 false
             } else {
                 true
@@ -182,13 +208,13 @@ mod tests {
     fn test_gc() {
         let mut gc = Gc::new();
 
-        let region1 = gc.alloc::<Value>(2, &mut []);
+        let region1 = gc.alloc::<Value>(2, true, &mut []);
         write(region1, &[Value::Int(1), Value::Int(2)]);
 
-        let region2 = gc.alloc::<Value>(2, &mut [Value::PointerToHeap(region1)]);
+        let region2 = gc.alloc::<Value>(2, true, &mut [Value::PointerToHeap(region1)]);
         write(region2, &[Value::Int(3), Value::PointerToHeap(region1)]);
 
-        let region3 = gc.alloc::<Value>(1, &mut [Value::PointerToHeap(region1), Value::PointerToHeap(region2)]);
+        let region3 = gc.alloc::<Value>(1, true, &mut [Value::PointerToHeap(region1), Value::PointerToHeap(region2)]);
         write(region3, &[Value::Int(190419041)]);
 
         let mut stack = vec![

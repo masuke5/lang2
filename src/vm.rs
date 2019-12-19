@@ -178,17 +178,39 @@ impl VM {
         }
     }
 
-    #[allow(dead_code)]
     fn dump_stack(&self, stop: usize) {
+        let current_is_main = self.current_func == 0;
+        let saved_func_id = if !current_is_main { Some(self.fp - 3) } else { None };
+        let saved_ip = if !current_is_main { Some(self.fp - 2) } else { None };
+        let saved_fp = if !current_is_main { Some(self.fp - 1) } else { None };
+
         println!("-------- STACK DUMP --------");
         for (i, value) in self.stack.iter().enumerate() {
+            if i == self.fp {
+                print!("(fp) ");
+            }
+
+            if i == self.sp {
+                print!("(sp) ");
+            }
+
+            if Some(i) == saved_func_id {
+                print!("[fid] ");
+            }
+
+            if Some(i) == saved_ip {
+                print!("[ip] ");
+            }
+
+            if Some(i) == saved_fp {
+                print!("[fp] ");
+            }
+
             if i > stop {
+                println!("[{}]", i);
                 break;
             }
 
-            if i == self.fp as usize {
-                print!("(fp) ");
-            }
 
             Self::dump_value(value, 0);
         }
@@ -307,7 +329,7 @@ impl VM {
                     let len = bytecode.read_u64(loc) as usize;
 
                     let size = len + size_of::<u64>();
-                    let mut region = self.gc.alloc::<u8>(size, &mut self.stack[..=self.sp]);
+                    let mut region = self.gc.alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
 
                     // Read the string bytes
                     unsafe {
@@ -460,7 +482,7 @@ impl VM {
                 opcode::ALLOC => {
                     let size = arg as usize;
 
-                    let mut region = self.gc.alloc::<Value>(size, &mut self.stack[..=self.sp]);
+                    let mut region = self.gc.alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                     unsafe {
                         let dst = region.as_mut().as_mut_ptr::<Value>();
@@ -515,10 +537,12 @@ impl VM {
                     self.fp = pop!(self, i64) as usize;
 
                     self.ip = pop!(self, i64) as usize;
-                    self.current_func = pop!(self, i64) as usize;
+                    let prev_func = pop!(self, i64) as usize;
 
                     // Pop arguments
                     self.sp -= self.functions[self.current_func].param_size as usize;
+
+                    self.current_func = prev_func;
                 },
                 opcode::CALL_NATIVE => {
                     unimplemented!();
