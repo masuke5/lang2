@@ -153,7 +153,7 @@ impl Bytecode {
         }
     }
 
-    pub fn dump_inst(&self, opcode: u8, arg: u8, pos: usize, ref_start: usize, string_map_start: usize) {
+    pub fn dump_inst(&self, opcode: u8, arg: u8, ip: usize, ref_start: usize, string_map_start: usize) {
         print!("{} ", opcode_name(opcode));
 
         match opcode {
@@ -217,7 +217,8 @@ impl Bytecode {
                 println!("{} module={}", func, module);
             },
             opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
-                println!("{} ({})", arg, pos + arg as usize);
+                let loc = i8::from_le_bytes([arg]);
+                println!("{} ({})", loc, ip as isize + loc as isize * 2);
             },
             opcode::RETURN => println!(),
             opcode::ZERO => println!("count={}", arg),
@@ -308,7 +309,7 @@ impl Bytecode {
             while inst[0] != opcode::END {
                 print!("{:<width$}  ", pos + i * 2, width = index_len);
 
-                self.dump_inst(inst[0], inst[1], pos, ref_start, string_map_start);
+                self.dump_inst(inst[0], inst[1], pos + i * 2, ref_start, string_map_start);
 
                 i += 1;
                 self.read_bytes(pos + i * 2, &mut inst);
@@ -685,8 +686,8 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
 
             match self.label_locations[label as usize] {
                 Some(loc) => {
-                    let relative_loc = loc as u16 - func.pos;
-                    self.code.write_u8(jump_inst_loc + 1, relative_loc as u8);
+                    let relative_loc = (loc as i32 - *jump_inst_loc as i32) / 2;
+                    self.code.write_i8(jump_inst_loc + 1, relative_loc as i8);
                 },
                 None => panic!("label {} is not resolved", label),
             }

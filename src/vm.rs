@@ -276,6 +276,12 @@ impl VM {
     }
     
     pub fn run(&mut self, bytecode: Bytecode, std_module: Module, enable_trace: bool, enable_measure: bool) {
+        #[inline]
+        fn ip_after_jump_to(ip: usize, loc: u8) -> usize {
+            let loc = i8::from_le_bytes([loc]) as isize;
+            (ip as isize - 2 + loc * 2) as usize
+        }
+
         // Module
         let mut all_modules = vec![std_module];
 
@@ -306,7 +312,7 @@ impl VM {
 
             if cfg!(debug_assertions) && enable_trace {
                 let func = &self.functions[self.current_func];
-                bytecode.dump_inst(opcode, arg, func.pos, func.ref_start, string_map_start);
+                bytecode.dump_inst(opcode, arg, self.ip - 2, func.ref_start, string_map_start);
             }
 
             if cfg!(debug_assertions) && enable_measure {
@@ -548,21 +554,18 @@ impl VM {
                     unimplemented!();
                 },
                 opcode::JUMP => {
-                    let func = &self.functions[self.current_func];
-                    self.ip = func.pos + arg as usize;
+                    self.ip = ip_after_jump_to(self.ip, arg);
                 },
                 opcode::JUMP_IF_FALSE => {
                     let cond: bool = pop!(self);
                     if !cond {
-                        let func = &self.functions[self.current_func];
-                        self.ip = func.pos + arg as usize;
+                        self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 },
                 opcode::JUMP_IF_TRUE => {
                     let cond: bool = pop!(self);
                     if cond {
-                        let func = &self.functions[self.current_func];
-                        self.ip = func.pos + arg as usize;
+                        self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 },
                 _ => {
