@@ -196,7 +196,7 @@ impl VM {
     }
 
     fn read_functions(&mut self, bytecode: &Bytecode) {
-        let func_map_start = bytecode.read_u8(bytecode::POS_FUNC_MAP_START as usize) as usize;
+        let func_map_start = bytecode.read_u16(bytecode::POS_FUNC_MAP_START as usize) as usize;
         let func_count = bytecode.read_u8(bytecode::POS_FUNC_COUNT as usize) as usize;
 
         for i in 0..func_count {
@@ -250,9 +250,7 @@ impl VM {
     #[inline]
     fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8) -> i64 {
         let ref_start = self.functions[self.current_func].ref_start;
-        let mut bytes = [0u8; 8];
-        bytecode.read_bytes(ref_start + ref_id as usize * 8, &mut bytes);
-        i64::from_le_bytes(bytes)
+        bytecode.read_i64(ref_start + ref_id as usize * 8)
     }
     
     pub fn run(&mut self, bytecode: Bytecode, std_module: Module, enable_trace: bool, enable_measure: bool) {
@@ -476,9 +474,10 @@ impl VM {
                 },
                 opcode::CALL => {
                     let func = &self.functions[arg as usize];
-                    self.current_func = arg as usize;
 
                     push!(self, Value::Int(self.current_func as i64));
+                    self.current_func = arg as usize;
+
                     push!(self, Value::Int(self.ip as i64));
                     push!(self, Value::Int(self.fp as i64));
 

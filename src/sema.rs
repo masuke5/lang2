@@ -1055,14 +1055,15 @@ impl<'a> Analyzer<'a> {
                 // body
                 code.begin_function(name);
                 self.walk_stmt(code, stmt);
-                code.end_function(name);
-
-                let return_var = self.get_return_var();
 
                 // insert a return instruction if the return value type is unit
+                let return_var = self.get_return_var();
                 if let Type::Unit = return_var.ty {
+                    code.insert_inst_noarg(opcode::ZERO);
                     code.insert_inst_noarg(opcode::RETURN);
                 }
+
+                code.end_function(name);
 
                 self.pop_scope();
             },
