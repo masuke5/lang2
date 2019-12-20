@@ -780,6 +780,7 @@ impl<'a> Analyzer<'a> {
                         panic!("too large return value");
                     }
 
+                    // Push placeholder for return value
                     code.insert_inst(opcode::ZERO, return_value_size as u8);
 
                     (
@@ -1065,7 +1066,6 @@ impl<'a> Analyzer<'a> {
                 // insert a return instruction if the return value type is unit
                 let return_var = self.get_return_var();
                 if let Type::Unit = return_var.ty {
-                    code.insert_inst_noarg(opcode::ZERO);
                     code.insert_inst_noarg(opcode::RETURN);
                 }
 

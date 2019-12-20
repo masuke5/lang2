@@ -302,7 +302,8 @@ impl VM {
 
         let func = &self.functions[0];
         self.ip = func.pos;
-        self.sp = func.stack_size as usize;
+        self.fp = 0;
+        self.sp = func.stack_size as usize - 1;
 
         loop {
             let [opcode, arg] = self.next_inst(&bytecode);
@@ -322,7 +323,14 @@ impl VM {
             match opcode {
                 opcode::NOP => {},
                 opcode::ZERO => {
-                    push!(self, Value::Int(0));
+                    let count = arg as usize;
+
+                    unsafe {
+                        let dst = &mut self.stack[self.sp + 1] as *mut _;
+                        ptr::write_bytes(dst, 0, count);
+                    }
+
+                    self.sp += count;
                 },
                 opcode::INT => {
                     let value = self.get_ref_value_i64(&bytecode, arg);
@@ -578,9 +586,13 @@ impl VM {
             }
         }
 
-        self.dump_stack(self.sp);
-        assert_eq!(self.sp, self.functions[0].stack_size as usize);
-        self.sp = self.fp;
+        if cfg!(debug_assertions) {
+            let main_func_stack_size = self.functions[0].stack_size as usize;
+            if (main_func_stack_size == 0 && self.sp == 0) || self.sp != main_func_stack_size - 1 {
+                self.dump_stack(self.sp);
+                eprintln!("warning: expected stack size {}, but sp is {}.", main_func_stack_size, self.sp);
+            }
+        }
 
         if enable_measure {
             let total = self.performance.total;
