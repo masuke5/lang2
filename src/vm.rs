@@ -336,6 +336,10 @@ impl VM {
                     let value = self.get_ref_value_i64(&bytecode, arg);
                     push!(self, Value::Int(value));
                 },
+                opcode::TINY_INT => {
+                    let n = i8::from_le_bytes([arg]);
+                    push!(self, Value::Int(n as i64));
+                },
                 opcode::STRING => {
                     let loc = bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 

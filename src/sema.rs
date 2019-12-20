@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::io::{Read, Write, Seek};
 use std::collections::HashMap;
 
@@ -530,7 +531,12 @@ impl<'a> Analyzer<'a> {
             .fold(0, |acc, ty| acc + type_size(&self.types, &ty));
 
         if offset != 0 {
-            code.insert_inst_ref(opcode::INT, offset);
+            if let Ok(offset) = offset.try_into() {
+                let [arg] = i8::to_le_bytes(offset);
+                code.insert_inst(opcode::TINY_INT, arg);
+            } else {
+                code.insert_inst_ref(opcode::INT, offset);
+            }
             code.insert_inst_noarg(opcode::OFFSET);
         }
 
@@ -546,7 +552,13 @@ impl<'a> Analyzer<'a> {
     fn walk_expr<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, expr: Spanned<Expr>) -> ExprInfo {
         let ty = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
-                code.insert_inst_ref(opcode::INT, n);
+                if let Ok(n) = n.try_into() {
+                    let [n] = i8::to_le_bytes(n);
+                    code.insert_inst(opcode::TINY_INT, n);
+                } else {
+                    code.insert_inst_ref(opcode::INT, n);
+                }
+
                 Type::Int
             },
             Expr::Literal(Literal::String(i)) => {

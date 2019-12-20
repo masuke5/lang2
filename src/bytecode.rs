@@ -47,8 +47,9 @@ pub mod opcode {
     pub const RETURN: u8 = 0x21;
     pub const ZERO: u8 = 0x22;
     pub const CALL_EXTERN: u8 = 0x23;
+    pub const TINY_INT: u8 = 0x24;
 
-    pub const END: u8 = 0x24;
+    pub const END: u8 = 0xff;
 }
 
 #[inline]
@@ -56,6 +57,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
     match opcode {
         opcode::NOP => "NOP",
         opcode::INT => "INT",
+        opcode::TINY_INT => "TINY_INT",
         opcode::STRING => "STRING",
         opcode::TRUE => "TRUE",
         opcode::FALSE => "FALSE",
@@ -161,6 +163,9 @@ impl Bytecode {
             opcode::INT => {
                 let value = self.read_i64(ref_start + arg as usize * 8);
                 println!("{} ({})", arg, value);
+            },
+            opcode::TINY_INT => {
+                println!("{}", arg);
             },
             opcode::STRING => {
                 let string_id = arg as usize;
