@@ -274,6 +274,12 @@ impl VM {
         let ref_start = self.functions[self.current_func].ref_start;
         bytecode.read_i64(ref_start + ref_id as usize * 8)
     }
+
+    #[inline]
+    fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8) -> u64 {
+        let ref_start = self.functions[self.current_func].ref_start;
+        bytecode.read_u64(ref_start + ref_id as usize * 8)
+    }
     
     pub fn run(&mut self, bytecode: Bytecode, std_module: Module, enable_trace: bool, enable_measure: bool) {
         #[inline]
@@ -419,7 +425,22 @@ impl VM {
                     let new_ptr = unsafe { ptr.as_ptr().add(offset as usize) };
                     *ptr = NonNull::new(new_ptr).unwrap();
                 },
-                // opcode::DUPLICATE => {}
+                opcode::DUPLICATE => {
+                    let value = self.get_ref_value_u64(&bytecode, arg);
+                    let size = (value >> 32) as usize; // upper 32 bits
+                    let count = (value as u32) as usize; // lower 32 bits
+
+                    let ptr = &self.stack[self.sp - (size - 1)] as *const Value;
+
+                    for i in 1..=count {
+                        unsafe {
+                            let dest = ptr.add(i * size) as *mut _;
+                            ptr.copy_to_nonoverlapping(dest, size);
+                        }
+                    }
+
+                    self.sp += size * count;
+                },
                 opcode::LOAD_REF => {
                     let loc = (self.fp as isize + i8::from_le_bytes([arg]) as isize) as usize;
                     if loc >= STACK_SIZE {

@@ -193,7 +193,13 @@ impl Bytecode {
             opcode::NEGATIVE => println!(),
             opcode::COPY => println!("size={}", arg),
             opcode::OFFSET => println!(),
-            opcode::DUPLICATE => println!(" unimplemented"),
+            opcode::DUPLICATE => {
+                let value = self.read_u64(ref_start + arg as usize * 8);
+                let size = (value >> 32) as usize; // upper 32 bits
+                let count = (value as u32) as usize; // lower 32 bits
+
+                println!("{} (size={} count={})", arg, size, count);
+            },
             opcode::LOAD_REF => println!("{}", i8::from_le_bytes([arg])),
             opcode::LOAD_COPY => {
                 let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;

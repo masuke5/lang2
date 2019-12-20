@@ -374,14 +374,17 @@ impl<'a> Analyzer<'a> {
         (Type::Named(name), size)
     }
 
-    fn walk_array<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, init_expr: Spanned<Expr>, size: usize) -> (Type, usize) {
+    fn walk_array<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, init_expr: Spanned<Expr>, arr_size: usize) -> (Type, usize) {
         let init_expr = self.walk_expr(code, init_expr);
         let expr_size = type_size(&self.types, &init_expr.ty);
 
         self.insert_copy_inst(code, &init_expr.ty);
-        code.insert_inst(opcode::DUPLICATE, (size - 1) as u8);
 
-        (Type::Array(Box::new(init_expr.ty), size), expr_size * size)
+        let count = (arr_size - 1) as u64;
+        let arg: u64 = ((expr_size as u64) << 32) | count;
+        code.insert_inst_ref(opcode::DUPLICATE, arg);
+
+        (Type::Array(Box::new(init_expr.ty), arr_size), expr_size * arr_size)
     }
 
     fn store_comp_literal<W: Read + Write + Seek>(
