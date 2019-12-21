@@ -529,6 +529,108 @@ pub trait ToRef {
     fn convert(self) -> u64;
 }
 
+#[derive(Debug)]
+pub struct InstList {
+    insts: LinkedList<[u8; 2]>,
+    label_locations: Vec<Option<usize>>,
+    refs: Vec<u64>,
+}
+
+impl InstList {
+    fn new() -> Self {
+        InstList {
+            insts: LinkedList::new(),
+            label_locations: Vec::new(),
+            refs: Vec::new(),
+        }
+    }
+
+    fn prev_inst(&self) -> [u8; 2] {
+        *self.insts.back().unwrap()
+    }
+
+    pub fn new_label(&mut self) -> Label {
+        let label = Label(self.label_locations.len());
+        self.label_locations.push(None);
+        label
+    }
+
+    pub fn push_label(&mut self, label: Label) {
+        self.label_locations[label.0] = Some(self.insts.len());
+    }
+
+    pub fn jump_to(&mut self, label: Label) {
+        self.push_inst(opcode::JUMP, label.0 as u8);
+    }
+
+    pub fn jump_if_false_to(&mut self, label: Label) {
+        self.push_inst(opcode::JUMP_IF_FALSE, label.0 as u8);
+    }
+
+    pub fn jump_if_true_to(&mut self, label: Label) {
+        self.push_inst(opcode::JUMP_IF_TRUE, label.0 as u8);
+    }
+
+    // Insert an instruction
+
+    #[inline]
+    pub fn append(&mut self, mut insts: InstList) {
+        self.insts.append(&mut insts.insts);
+        self.refs.append(&mut insts.refs);
+        self.label_locations.append(&mut insts.label_locations);
+    }
+
+    #[inline]
+    pub fn replace_last_inst_with(&mut self, opcode: u8, arg: u8) {
+        let last = self.insts.back_mut().unwrap();
+        *last = [opcode, arg];
+    }
+
+    #[inline]
+    pub fn push_inst(&mut self, opcode: u8, arg: u8) {
+        self.insts.push_back([opcode, arg]);
+    }
+
+    #[inline]
+    pub fn push_inst_noarg(&mut self, opcode: u8) {
+        self.push_inst(opcode, 0);
+    }
+
+    #[inline]
+    pub fn push_inst_ref(&mut self, opcode: u8, arg: impl ToRef) {
+        let arg = self.new_ref(arg);
+        // TODO: Add support for values above u8
+        self.push_inst(opcode, arg as u8);
+    }
+
+    pub fn new_ref(&mut self, value: impl ToRef) -> usize {
+        self.refs.push(value.convert());
+        self.refs.len() - 1
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.insts.len()
+    }
+
+    fn resolve_jump_destinations(&mut self) {
+        for (i, [opcode, arg]) in self.insts.iter_mut().enumerate() {
+            match *opcode {
+                opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
+                    match self.label_locations[*arg as usize] {
+                        Some(loc) => {
+                            let relative_loc = loc as i32 - i as i32;
+                            *arg = i8::to_le_bytes(relative_loc as i8)[0];
+                        },
+                        None => panic!("label {} is not resolved", *arg),
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+}
+
 impl_toref!(u64);
 impl_toref!(i64);
 impl_toref!(usize);
@@ -549,11 +651,7 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
     string_map_start: u16,
     module_map_start: u16,
 
-    // When function insert_label is called, the label will be pushed.
-    label_locations: Vec<Option<u64>>,
-
-    refs: Vec<u64>,
-    insts: LinkedList<[u8; 2]>,
+    insts: InstList,
 }
 
 impl<W: Read + Write + Seek> BytecodeBuilder<W> {
@@ -567,14 +665,12 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         let mut slf = BytecodeBuilder {
             code,
             functions: HashMap::new(),
-            refs: Vec::with_capacity(50),
             current_func_id: None,
             next_func_id: 0,
             funcmap_start: 0,
             string_map_start: 16,
             module_map_start: 0,
-            label_locations: Vec::new(),
-            insts: LinkedList::new(),
+            insts: InstList::new(),
         };
         slf.write_strings(strings);
         slf.write_modules(modules);
@@ -641,7 +737,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
 
     #[inline]
     pub fn prev_inst(&self) -> [u8; 2] {
-        *self.insts.back().unwrap()
+        self.insts.prev_inst()
     }
     
     // Function
@@ -682,25 +778,12 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.insert_inst_noarg(opcode::END);
 
         // Resolve jump destinations
-        for (i, [opcode, arg]) in self.insts.iter_mut().enumerate() {
-            match *opcode {
-                opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
-                    match self.label_locations[*arg as usize] {
-                        Some(loc) => {
-                            let relative_loc = loc as i32 - i as i32;
-                            *arg = i8::to_le_bytes(relative_loc as i8)[0];
-                        },
-                        None => panic!("label {} is not resolved", *arg),
-                    }
-                },
-                _ => {},
-            }
-        }
+        self.insts.resolve_jump_destinations();
 
         // Write instruction bytes
         unsafe {
             self.code.seek_to_end();
-            for inst in &self.insts {
+            for inst in &self.insts.insts {
                 self.code.write_bytes_without_seek(inst);
             }
             self.code.set_len(self.code.len() + self.insts.len() as u64 * 2);
@@ -712,7 +795,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         func.ref_start = self.code.len() as u16;
 
         // Push refs
-        for int_ref in self.refs.drain(..) {
+        for int_ref in self.insts.refs.drain(..) {
             self.code.push_u64(int_ref);
         }
 
@@ -724,10 +807,8 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.code.write_u16(base + FUNC_OFFSET_POS, func.pos);
         self.code.write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
 
-        // Reset some fields for a next function
-        self.label_locations.clear();
-        self.insts.clear();
-
+        // Clear some fields for a next function
+        self.insts = InstList::new();
         self.current_func_id = None;
     }
 
@@ -746,55 +827,45 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
     // Label
 
     pub fn new_label(&mut self) -> Label {
-        let label = Label(self.label_locations.len());
-        self.label_locations.push(None);
-        label
+        self.insts.new_label()
     }
 
     pub fn insert_label(&mut self, label: Label) {
-        self.label_locations[label.0] = Some(self.insts.len() as u64);
+        self.insts.push_label(label);
     }
 
     pub fn jump_to(&mut self, label: Label) {
-        self.insert_inst(opcode::JUMP, label.0 as u8);
+        self.insts.jump_to(label);
     }
 
     pub fn jump_if_false_to(&mut self, label: Label) {
-        self.insert_inst(opcode::JUMP_IF_FALSE, label.0 as u8);
+        self.insts.jump_if_false_to(label);
     }
 
     pub fn jump_if_true_to(&mut self, label: Label) {
-        self.insert_inst(opcode::JUMP_IF_TRUE, label.0 as u8);
+        self.insts.jump_if_true_to(label);
     }
 
     // Insert an instruction
 
     #[inline]
     pub fn replace_last_inst_with(&mut self, opcode: u8, arg: u8) {
-        let last = self.insts.back_mut().unwrap();
-        *last = [opcode, arg];
+        self.insts.replace_last_inst_with(opcode, arg);
     }
 
     #[inline]
     pub fn insert_inst(&mut self, opcode: u8, arg: u8) {
-        self.insts.push_back([opcode, arg]);
+        self.insts.push_inst(opcode, arg);
     }
 
     #[inline]
     pub fn insert_inst_noarg(&mut self, opcode: u8) {
-        self.insert_inst(opcode, 0);
+        self.insts.push_inst_noarg(opcode);
     }
 
     #[inline]
     pub fn insert_inst_ref(&mut self, opcode: u8, arg: impl ToRef) {
-        let arg = self.new_ref(arg);
-        // TODO: Add support for values above u8
-        self.insert_inst(opcode, arg as u8);
-    }
-
-    pub fn new_ref(&mut self, value: impl ToRef) -> usize {
-        self.refs.push(value.convert());
-        self.refs.len() - 1
+        self.insts.push_inst_ref(opcode, arg);
     }
 
     pub fn build(self) -> BytecodeStream<W> {
