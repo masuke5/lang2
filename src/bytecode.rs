@@ -775,7 +775,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
     }
 
     pub fn end_function(&mut self, id: Id) {
-        self.insert_inst_noarg(opcode::END);
+        self.push_inst_noarg(opcode::END);
 
         // Resolve jump destinations
         self.insts.resolve_jump_destinations();
@@ -830,7 +830,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.insts.new_label()
     }
 
-    pub fn insert_label(&mut self, label: Label) {
+    pub fn push_label(&mut self, label: Label) {
         self.insts.push_label(label);
     }
 
@@ -854,17 +854,17 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
     }
 
     #[inline]
-    pub fn insert_inst(&mut self, opcode: u8, arg: u8) {
+    pub fn push_inst(&mut self, opcode: u8, arg: u8) {
         self.insts.push_inst(opcode, arg);
     }
 
     #[inline]
-    pub fn insert_inst_noarg(&mut self, opcode: u8) {
+    pub fn push_inst_noarg(&mut self, opcode: u8) {
         self.insts.push_inst_noarg(opcode);
     }
 
     #[inline]
-    pub fn insert_inst_ref(&mut self, opcode: u8, arg: impl ToRef) {
+    pub fn push_inst_ref(&mut self, opcode: u8, arg: impl ToRef) {
         self.insts.push_inst_ref(opcode, arg);
     }
 

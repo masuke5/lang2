@@ -211,10 +211,10 @@ impl<'a> Analyzer<'a> {
                 bytecode.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
             },
             opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET => {
-                bytecode.insert_inst(opcode::COPY, size as u8);
+                bytecode.push_inst(opcode::COPY, size as u8);
             },
             opcode::CALL | opcode::CALL_NATIVE if Self::should_store(ty) => {
-                bytecode.insert_inst(opcode::COPY, size as u8);
+                bytecode.push_inst(opcode::COPY, size as u8);
             },
             _ => {},
         }
@@ -382,7 +382,7 @@ impl<'a> Analyzer<'a> {
 
         let count = (arr_size - 1) as u64;
         let arg: u64 = ((expr_size as u64) << 32) | count;
-        code.insert_inst_ref(opcode::DUPLICATE, arg);
+        code.push_inst_ref(opcode::DUPLICATE, arg);
 
         (Type::Array(Box::new(init_expr.ty), arr_size), expr_size * arr_size)
     }
@@ -408,8 +408,8 @@ impl<'a> Analyzer<'a> {
             _ => self.new_var(code.current_func_mut(), id, ty.clone(), is_mutable),
         };
 
-        code.insert_inst(opcode::LOAD_REF, loc as u8);
-        code.insert_inst(opcode::STORE, size as u8);
+        code.push_inst(opcode::LOAD_REF, loc as u8);
+        code.push_inst(opcode::STORE, size as u8);
 
         (ty, loc)
     }
@@ -482,7 +482,7 @@ impl<'a> Analyzer<'a> {
         match &expr.ty {
             Type::Pointer(_, is_mutable) => {
                 self.insert_copy_inst(code, &expr.ty);
-                code.insert_inst_noarg(opcode::DEREFERENCE);
+                code.push_inst_noarg(opcode::DEREFERENCE);
                 expr.is_mutable = *is_mutable;
             },
             _ => {}
@@ -536,11 +536,11 @@ impl<'a> Analyzer<'a> {
         if offset != 0 {
             if let Ok(offset) = offset.try_into() {
                 let [arg] = i8::to_le_bytes(offset);
-                code.insert_inst(opcode::TINY_INT, arg);
+                code.push_inst(opcode::TINY_INT, arg);
             } else {
-                code.insert_inst_ref(opcode::INT, offset);
+                code.push_inst_ref(opcode::INT, offset);
             }
-            code.insert_inst_noarg(opcode::OFFSET);
+            code.push_inst_noarg(opcode::OFFSET);
         }
 
         expr.ty = field_ty.clone();
@@ -557,31 +557,31 @@ impl<'a> Analyzer<'a> {
             Expr::Literal(Literal::Number(n)) => {
                 if let Ok(n) = n.try_into() {
                     let [n] = i8::to_le_bytes(n);
-                    code.insert_inst(opcode::TINY_INT, n);
+                    code.push_inst(opcode::TINY_INT, n);
                 } else {
-                    code.insert_inst_ref(opcode::INT, n);
+                    code.push_inst_ref(opcode::INT, n);
                 }
 
                 Type::Int
             },
             Expr::Literal(Literal::String(i)) => {
-                code.insert_inst(opcode::STRING, i as u8);
+                code.push_inst(opcode::STRING, i as u8);
                 Type::Pointer(Box::new(Type::String), false)
             },
             Expr::Literal(Literal::Unit) => {
-                code.insert_inst(opcode::ZERO, 1);
+                code.push_inst(opcode::ZERO, 1);
                 Type::Unit
             },
             Expr::Literal(Literal::True) => {
-                code.insert_inst_noarg(opcode::TRUE);
+                code.push_inst_noarg(opcode::TRUE);
                 Type::Bool
             },
             Expr::Literal(Literal::False) => {
-                code.insert_inst_noarg(opcode::FALSE);
+                code.push_inst_noarg(opcode::FALSE);
                 Type::Bool
             },
             Expr::Literal(Literal::Null) => {
-                code.insert_inst_noarg(opcode::NULL);
+                code.push_inst_noarg(opcode::NULL);
                 Type::Null
             },
             Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
@@ -589,7 +589,7 @@ impl<'a> Analyzer<'a> {
                 let span = expr.span.clone();
                 let (ty, loc) = self.store_comp_literal(code, id, expr, true, false);
 
-                code.insert_inst(opcode::LOAD_REF, loc as u8);
+                code.push_inst(opcode::LOAD_REF, loc as u8);
 
                 return ExprInfo::new(ty, span);
             },
@@ -609,7 +609,7 @@ impl<'a> Analyzer<'a> {
                     Type::Pointer(ty, is_mutable) => {
                         expr.is_mutable = is_mutable;
                         self.insert_copy_inst(code, &Type::Pointer(ty.clone(), is_mutable));
-                        code.insert_inst_noarg(opcode::DEREFERENCE);
+                        code.push_inst_noarg(opcode::DEREFERENCE);
 
                         match *ty {
                             Type::Array(ty, _) => *ty,
@@ -630,7 +630,7 @@ impl<'a> Analyzer<'a> {
 
                 check_type(&mut self.errors, &Type::Int, &subscript_expr.ty, subscript_expr.span);
 
-                code.insert_inst_noarg(opcode::OFFSET);
+                code.push_inst_noarg(opcode::OFFSET);
 
                 expr.ty = ty;
                 return expr;
@@ -644,7 +644,7 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                code.insert_inst(opcode::LOAD_REF, var.loc as u8);
+                code.push_inst(opcode::LOAD_REF, var.loc as u8);
 
                 return ExprInfo::new_lvalue(var.ty.clone(), expr.span, var.is_mutable);
             },
@@ -669,13 +669,13 @@ impl<'a> Analyzer<'a> {
                 self.insert_copy_inst(code, &lhs.ty);
                 code.jump_if_false_to(a);
 
-                code.insert_inst_noarg(opcode::TRUE);
+                code.push_inst_noarg(opcode::TRUE);
                 code.jump_to(end);
 
-                code.insert_label(a);
-                code.insert_inst_noarg(opcode::FALSE);
+                code.push_label(a);
+                code.push_inst_noarg(opcode::FALSE);
 
-                code.insert_label(end);
+                code.push_label(end);
 
                 // Type check
                 match (lhs.ty, rhs.ty) {
@@ -709,13 +709,13 @@ impl<'a> Analyzer<'a> {
                 self.insert_copy_inst(code, &lhs.ty);
                 code.jump_if_true_to(a);
 
-                code.insert_inst_noarg(opcode::FALSE);
+                code.push_inst_noarg(opcode::FALSE);
                 code.jump_to(end);
 
-                code.insert_label(a);
-                code.insert_inst_noarg(opcode::TRUE);
+                code.push_label(a);
+                code.push_inst_noarg(opcode::TRUE);
 
-                code.insert_label(end);
+                code.push_label(end);
 
                 // Type check
                 match (lhs.ty, rhs.ty) {
@@ -748,7 +748,7 @@ impl<'a> Analyzer<'a> {
                     BinOp::NotEqual => opcode::BINOP_NEQ,
                     _ => panic!(),
                 };
-                code.insert_inst_noarg(opcode);
+                code.push_inst_noarg(opcode);
 
                 let binop_symbol = binop.to_symbol();
                 match (binop, &lhs.ty, &rhs.ty) {
@@ -796,7 +796,7 @@ impl<'a> Analyzer<'a> {
                     }
 
                     // Push placeholder for return value
-                    code.insert_inst(opcode::ZERO, return_value_size as u8);
+                    code.push_inst(opcode::ZERO, return_value_size as u8);
 
                     (
                         callee_func.return_ty.clone(),
@@ -825,18 +825,18 @@ impl<'a> Analyzer<'a> {
                 if let Some(module_id) = module_id {
                     let code_id = code_id as u8;
                     let arg = (module_id << 4) | code_id;
-                    code.insert_inst(opcode::CALL_EXTERN, arg);
+                    code.push_inst(opcode::CALL_EXTERN, arg);
                 } else {
-                    code.insert_inst(opcode::CALL, code_id as u8);
+                    code.push_inst(opcode::CALL, code_id as u8);
                 }
 
                 // Store if the return value is compound data
                 if Self::should_store(&return_ty) {
                     let id = self.gen_temp_id();
                     let loc = self.new_var(code.current_func_mut(), id, return_ty.clone(), false);
-                    code.insert_inst(opcode::LOAD_REF, loc as u8);
-                    code.insert_inst(opcode::STORE, type_size(&self.types, &return_ty) as u8);
-                    code.insert_inst(opcode::LOAD_REF, loc as u8);
+                    code.push_inst(opcode::LOAD_REF, loc as u8);
+                    code.push_inst(opcode::STORE, type_size(&self.types, &return_ty) as u8);
+                    code.push_inst(opcode::LOAD_REF, loc as u8);
                 }
 
                 return_ty
@@ -851,7 +851,7 @@ impl<'a> Analyzer<'a> {
                     error!(self, expr.span, "this expression is immutable");
                     Type::Invalid
                 } else {
-                    code.insert_inst_noarg(opcode::POINTER);
+                    code.push_inst_noarg(opcode::POINTER);
                     Type::Pointer(Box::new(expr.ty), is_mutable)
                 }
             },
@@ -861,7 +861,7 @@ impl<'a> Analyzer<'a> {
 
                 match expr.ty {
                     Type::Pointer(ty, is_mutable) => {
-                        code.insert_inst_noarg(opcode::DEREFERENCE);
+                        code.push_inst_noarg(opcode::DEREFERENCE);
                         return ExprInfo::new_lvalue(*ty, expr.span, is_mutable); // TODO:
                     }
                     Type::Invalid => Type::Invalid,
@@ -877,7 +877,7 @@ impl<'a> Analyzer<'a> {
 
                 match expr.ty {
                     ty @ Type::Int /* | Type::Float */ => {
-                        code.insert_inst_noarg(opcode::NEGATIVE);
+                        code.push_inst_noarg(opcode::NEGATIVE);
                         ty
                     },
                     ty => {
@@ -889,7 +889,7 @@ impl<'a> Analyzer<'a> {
             Expr::Alloc(expr, is_mutable) => {
                 let expr = self.walk_expr(code, *expr);
                 self.insert_copy_inst(code, &expr.ty);
-                code.insert_inst(opcode::ALLOC, type_size(&self.types, &expr.ty) as u8);
+                code.push_inst(opcode::ALLOC, type_size(&self.types, &expr.ty) as u8);
 
                 Type::Pointer(Box::new(expr.ty), is_mutable)
             },
@@ -905,7 +905,7 @@ impl<'a> Analyzer<'a> {
 
                 let pop_count = type_size(&self.types, &expr.ty);
                 for _ in 0..pop_count {
-                    code.insert_inst_noarg(opcode::POP);
+                    code.push_inst_noarg(opcode::POP);
                 }
             },
             Stmt::If(cond, stmt, None) => {
@@ -921,7 +921,7 @@ impl<'a> Analyzer<'a> {
                 // Then-clause
                 self.walk_stmt(code, *stmt);
 
-                code.insert_label(end);
+                code.push_label(end);
             },
             Stmt::If(cond, then_stmt, Some(else_stmt)) => {
                 let els = code.new_label();
@@ -939,16 +939,16 @@ impl<'a> Analyzer<'a> {
                 code.jump_to(end);
                 
                 // Else-clause
-                code.insert_label(els);
+                code.push_label(els);
                 self.walk_stmt(code, *else_stmt);
 
-                code.insert_label(end);
+                code.push_label(end);
             },
             Stmt::While(cond, stmt) => {
                 let end = code.new_label();
                 let begin = code.new_label();
 
-                code.insert_label(begin);
+                code.push_label(begin);
 
                 // Insert condition expression instruction
                 let cond = self.walk_expr(code, cond);
@@ -963,7 +963,7 @@ impl<'a> Analyzer<'a> {
                 // Jump to begin
                 code.jump_to(begin);
 
-                code.insert_label(end);
+                code.push_label(end);
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
@@ -982,8 +982,8 @@ impl<'a> Analyzer<'a> {
                         self.insert_copy_inst(code, &expr.ty);
 
                         let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
-                        code.insert_inst(opcode::LOAD_REF, loc as u8);
-                        code.insert_inst(opcode::STORE, type_size(&self.types, &expr.ty) as u8);
+                        code.push_inst(opcode::LOAD_REF, loc as u8);
+                        code.push_inst(opcode::STORE, type_size(&self.types, &expr.ty) as u8);
                     }
                 }
             },
@@ -1004,7 +1004,7 @@ impl<'a> Analyzer<'a> {
 
                 check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span);
 
-                code.insert_inst(opcode::STORE, type_size(&self.types, &lhs.ty) as u8);
+                code.push_inst(opcode::STORE, type_size(&self.types, &lhs.ty) as u8);
             },
             Stmt::Return(expr) => {
                 let func_name = code.current_func().name;
@@ -1018,7 +1018,7 @@ impl<'a> Analyzer<'a> {
                 let expr = match expr {
                     Some(expr) => self.walk_expr(code, expr),
                     None => {
-                        code.insert_inst(opcode::ZERO, 1);
+                        code.push_inst(opcode::ZERO, 1);
                         ExprInfo::new(Type::Unit, stmt.span)
                     }
                 };
@@ -1031,9 +1031,9 @@ impl<'a> Analyzer<'a> {
 
                 check_type(&mut self.errors, &ty, &expr.ty, expr.span);
 
-                code.insert_inst(opcode::LOAD_REF, loc as u8);
-                code.insert_inst(opcode::STORE, type_size(&self.types, &ty) as u8);
-                code.insert_inst_noarg(opcode::RETURN);
+                code.push_inst(opcode::LOAD_REF, loc as u8);
+                code.push_inst(opcode::STORE, type_size(&self.types, &ty) as u8);
+                code.push_inst_noarg(opcode::RETURN);
             },
         }
     }
@@ -1081,7 +1081,7 @@ impl<'a> Analyzer<'a> {
                 // insert a return instruction if the return value type is unit
                 let return_var = self.get_return_var();
                 if let Type::Unit = return_var.ty {
-                    code.insert_inst_noarg(opcode::RETURN);
+                    code.push_inst_noarg(opcode::RETURN);
                 }
 
                 code.end_function(name);
