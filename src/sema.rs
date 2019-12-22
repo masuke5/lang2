@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 use std::io::{Read, Write, Seek};
 use std::collections::HashMap;
 
@@ -7,12 +6,19 @@ use crate::ast::*;
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::bytecode::{Function, opcode, BytecodeBuilder, BytecodeStream};
+use crate::bytecode::{Function, opcode, BytecodeBuilder, BytecodeStream, InstList};
 use crate::module::{FunctionHeader, ModuleHeader};
+use crate::translate;
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
         $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
+    };
+}
+
+macro_rules! try_some {
+    ($($var:ident),*) => {
+        $(let $var = $var?;)*
     };
 }
 
@@ -92,31 +98,30 @@ fn type_size(types: &HashMap<Id, Type>, ty: &Type) -> usize {
 struct ExprInfo {
     pub ty: Type,
     pub span: Span,
+    pub insts: InstList,
     pub is_lvalue: bool,
     pub is_mutable: bool,
 }
 
 impl ExprInfo {
-    fn new(ty: Type, span: Span) -> Self {
+    fn new(insts: InstList, ty: Type, span: Span) -> Self {
         Self {
             ty,
             span,
+            insts,
             is_lvalue: false,
             is_mutable: false,
         }
     }
 
-    fn new_lvalue(ty: Type, span: Span, is_mutable: bool) -> Self {
+    fn new_lvalue(insts: InstList, ty: Type, span: Span, is_mutable: bool) -> Self {
         Self {
             ty,
             span,
+            insts,
             is_lvalue: true,
             is_mutable,
         }
-    }
-
-    fn invalid(span: Span) -> Self {
-        Self::new(Type::Invalid, span)
     }
 }
 
@@ -195,31 +200,6 @@ impl<'a> Analyzer<'a> {
         last_map.insert(self.return_value_id, Variable::new(return_ty.clone(), false, loc));
     }
 
-    // Insert a copy instruction if necessary
-    fn insert_copy_inst<W: Read + Write + Seek>(&self, bytecode: &mut BytecodeBuilder<W>, ty: &Type) {
-        if bytecode.code.len() < 2 {
-            return;
-        }
-
-        let size = type_size(&self.types, ty);
-        let [opcode, arg] = bytecode.prev_inst();
-        let loc = i8::from_le_bytes([arg]);
-
-        match opcode {
-            opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
-                let arg = (loc << 3) | size as i8;
-                bytecode.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
-            },
-            opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET => {
-                bytecode.push_inst(opcode::COPY, size as u8);
-            },
-            opcode::CALL | opcode::CALL_NATIVE if Self::should_store(ty) => {
-                bytecode.push_inst(opcode::COPY, size as u8);
-            },
-            _ => {},
-        }
-    }
-
     fn get_return_var(&self) -> &Variable {
         self.find_var(self.return_value_id).unwrap()
     }
@@ -265,159 +245,6 @@ impl<'a> Analyzer<'a> {
         None
     }
 
-    fn should_store(ty: &Type) -> bool {
-        match ty {
-            Type::Tuple(_) | Type::Struct(_) | Type::Array(_, _) => true,
-            _ => false,
-        }
-    }
-
-    // ====================================
-    //  Tuple
-    // ====================================
-
-    fn walk_tuple<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, exprs: Vec<Spanned<Expr>>) -> (Type, usize) {
-        let mut types = Vec::new();
-        let mut size = 0;
-
-        for expr in exprs {
-            match expr.kind {
-                Expr::Tuple(exprs) => {
-                    let (ty, tuple_size) = self.walk_tuple(code, exprs);
-                    size += tuple_size;
-                    types.push(ty);
-                },
-                Expr::Struct(name, fields) => {
-                    let (ty, tsize) = self.walk_struct(code, name, fields, expr.span);
-                    size += tsize;
-                    types.push(ty);
-                },
-                _ => {
-                    let expr = self.walk_expr(code, expr);
-                    self.insert_copy_inst(code, &expr.ty);
-
-                    size += type_size(&self.types, &expr.ty);
-                    types.push(expr.ty);
-                },
-            }
-        }
-
-        (Type::Tuple(types), size)
-    }
-
-    fn walk_struct<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, name: Id, exprs: Vec<(Spanned<Id>, Spanned<Expr>)>, span: Span) -> (Type, usize) {
-        let ty = match self.types.get(&name) {
-            Some(ty) => ty,
-            None => {
-                error!(self, span.clone(), "undefined type `{}`", IdMap::name(name));
-                return (Type::Invalid, 0);
-            },
-        };
-
-        // Get fields
-        let ty_fields = match expect_struct(&mut self.errors, ty, span.clone()) {
-            Some(fields) => fields,
-            None => return (Type::Invalid, 0),
-        };
-        let ty_fields = ty_fields.clone();
-
-        let mut fields = Vec::new();
-        let mut size = 0;
-        let mut not_enough_fields = Vec::new();
-
-        for (name, ty) in ty_fields {
-            match exprs.iter().find(|(field_name, _)| field_name.kind == name) {
-                Some((_, expr)) => {
-                    let expr = expr.clone();
-                    let ty = match expr.kind {
-                        Expr::Tuple(exprs) => {
-                            let (ty, tsize) = self.walk_tuple(code, exprs);
-                            size += tsize;
-                            ty
-                        },
-                        Expr::Struct(name, fields) => {
-                            let (ty, tsize) = self.walk_struct(code, name, fields, expr.span);
-                            size += tsize;
-                            ty
-                        },
-                        _ => {
-                            let expr = self.walk_expr(code, expr);
-                            check_type(&mut self.errors, &ty, &expr.ty, expr.span);
-
-                            self.insert_copy_inst(code, &expr.ty);
-
-                            size += type_size(&self.types, &expr.ty);
-                            expr.ty
-                        },
-                    };
-
-                    fields.push((name, ty));
-                },
-                None => {
-                    not_enough_fields.push(name);
-                },
-            }
-        }
-
-        // Add an error if there are not enough fields
-        if !not_enough_fields.is_empty() {
-            // Convert Id of not enough fields to string and join
-            let mut fields = not_enough_fields
-                .into_iter()
-                .map(|id| IdMap::name(id))
-                .fold(String::new(), |acc, s| acc + &s + ", ");
-            // Remove trailing comma
-            fields.truncate(fields.len() - 2);
-            error!(self, span.clone(), "not enough fields: {}", fields);
-        }
-
-        (Type::Named(name), size)
-    }
-
-    fn walk_array<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, init_expr: Spanned<Expr>, arr_size: usize) -> (Type, usize) {
-        let init_expr = self.walk_expr(code, init_expr);
-        let expr_size = type_size(&self.types, &init_expr.ty);
-
-        self.insert_copy_inst(code, &init_expr.ty);
-
-        let count = (arr_size - 1) as u64;
-        let arg: u64 = ((expr_size as u64) << 32) | count;
-        code.push_inst_ref(opcode::DUPLICATE, arg);
-
-        (Type::Array(Box::new(init_expr.ty), arr_size), expr_size * arr_size)
-    }
-
-    fn store_comp_literal<W: Read + Write + Seek>(
-        &mut self,
-        code: &mut BytecodeBuilder<W>,
-        id: Id,
-        expr: Spanned<Expr>,
-        force_create: bool,
-        is_mutable: bool
-    ) -> (Type, isize) {
-        let (ty, size) = match expr.kind {
-            Expr::Tuple(exprs) => self.walk_tuple(code, exprs),
-            Expr::Struct(name, fields) => self.walk_struct(code, name, fields, expr.span),
-            Expr::Array(init_expr, size) => self.walk_array(code, *init_expr, size),
-            _ => panic!("the expression is not a compound literal"),
-        };
-
-        // Create a variable if variable `id` does not exists or `force_create` is true
-        let loc = match self.find_var(id) {
-            Some(var) if !force_create => var.loc,
-            _ => self.new_var(code.current_func_mut(), id, ty.clone(), is_mutable),
-        };
-
-        code.push_inst(opcode::LOAD_REF, loc as u8);
-        code.push_inst(opcode::STORE, size as u8);
-
-        (ty, loc)
-    }
-
-    // ====================================
-    //  Field
-    // ====================================
-
     // Named =>
     //   Struct => ok
     //   _ => error
@@ -443,24 +270,7 @@ impl<'a> Analyzer<'a> {
 
                 expect_struct(&mut self.errors, ty, span.clone())
             },
-            Type::Pointer(ty, _) => match ty {
-                box Type::Struct(fields) => Some(fields),
-                box Type::Named(name) => {
-                    let ty = match self.types.get(name) {
-                        Some(ty) => ty,
-                        None => {
-                            error!(self, span.clone(), "undefined type");
-                            return None;
-                        },
-                    };
-
-                    expect_struct(&mut self.errors, ty, span.clone())
-                },
-                ty => {
-                    error!(self, span.clone(), "expected type `struct` or `*struct` but got type `{}`", ty);
-                    None
-                },
-            },
+            Type::Pointer(ty, _) => self.get_struct_fields(&ty, span),
             ty => {
                 error!(self, span.clone(), "expected type `struct` or `*struct` but got type `{}`", ty);
                 None
@@ -468,217 +278,216 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_field<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, field: Field, expr: Spanned<Expr>) -> Option<ExprInfo> {
-        let mut expr = match expr.kind {
-            Expr::Field(expr, field) => {
-                self.walk_field(code, field, *expr)?
-            },
-            _ => {
-                let expr = self.walk_expr(code, expr);
-                expr
-            },
-        };
-
-        match &expr.ty {
-            Type::Pointer(_, is_mutable) => {
-                self.insert_copy_inst(code, &expr.ty);
-                code.push_inst_noarg(opcode::DEREFERENCE);
-                expr.is_mutable = *is_mutable;
-            },
-            _ => {}
-        }
-
-        let (field_ty, types, i) = match field {
-            Field::Number(i) => {
-                // Return if tuple_expr type is not tuple
-                let types = match &expr.ty {
-                    Type::Tuple(types) => types,
-                    Type::Pointer(ty, _) => expect_tuple(&mut self.errors, ty, expr.span.clone())?,
-                    ty => {
-                        error!(self, expr.span.clone(), "expected `tuple` or `*tuple` but got `{}`", ty);
-                        return None;
-                    },
-                };
-
-                // Get the field type
-                let field_ty = match types.get(i) {
-                    Some(ty) => ty,
-                    None => {
-                        error!(self, expr.span, "error");
-                        return None;
-                    },
-                };
-
-                (field_ty.clone(), types.clone(), i)
-            },
-            Field::Id(id) => {
-                let fields = self.get_struct_fields(&expr.ty, &expr.span)?;
-
-                // Get the field index
-                let i = match fields.iter().position(|(name, _)| *name == id) {
-                    Some(i) => i,
-                    None => {
-                        error!(self, expr.span, "undefined field `{}`", IdMap::name(id));
-                        return None;
-                    },
-                };
-                let (_, field_ty) = &fields[i];
-
-                let types: Vec<Type> = fields.iter().map(|(_, ty)| ty.clone()).collect();
-                (field_ty.clone(), types, i)
-            },
-        };
-
-        let offset = types.iter()
-            .take(i)
-            .fold(0, |acc, ty| acc + type_size(&self.types, &ty));
-
-        if offset != 0 {
-            if let Ok(offset) = offset.try_into() {
-                let [arg] = i8::to_le_bytes(offset);
-                code.push_inst(opcode::TINY_INT, arg);
-            } else {
-                code.push_inst_ref(opcode::INT, offset);
-            }
-            code.push_inst_noarg(opcode::OFFSET);
-        }
-
-        expr.ty = field_ty.clone();
-        Some(expr)
-    }
-
     // ====================================
     //  Expression
     // ====================================
 
-    // 複数の値を返す可能性のある式はstoreしなければならない
-    fn walk_expr<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, expr: Spanned<Expr>) -> ExprInfo {
-        let ty = match expr.kind {
-            Expr::Literal(Literal::Number(n)) => {
-                if let Ok(n) = n.try_into() {
-                    let [n] = i8::to_le_bytes(n);
-                    code.push_inst(opcode::TINY_INT, n);
-                } else {
-                    code.push_inst_ref(opcode::INT, n);
-                }
+    // Return true if `walk_expr` passed `expr` may push multiple values
+    fn expr_push_multiple_values(expr: &Expr) -> bool {
+        match expr {
+            // always
+            Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => true,
+            // only if the return value is a compound value
+            Expr::Call(_, _) => true,
+            _ => false,
+        }
+    }
 
-                Type::Int
+    fn walk_expr<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, expr: Spanned<Expr>) -> Option<ExprInfo> {
+        let (insts, ty) = match expr.kind {
+            Expr::Literal(Literal::Number(n)) => {
+                (translate::literal_int(n), Type::Int)
             },
             Expr::Literal(Literal::String(i)) => {
-                code.push_inst(opcode::STRING, i as u8);
-                Type::Pointer(Box::new(Type::String), false)
+                let ty = Type::Pointer(Box::new(Type::String), false);
+                (translate::literal_str(i), ty)
             },
             Expr::Literal(Literal::Unit) => {
-                code.push_inst(opcode::ZERO, 1);
-                Type::Unit
+                (translate::literal_unit(), Type::Unit)
             },
             Expr::Literal(Literal::True) => {
-                code.push_inst_noarg(opcode::TRUE);
-                Type::Bool
+                (translate::literal_true(), Type::Bool)
             },
             Expr::Literal(Literal::False) => {
-                code.push_inst_noarg(opcode::FALSE);
-                Type::Bool
+                (translate::literal_false(), Type::Bool)
             },
             Expr::Literal(Literal::Null) => {
-                code.push_inst_noarg(opcode::NULL);
-                Type::Null
+                (translate::literal_null(), Type::Null)
             },
-            Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
-                let id = self.gen_temp_id();
-                let span = expr.span.clone();
-                let (ty, loc) = self.store_comp_literal(code, id, expr, true, false);
+            Expr::Tuple(exprs) => {
+                let mut insts = InstList::new();
+                let mut types = Vec::new();
+                for expr in exprs {
+                    let expr = self.walk_expr(code, expr);
+                    if let Some(expr) = expr {
+                        types.push(expr.ty);
+                        insts.append(expr.insts);
+                    } else {
+                        types.push(Type::Invalid);
+                    }
+                }
 
-                code.push_inst(opcode::LOAD_REF, loc as u8);
-
-                return ExprInfo::new(ty, span);
+                (insts, Type::Tuple(types))
             },
-            Expr::Field(tuple_expr, field) => {
-                let field_expr = match self.walk_field(code, field, *tuple_expr) {
-                    Some(t) => t,
-                    None => return ExprInfo::invalid(expr.span),
+            Expr::Struct(name, field_exprs) => {
+                let ty = self.types.get(&name)?;
+                let fields = match &ty {
+                    Type::Struct(fields) => fields,
+                    ty => {
+                        error!(self, expr.span.clone(), "expected struct but got type `{}`", ty);
+                        return None;
+                    },
                 };
 
-                return field_expr;
+                let mut insts = InstList::new();
+
+                // Push instructions to `insts` in order
+                for (field_id, field_ty) in fields.clone() {
+                    let field_expr = field_exprs.iter().find(|(id, _)| id.kind == field_id);
+                    match field_expr {
+                        Some((_, expr)) => {
+                            // TODO: Avoid clone()
+                            if let Some(expr) = self.walk_expr(code, expr.clone()) {
+                                insts.append(expr.insts);
+                                check_type(&mut self.errors, &field_ty, &expr.ty, expr.span);
+                            }
+                        },
+                        None => {
+                            error!(self, expr.span.clone(), "missing field `{}`", IdMap::name(field_id));
+                        },
+                    }
+                }
+
+                (insts, Type::Named(name))
+            },
+            Expr::Array(expr, size) => {
+                let expr = self.walk_expr(code, *expr)?;
+
+                (translate::literal_array(expr.insts, type_size(&self.types, &expr.ty), size), Type::Array(Box::new(expr.ty), size))
+            },
+            Expr::Field(comp_expr, field) => {
+                let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
+                let comp_expr = self.walk_expr(code, *comp_expr)?;
+                let comp_expr_size = type_size(&self.types, &comp_expr.ty);
+
+                let loc = if should_store {
+                    let id = self.gen_temp_id();
+                    Some(self.new_var(code.current_func_mut(), id, comp_expr.ty.clone(), false))
+                } else {
+                    None
+                };
+
+                let should_deref = match &comp_expr.ty {
+                    Type::Pointer(_, _) => true,
+                    _ => false,
+                };
+
+                // Get the field type and offset
+                let (field_ty, offset) = match field {
+                    Field::Number(i) => {
+                        let types = match &comp_expr.ty {
+                            Type::Pointer(ty, _is_mutable) => expect_tuple(&mut self.errors, &ty, comp_expr.span.clone())?,
+                            ty => expect_tuple(&mut self.errors, ty, comp_expr.span.clone())?,
+                        };
+                        
+                        match types.get(i) {
+                            Some(ty) => {
+                                let offset = types.iter().take(i).fold(0, |acc, ty| acc + type_size(&self.types, ty));
+                                (ty.clone(), offset)
+                            },
+                            None => {
+                                error!(self, expr.span, "error");
+                                return None;
+                            },
+                        }
+                    },
+                    Field::Id(name) => {
+                        let fields = self.get_struct_fields(&comp_expr.ty, &comp_expr.span)?.clone();
+                        let i = match fields.iter().position(|(id, _)| *id == name) {
+                            Some(i) => i,
+                            None => {
+                                error!(self, expr.span, "no field in `{}`: `{}`", comp_expr.ty, IdMap::name(name));
+                                return None;
+                            },
+                        };
+
+                        let offset = fields.iter().take(i).fold(0, |acc, (_, ty)| acc + type_size(&self.types, ty));
+                        (fields[i].1.clone(), offset)
+                    }
+                };
+
+                // FIXME: is_mutable
+                let insts = translate::field(loc, should_deref, comp_expr.insts, comp_expr_size, offset);
+                let ty = field_ty.clone();
+                return Some(ExprInfo::new_lvalue(insts, ty, expr.span, true));
             },
             Expr::Subscript(expr, subscript_expr) => {
-                let mut expr = self.walk_expr(code, *expr);
+                let should_store = Self::expr_push_multiple_values(&expr.kind);
 
-                let ty = match expr.ty {
-                    Type::Array(ty, _) => *ty,
+                let expr = self.walk_expr(code, *expr);
+                let subscript_expr = self.walk_expr(code, *subscript_expr);
+                try_some!(expr, subscript_expr);
+
+                let mut expr = expr;
+
+                let loc = if should_store {
+                    let id = self.gen_temp_id();
+                    Some(self.new_var(code.current_func_mut(), id, expr.ty.clone(), false))
+                } else {
+                    None
+                };
+
+                let (ty, should_deref) = match expr.ty.clone() {
+                    Type::Array(ty, _) => (*ty, false),
                     Type::Pointer(ty, is_mutable) => {
                         expr.is_mutable = is_mutable;
-                        self.insert_copy_inst(code, &Type::Pointer(ty.clone(), is_mutable));
-                        code.push_inst_noarg(opcode::DEREFERENCE);
 
                         match *ty {
-                            Type::Array(ty, _) => *ty,
+                            Type::Array(ty, _) => (*ty, true),
                             ty => {
                                 error!(self, expr.span.clone(), "expected array but got type `{}`", ty);
-                                return ExprInfo::invalid(expr.span);
+                                return None;
                             },
                         }
                     }
                     ty => {
                         error!(self, expr.span.clone(), "expected array but got type `{}`", ty);
-                        return ExprInfo::invalid(expr.span);
+                        return None;
                     },
                 };
 
-                let subscript_expr = self.walk_expr(code, *subscript_expr);
-                self.insert_copy_inst(code, &subscript_expr.ty);
-
                 check_type(&mut self.errors, &Type::Int, &subscript_expr.ty, subscript_expr.span);
 
-                code.push_inst_noarg(opcode::OFFSET);
-
+                expr.insts = translate::subscript(
+                    loc,
+                    should_deref,
+                    expr.insts,
+                    type_size(&self.types, &expr.ty),
+                    subscript_expr.insts,
+                    type_size(&self.types, &subscript_expr.ty),
+                );
                 expr.ty = ty;
-                return expr;
+                return Some(expr);
             },
             Expr::Variable(name) => {
                 let var = match self.find_var(name) {
                     Some(v) => v,
                     None => {
                         self.add_error("undefined variable", expr.span.clone());
-                        return ExprInfo::invalid(expr.span);
+                        return None;
                     },
                 };
 
-                code.push_inst(opcode::LOAD_REF, var.loc as u8);
-
-                return ExprInfo::new_lvalue(var.ty.clone(), expr.span, var.is_mutable);
+                let insts = translate::variable(var.loc);
+                return Some(ExprInfo::new_lvalue(insts, var.ty.clone(), expr.span, var.is_mutable));
             },
-            //   lhs
-            //   jump_if_zero A
-            //   rhs
-            //   jump_if_zero A
-            //   true
-            //   jump END
-            // A:
-            //   false
-            // END:
             Expr::BinOp(BinOp::And, lhs, rhs) => {
-                let a = code.new_label();
-                let end = code.new_label();
-
                 let lhs = self.walk_expr(code, *lhs);
-                self.insert_copy_inst(code, &lhs.ty);
-                code.jump_if_false_to(a);
-
                 let rhs = self.walk_expr(code, *rhs);
-                self.insert_copy_inst(code, &lhs.ty);
-                code.jump_if_false_to(a);
-
-                code.push_inst_noarg(opcode::TRUE);
-                code.jump_to(end);
-
-                code.push_label(a);
-                code.push_inst_noarg(opcode::FALSE);
-
-                code.push_label(end);
+                try_some!(lhs, rhs);
 
                 // Type check
-                match (lhs.ty, rhs.ty) {
+                match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {},
                     (Type::Invalid, _) | (_, Type::Invalid) => {},
                     (lty, rty) => {
@@ -686,39 +495,17 @@ impl<'a> Analyzer<'a> {
                     },
                 }
 
-                Type::Bool
+                let lhs_size = type_size(&self.types, &lhs.ty);
+                let rhs_size = type_size(&self.types, &rhs.ty);
+                (translate::binop_and(lhs.insts, lhs_size, rhs.insts, rhs_size), Type::Bool)
             },
-            //   lhs
-            //   jump_non_zero A
-            //   rhs
-            //   jump_non_zero A
-            //   false
-            //   jump END
-            // A:
-            //   true
-            // END:
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
-                let a = code.new_label();
-                let end = code.new_label();
-
                 let lhs = self.walk_expr(code, *lhs);
-                self.insert_copy_inst(code, &lhs.ty);
-                code.jump_if_true_to(a);
-
                 let rhs = self.walk_expr(code, *rhs);
-                self.insert_copy_inst(code, &lhs.ty);
-                code.jump_if_true_to(a);
-
-                code.push_inst_noarg(opcode::FALSE);
-                code.jump_to(end);
-
-                code.push_label(a);
-                code.push_inst_noarg(opcode::TRUE);
-
-                code.push_label(end);
+                try_some!(lhs, rhs);
 
                 // Type check
-                match (lhs.ty, rhs.ty) {
+                match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {},
                     (Type::Invalid, _) | (_, Type::Invalid) => {},
                     (lty, rty) => {
@@ -726,32 +513,17 @@ impl<'a> Analyzer<'a> {
                     },
                 }
 
-                Type::Bool
+                let lhs_size = type_size(&self.types, &lhs.ty);
+                let rhs_size = type_size(&self.types, &rhs.ty);
+                (translate::binop_or(lhs.insts, lhs_size, rhs.insts, rhs_size), Type::Bool)
             },
             Expr::BinOp(binop, lhs, rhs) => {
                 let lhs = self.walk_expr(code, *lhs);
-                self.insert_copy_inst(code, &lhs.ty);
                 let rhs = self.walk_expr(code, *rhs);
-                self.insert_copy_inst(code, &lhs.ty);
-
-                // Insert an instruction
-                let opcode = match binop {
-                    BinOp::Add => opcode::BINOP_ADD,
-                    BinOp::Sub => opcode::BINOP_SUB,
-                    BinOp::Mul => opcode::BINOP_MUL,
-                    BinOp::Div => opcode::BINOP_DIV,
-                    BinOp::LessThan => opcode::BINOP_LT,
-                    BinOp::LessThanOrEqual => opcode::BINOP_LE,
-                    BinOp::GreaterThan => opcode::BINOP_GT,
-                    BinOp::GreaterThanOrEqual => opcode::BINOP_GE,
-                    BinOp::Equal => opcode::BINOP_EQ,
-                    BinOp::NotEqual => opcode::BINOP_NEQ,
-                    _ => panic!(),
-                };
-                code.push_inst_noarg(opcode);
+                try_some!(lhs, rhs);
 
                 let binop_symbol = binop.to_symbol();
-                match (binop, &lhs.ty, &rhs.ty) {
+                let ty = match (&binop, &lhs.ty, &rhs.ty) {
                     (BinOp::Add, Type::Int, Type::Int) => Type::Int,
                     (BinOp::Sub, Type::Int, Type::Int) => Type::Int,
                     (BinOp::Mul, Type::Int, Type::Int) => Type::Int,
@@ -773,7 +545,11 @@ impl<'a> Analyzer<'a> {
                         self.add_error(&format!("`{} {} {}`", lhs.ty, binop_symbol, rhs.ty), expr.span.clone());
                         Type::Invalid
                     }
-                }
+                };
+
+                let lhs_size = type_size(&self.types, &lhs.ty);
+                let rhs_size = type_size(&self.types, &rhs.ty);
+                (translate::binop(binop, lhs.insts, lhs_size, rhs.insts, rhs_size), ty)
             },
             Expr::Call(name, args) => {
                 let (return_ty, params, code_id, module_id) = {
@@ -785,18 +561,10 @@ impl<'a> Analyzer<'a> {
                                 (func, *id, Some(0))
                             } else {
                                 error!(self, expr.span.clone(), "undefined function");
-                                return ExprInfo::invalid(expr.span);
+                                return None;
                             }
                         },
                     };
-
-                    let return_value_size = type_size(&self.types, &callee_func.return_ty);
-                    if return_value_size > std::u8::MAX as usize {
-                        panic!("too large return value");
-                    }
-
-                    // Push placeholder for return value
-                    code.push_inst(opcode::ZERO, return_value_size as u8);
 
                     (
                         callee_func.return_ty.clone(),
@@ -812,199 +580,147 @@ impl<'a> Analyzer<'a> {
                         "the function takes {} parameters. but got {} arguments",
                         params.len(),
                         args.len());
-                    return ExprInfo::new(return_ty, expr.span);
+                    return None;
                 }
 
-                // Check parameter types
+                let mut insts = Vec::new();
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
                     let arg = self.walk_expr(code, arg);
-                    self.insert_copy_inst(code, &arg.ty);
-                    check_type(&mut self.errors, &param_ty, &arg.ty, arg.span.clone());
+                    if let Some(arg) = arg {
+                        insts.push((arg.insts, type_size(&self.types, &arg.ty)));
+                        check_type(&mut self.errors, &param_ty, &arg.ty, arg.span.clone());
+                    }
                 }
 
-                if let Some(module_id) = module_id {
-                    let code_id = code_id as u8;
-                    let arg = (module_id << 4) | code_id;
-                    code.push_inst(opcode::CALL_EXTERN, arg);
-                } else {
-                    code.push_inst(opcode::CALL, code_id as u8);
-                }
-
-                // Store if the return value is compound data
-                if Self::should_store(&return_ty) {
-                    let id = self.gen_temp_id();
-                    let loc = self.new_var(code.current_func_mut(), id, return_ty.clone(), false);
-                    code.push_inst(opcode::LOAD_REF, loc as u8);
-                    code.push_inst(opcode::STORE, type_size(&self.types, &return_ty) as u8);
-                    code.push_inst(opcode::LOAD_REF, loc as u8);
-                }
-
-                return_ty
+                let insts = translate::call(code_id, module_id, insts, type_size(&self.types, &return_ty));
+                (insts, return_ty)
             },
             Expr::Address(expr, is_mutable) => {
-                let expr = self.walk_expr(code, *expr);
+                let expr = self.walk_expr(code, *expr)?;
 
                 if !expr.is_lvalue {
                     error!(self, expr.span, "this expression is not lvalue");
-                    Type::Invalid
+                    return None;
                 } else if is_mutable && !expr.is_mutable {
                     error!(self, expr.span, "this expression is immutable");
-                    Type::Invalid
+                    return None;
                 } else {
-                    code.push_inst_noarg(opcode::POINTER);
-                    Type::Pointer(Box::new(expr.ty), is_mutable)
+                    let insts = translate::address(expr.insts);
+                    (insts, Type::Pointer(Box::new(expr.ty), is_mutable))
                 }
             },
             Expr::Dereference(expr) => {
-                let expr = self.walk_expr(code, *expr);
-                self.insert_copy_inst(code, &expr.ty);
+                let expr = self.walk_expr(code, *expr)?;
+                let expr_size = type_size(&self.types, &expr.ty);
 
                 match expr.ty {
                     Type::Pointer(ty, is_mutable) => {
-                        code.push_inst_noarg(opcode::DEREFERENCE);
-                        return ExprInfo::new_lvalue(*ty, expr.span, is_mutable); // TODO:
+                        let insts = translate::dereference(expr.insts, expr_size);
+                        return Some(ExprInfo::new_lvalue(insts, *ty, expr.span, is_mutable));
                     }
-                    Type::Invalid => Type::Invalid,
+                    Type::Invalid => return None,
                     ty => {
                         error!(self, expr.span, "expected type `pointer` but got type `{}`", ty);
-                        Type::Invalid
+                        return None;
                     }
                 }
             },
             Expr::Negative(expr) => {
-                let expr = self.walk_expr(code, *expr);
-                self.insert_copy_inst(code, &expr.ty);
+                let expr = self.walk_expr(code, *expr)?;
+                let expr_size = type_size(&self.types, &expr.ty);
 
                 match expr.ty {
                     ty @ Type::Int /* | Type::Float */ => {
-                        code.push_inst_noarg(opcode::NEGATIVE);
-                        ty
+                        (translate::negative(expr.insts, expr_size), ty)
                     },
                     ty => {
                         error!(self, expr.span, "expected type `int` or `float` but got type `{}`", ty);
-                        Type::Invalid
+                        return None;
                     },
                 }
             },
             Expr::Alloc(expr, is_mutable) => {
-                let expr = self.walk_expr(code, *expr);
-                self.insert_copy_inst(code, &expr.ty);
-                code.push_inst(opcode::ALLOC, type_size(&self.types, &expr.ty) as u8);
+                let expr = self.walk_expr(code, *expr)?;
 
-                Type::Pointer(Box::new(expr.ty), is_mutable)
+                let insts = translate::alloc(expr.insts, type_size(&self.types, &expr.ty));
+                (insts, Type::Pointer(Box::new(expr.ty), is_mutable))
             },
         };
 
-        ExprInfo::new(ty, expr.span)
+        Some(ExprInfo::new(insts, ty, expr.span))
     }
 
-    fn walk_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, stmt: Spanned<Stmt>) {
-        match stmt.kind {
+    fn walk_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, stmt: Spanned<Stmt>) -> Option<InstList> {
+        let insts = match stmt.kind {
             Stmt::Expr(expr) => {
-                let expr = self.walk_expr(code, expr);
+                let expr = self.walk_expr(code, expr)?;
 
-                let pop_count = type_size(&self.types, &expr.ty);
-                for _ in 0..pop_count {
-                    code.push_inst_noarg(opcode::POP);
-                }
+                translate::expr_stmt(expr.insts, type_size(&self.types, &expr.ty))
             },
             Stmt::If(cond, stmt, None) => {
-                let end = code.new_label();
-
-                // Condition
-                let expr = self.walk_expr(code, cond);
-                self.insert_copy_inst(code, &expr.ty);
-                code.jump_if_false_to(end);
-
-                check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
-
-                // Then-clause
-                self.walk_stmt(code, *stmt);
-
-                code.push_label(end);
-            },
-            Stmt::If(cond, then_stmt, Some(else_stmt)) => {
-                let els = code.new_label();
-                let end = code.new_label();
-
-                // Condition
-                let expr = self.walk_expr(code, cond);
-                self.insert_copy_inst(code, &expr.ty);
-                code.jump_if_false_to(els);
-
-                check_type(&mut self.errors, &Type::Bool, &expr.ty, expr.span);
-
-                // Then-clause
-                self.walk_stmt(code, *then_stmt);
-                code.jump_to(end);
-                
-                // Else-clause
-                code.push_label(els);
-                self.walk_stmt(code, *else_stmt);
-
-                code.push_label(end);
-            },
-            Stmt::While(cond, stmt) => {
-                let end = code.new_label();
-                let begin = code.new_label();
-
-                code.push_label(begin);
-
-                // Insert condition expression instruction
                 let cond = self.walk_expr(code, cond);
-                self.insert_copy_inst(code, &cond.ty);
-                code.jump_if_false_to(end);
+                let then_insts = self.walk_stmt(code, *stmt);
+                try_some!(cond, then_insts);
 
                 check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
 
-                // Insert body statement instruction
-                self.walk_stmt(code, *stmt);
+                translate::if_stmt(cond.insts, type_size(&self.types, &cond.ty), then_insts)
+            },
+            Stmt::If(cond, then_stmt, Some(else_stmt)) => {
+                let cond = self.walk_expr(code, cond);
+                let then = self.walk_stmt(code, *then_stmt);
+                let els = self.walk_stmt(code, *else_stmt);
+                try_some!(cond, then, els);
 
-                // Jump to begin
-                code.jump_to(begin);
+                check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
 
-                code.push_label(end);
+                translate::if_else_stmt(cond.insts, type_size(&self.types, &cond.ty), then, els)
+            },
+            Stmt::While(cond, stmt) => {
+                let cond = self.walk_expr(code, cond);
+                let body = self.walk_stmt(code, *stmt);
+                try_some!(cond, body);
+
+                check_type(&mut self.errors, &Type::Bool, &cond.ty, cond.span);
+
+                translate::while_stmt(cond.insts, type_size(&self.types, &cond.ty), body)
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
+                let mut insts = InstList::new();
                 for stmt in stmts {
-                    self.walk_stmt(code, stmt);
-                }
-                self.pop_scope();
-            },
-            Stmt::Bind(name, expr, is_mutable) => {
-                match expr.kind {
-                    Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => {
-                        self.store_comp_literal(code, name, expr, true, is_mutable);
-                    },
-                    _ => {
-                        let expr = self.walk_expr(code, expr);
-                        self.insert_copy_inst(code, &expr.ty);
-
-                        let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
-                        code.push_inst(opcode::LOAD_REF, loc as u8);
-                        code.push_inst(opcode::STORE, type_size(&self.types, &expr.ty) as u8);
+                    if let Some(t) = self.walk_stmt(code, stmt) {
+                        insts.append(t);
                     }
                 }
+                self.pop_scope();
+
+                insts
+            },
+            Stmt::Bind(name, expr, is_mutable) => {
+                let expr = self.walk_expr(code, expr)?;
+                let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
+
+                translate::bind_stmt(loc, expr.insts, type_size(&self.types, &expr.ty))
             },
             Stmt::Assign(lhs, rhs) => {
-                let rhs = self.walk_expr(code, rhs);
-                self.insert_copy_inst(code, &rhs.ty);
                 let lhs = self.walk_expr(code, lhs);
+                let rhs = self.walk_expr(code, rhs);
+                try_some!(lhs, rhs);
 
                 if !lhs.is_lvalue {
                     error!(self, lhs.span, "unassignable expression");
-                    return;
+                    return None;
                 }
 
                 if !lhs.is_mutable {
                     error!(self, lhs.span, "immutable expression");
-                    return;
+                    return None;
                 }
 
                 check_type(&mut self.errors, &lhs.ty, &rhs.ty, rhs.span);
 
-                code.push_inst(opcode::STORE, type_size(&self.types, &lhs.ty) as u8);
+                translate::assign_stmt(lhs.insts, rhs.insts, type_size(&self.types, &rhs.ty))
             },
             Stmt::Return(expr) => {
                 let func_name = code.current_func().name;
@@ -1012,30 +728,27 @@ impl<'a> Analyzer<'a> {
                 // Check if is outside function
                 if func_name == self.main_func_id {
                     error!(self, stmt.span, "return statement outside function");
-                    return;
+                    return None;
                 }
 
                 let expr = match expr {
-                    Some(expr) => self.walk_expr(code, expr),
-                    None => {
-                        code.push_inst(opcode::ZERO, 1);
-                        ExprInfo::new(Type::Unit, stmt.span)
-                    }
+                    Some(expr) => Some(self.walk_expr(code, expr)?),
+                    None => None,
                 };
-                self.insert_copy_inst(code, &expr.ty);
 
                 // Check type
                 let return_var = self.find_var(self.return_value_id).unwrap();
                 let ty = return_var.ty.clone();
                 let loc = return_var.loc;
 
-                check_type(&mut self.errors, &ty, &expr.ty, expr.span);
+                let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
+                check_type(&mut self.errors, &ty, return_ty, stmt.span);
 
-                code.push_inst(opcode::LOAD_REF, loc as u8);
-                code.push_inst(opcode::STORE, type_size(&self.types, &ty) as u8);
-                code.push_inst_noarg(opcode::RETURN);
+                translate::return_stmt(loc, expr.map(|expr| (expr.insts, type_size(&self.types, &expr.ty))))
             },
-        }
+        };
+
+        Some(insts)
     }
 
     // Check if specified type exists
@@ -1074,17 +787,17 @@ impl<'a> Analyzer<'a> {
                 // params
                 self.insert_params(params, &return_ty);
 
-                // body
                 code.begin_function(name);
-                self.walk_stmt(code, stmt);
+                // `None` is not returned because `stmt` is always a block statement
+                let mut insts = self.walk_stmt(code, stmt).unwrap();
 
-                // insert a return instruction if the return value type is unit
+                // Push a return instruction if the return value type is unit
                 let return_var = self.get_return_var();
                 if let Type::Unit = return_var.ty {
-                    code.push_inst_noarg(opcode::RETURN);
+                    insts.push_inst_noarg(opcode::RETURN);
                 }
 
-                code.end_function(name);
+                code.end_function(name, insts);
 
                 self.pop_scope();
             },
@@ -1095,9 +808,11 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_main_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: Spanned<TopLevel>) {
+    fn walk_main_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: Spanned<TopLevel>) -> Option<InstList> {
         if let TopLevel::Stmt(stmt) = toplevel.kind {
-            self.walk_stmt(code, stmt);
+            self.walk_stmt(code, stmt)
+        } else {
+            None
         }
     }
 
@@ -1152,10 +867,13 @@ impl<'a> Analyzer<'a> {
         }
 
         code.begin_function(self.main_func_id);
+        let mut insts = InstList::new();
         for toplevel in program.top {
-            self.walk_main_stmt(&mut code, toplevel);
+            if let Some(stmt_insts) = self.walk_main_stmt(&mut code, toplevel) {
+                insts.append(stmt_insts);
+            }
         }
-        code.end_function(self.main_func_id);
+        code.end_function(self.main_func_id, insts);
 
         self.pop_scope();
 

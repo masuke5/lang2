@@ -309,7 +309,9 @@ impl VM {
         let func = &self.functions[0];
         self.ip = func.pos;
         self.fp = 0;
-        self.sp = func.stack_size as usize - 1;
+        if func.stack_size > 0 {
+            self.sp = func.stack_size as usize - 1;
+        }
 
         loop {
             let [opcode, arg] = self.next_inst(&bytecode);
@@ -613,7 +615,7 @@ impl VM {
 
         if cfg!(debug_assertions) {
             let main_func_stack_size = self.functions[0].stack_size as usize;
-            if (main_func_stack_size == 0 && self.sp == 0) || self.sp != main_func_stack_size - 1 {
+            if (main_func_stack_size != 0 || self.sp != 0) && self.sp != main_func_stack_size - 1 {
                 self.dump_stack(self.sp);
                 eprintln!("warning: expected stack size {}, but sp is {}.", main_func_stack_size, self.sp);
             }

@@ -24,6 +24,14 @@ impl PartialEq for GcRegion {
     }
 }
 
+impl Drop for GcRegion {
+    fn drop(&mut self) {
+        unsafe {
+            libc::free(self as *mut _ as *mut c_void);
+        }
+    }
+}
+
 impl GcRegion {
     fn new(size: usize, consists_of_value: bool) -> NonNull<Self> {
         let ptr = unsafe {
@@ -125,7 +133,8 @@ impl Gc {
                     if region.consists_of_value() {
                         unsafe {
                             let base = region.as_mut_ptr::<Value>();
-                            for i in 0..region.size {
+                            let field_count = region.size / mem::size_of::<Value>();
+                            for i in 0..field_count {
                                 mark(&mut *base.add(i));
                             }
                         }

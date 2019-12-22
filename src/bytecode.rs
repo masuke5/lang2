@@ -49,7 +49,7 @@ pub mod opcode {
     pub const CALL_EXTERN: u8 = 0x23;
     pub const TINY_INT: u8 = 0x24;
 
-    pub const END: u8 = 0xff;
+    pub const END: u8 = 0x50;
 }
 
 #[inline]
@@ -531,53 +531,38 @@ pub trait ToRef {
 
 #[derive(Debug)]
 pub struct InstList {
-    insts: LinkedList<[u8; 2]>,
-    label_locations: Vec<Option<usize>>,
+    pub insts: LinkedList<[u8; 2]>,
     refs: Vec<u64>,
 }
 
 impl InstList {
-    fn new() -> Self {
+    pub fn new() -> Self {
         InstList {
             insts: LinkedList::new(),
-            label_locations: Vec::new(),
             refs: Vec::new(),
         }
     }
 
-    fn prev_inst(&self) -> [u8; 2] {
+    pub fn prev_inst(&self) -> [u8; 2] {
         *self.insts.back().unwrap()
-    }
-
-    pub fn new_label(&mut self) -> Label {
-        let label = Label(self.label_locations.len());
-        self.label_locations.push(None);
-        label
-    }
-
-    pub fn push_label(&mut self, label: Label) {
-        self.label_locations[label.0] = Some(self.insts.len());
-    }
-
-    pub fn jump_to(&mut self, label: Label) {
-        self.push_inst(opcode::JUMP, label.0 as u8);
-    }
-
-    pub fn jump_if_false_to(&mut self, label: Label) {
-        self.push_inst(opcode::JUMP_IF_FALSE, label.0 as u8);
-    }
-
-    pub fn jump_if_true_to(&mut self, label: Label) {
-        self.push_inst(opcode::JUMP_IF_TRUE, label.0 as u8);
     }
 
     // Insert an instruction
 
     #[inline]
     pub fn append(&mut self, mut insts: InstList) {
+        // Update ref id and label ids
+        for [opcode, arg] in &mut insts.insts {
+            match *opcode {
+                opcode::INT | opcode::DUPLICATE => {
+                    *arg += self.refs.len() as u8;
+                },
+                _ => {},
+            }
+        }
+
         self.insts.append(&mut insts.insts);
         self.refs.append(&mut insts.refs);
-        self.label_locations.append(&mut insts.label_locations);
     }
 
     #[inline]
@@ -589,6 +574,12 @@ impl InstList {
     #[inline]
     pub fn push_inst(&mut self, opcode: u8, arg: u8) {
         self.insts.push_back([opcode, arg]);
+    }
+
+    #[inline]
+    pub fn push_jump(&mut self, opcode: u8, label: u8) {
+        let opcode = opcode | 0b10000000;
+        self.push_inst(opcode, label);
     }
 
     #[inline]
@@ -612,32 +603,12 @@ impl InstList {
     pub fn len(&self) -> usize {
         self.insts.len()
     }
-
-    fn resolve_jump_destinations(&mut self) {
-        for (i, [opcode, arg]) in self.insts.iter_mut().enumerate() {
-            match *opcode {
-                opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
-                    match self.label_locations[*arg as usize] {
-                        Some(loc) => {
-                            let relative_loc = loc as i32 - i as i32;
-                            *arg = i8::to_le_bytes(relative_loc as i8)[0];
-                        },
-                        None => panic!("label {} is not resolved", *arg),
-                    }
-                },
-                _ => {},
-            }
-        }
-    }
 }
 
 impl_toref!(u64);
 impl_toref!(i64);
 impl_toref!(usize);
 impl_toref!(isize);
-
-#[derive(Debug, Copy, Clone)]
-pub struct Label(usize);
 
 #[derive(Debug)]
 pub struct BytecodeBuilder<W: Read + Write + Seek> {
@@ -650,8 +621,6 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
     funcmap_start: u16,
     string_map_start: u16,
     module_map_start: u16,
-
-    insts: InstList,
 }
 
 impl<W: Read + Write + Seek> BytecodeBuilder<W> {
@@ -670,7 +639,6 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
             funcmap_start: 0,
             string_map_start: 16,
             module_map_start: 0,
-            insts: InstList::new(),
         };
         slf.write_strings(strings);
         slf.write_modules(modules);
@@ -735,11 +703,6 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         }
     }
 
-    #[inline]
-    pub fn prev_inst(&self) -> [u8; 2] {
-        self.insts.prev_inst()
-    }
-    
     // Function
 
     pub fn new_function(&mut self, mut func: Function) {
@@ -774,33 +737,30 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.current_func_id = Some(id);
     }
 
-    pub fn end_function(&mut self, id: Id) {
-        self.push_inst_noarg(opcode::END);
-
-        // Resolve jump destinations
-        self.insts.resolve_jump_destinations();
+    pub fn end_function(&mut self, func_id: Id, mut insts: InstList) {
+        insts.push_inst_noarg(opcode::END);
 
         // Write instruction bytes
         unsafe {
             self.code.seek_to_end();
-            for inst in &self.insts.insts {
+            for inst in &insts.insts {
                 self.code.write_bytes_without_seek(inst);
             }
-            self.code.set_len(self.code.len() + self.insts.len() as u64 * 2);
+            self.code.set_len(self.code.len() + insts.len() as u64 * 2);
         }
 
         self.code.align(8);
 
-        let func = self.functions.get_mut(&id).unwrap();
+        let func = self.functions.get_mut(&func_id).unwrap();
         func.ref_start = self.code.len() as u16;
 
         // Push refs
-        for int_ref in self.insts.refs.drain(..) {
+        for int_ref in insts.refs.drain(..) {
             self.code.push_u64(int_ref);
         }
 
         // Set function infomations
-        let func = self.get_function(id).unwrap().clone();
+        let func = self.get_function(func_id).unwrap().clone();
         let base = self.funcmap_start as u64 + func.code_id as u64 * 8;
         self.code.write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
         self.code.write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
@@ -808,7 +768,6 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.code.write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
 
         // Clear some fields for a next function
-        self.insts = InstList::new();
         self.current_func_id = None;
     }
 
@@ -822,50 +781,6 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
 
     pub fn current_func_mut(&mut self) -> &mut Function {
         self.functions.get_mut(self.current_func_id.as_ref().unwrap()).unwrap()
-    }
-
-    // Label
-
-    pub fn new_label(&mut self) -> Label {
-        self.insts.new_label()
-    }
-
-    pub fn push_label(&mut self, label: Label) {
-        self.insts.push_label(label);
-    }
-
-    pub fn jump_to(&mut self, label: Label) {
-        self.insts.jump_to(label);
-    }
-
-    pub fn jump_if_false_to(&mut self, label: Label) {
-        self.insts.jump_if_false_to(label);
-    }
-
-    pub fn jump_if_true_to(&mut self, label: Label) {
-        self.insts.jump_if_true_to(label);
-    }
-
-    // Insert an instruction
-
-    #[inline]
-    pub fn replace_last_inst_with(&mut self, opcode: u8, arg: u8) {
-        self.insts.replace_last_inst_with(opcode, arg);
-    }
-
-    #[inline]
-    pub fn push_inst(&mut self, opcode: u8, arg: u8) {
-        self.insts.push_inst(opcode, arg);
-    }
-
-    #[inline]
-    pub fn push_inst_noarg(&mut self, opcode: u8) {
-        self.insts.push_inst_noarg(opcode);
-    }
-
-    #[inline]
-    pub fn push_inst_ref(&mut self, opcode: u8, arg: impl ToRef) {
-        self.insts.push_inst_ref(opcode, arg);
     }
 
     pub fn build(self) -> BytecodeStream<W> {

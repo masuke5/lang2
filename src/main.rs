@@ -16,6 +16,7 @@ mod stdlib;
 mod utils;
 mod gc;
 mod module;
+mod translate;
 
 use std::process::exit;
 use std::fs::File;
