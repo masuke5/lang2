@@ -256,9 +256,9 @@ impl<'a> Analyzer<'a> {
     //   _ => error
     // Struct => ok
     // _ => error
-    fn get_struct_fields<'b>(&'b mut self, ty: &'b Type, span: &Span) -> Option<&'b Vec<(Id, Type)>> {
+    fn get_struct_fields<'b>(&'b mut self, ty: &'b Type, span: &Span, is_mutable: bool) -> Option<(&'b Vec<(Id, Type)>, bool)> {
         match ty {
-            Type::Struct(fields) => Some(fields),
+            Type::Struct(fields) => Some((fields, is_mutable)),
             Type::Named(name) => {
                 let ty = match self.types.get(name) {
                     Some(ty) => ty,
@@ -268,9 +268,9 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                expect_struct(&mut self.errors, ty, span.clone())
+                expect_struct(&mut self.errors, ty, span.clone()).map(|fields| (fields, is_mutable))
             },
-            Type::Pointer(ty, _) => self.get_struct_fields(&ty, span),
+            Type::Pointer(ty, is_mutable) => self.get_struct_fields(&ty, span, *is_mutable),
             ty => {
                 error!(self, span.clone(), "expected type `struct` or `*struct` but got type `{}`", ty);
                 None
@@ -369,6 +369,7 @@ impl<'a> Analyzer<'a> {
                 let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
                 let comp_expr = self.walk_expr(code, *comp_expr)?;
                 let comp_expr_size = type_size(&self.types, &comp_expr.ty);
+                let mut is_mutable = comp_expr.is_mutable;
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
@@ -386,7 +387,10 @@ impl<'a> Analyzer<'a> {
                 let (field_ty, offset) = match field {
                     Field::Number(i) => {
                         let types = match &comp_expr.ty {
-                            Type::Pointer(ty, _is_mutable) => expect_tuple(&mut self.errors, &ty, comp_expr.span.clone())?,
+                            Type::Pointer(ty, is_mutable_) => {
+                                is_mutable = *is_mutable_;
+                                expect_tuple(&mut self.errors, &ty, comp_expr.span.clone())?
+                            },
                             ty => expect_tuple(&mut self.errors, ty, comp_expr.span.clone())?,
                         };
                         
@@ -402,7 +406,10 @@ impl<'a> Analyzer<'a> {
                         }
                     },
                     Field::Id(name) => {
-                        let fields = self.get_struct_fields(&comp_expr.ty, &comp_expr.span)?.clone();
+                        let (fields, is_mutable_) = self.get_struct_fields(&comp_expr.ty, &comp_expr.span, is_mutable)?;
+                        let fields = fields.clone();
+                        is_mutable = is_mutable_;
+
                         let i = match fields.iter().position(|(id, _)| *id == name) {
                             Some(i) => i,
                             None => {
@@ -416,10 +423,9 @@ impl<'a> Analyzer<'a> {
                     }
                 };
 
-                // FIXME: is_mutable
                 let insts = translate::field(loc, should_deref, comp_expr.insts, comp_expr_size, offset);
                 let ty = field_ty.clone();
-                return Some(ExprInfo::new_lvalue(insts, ty, expr.span, true));
+                return Some(ExprInfo::new_lvalue(insts, ty, expr.span, is_mutable));
             },
             Expr::Subscript(expr, subscript_expr) => {
                 let should_store = Self::expr_push_multiple_values(&expr.kind);
