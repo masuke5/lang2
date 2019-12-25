@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use std::sync::RwLock;
 use lazy_static::lazy_static;
+use rustc_hash::FxHashMap;
 
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
 pub struct Id(u32);
@@ -9,12 +9,12 @@ pub struct Id(u32);
 pub struct IdMap {}
 
 lazy_static! {
-    static ref ID_MAP: RwLock<HashMap<Id, String>> = {
-        RwLock::new(HashMap::new())
+    static ref ID_MAP: RwLock<FxHashMap<Id, String>> = {
+        RwLock::new(FxHashMap::default())
     };
 
-    static ref STR_MAP: RwLock<HashMap<String, Id>> = {
-        RwLock::new(HashMap::new())
+    static ref STR_MAP: RwLock<FxHashMap<String, Id>> = {
+        RwLock::new(FxHashMap::default())
     };
 }
 
