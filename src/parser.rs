@@ -4,7 +4,7 @@ use crate::span::{Span, Spanned};
 use crate::error::Error;
 use crate::token::*;
 use crate::ast::*;
-use crate::ty::Type;
+use crate::ty::{Type, TypeCon};
 use crate::id::Id;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
@@ -675,7 +675,7 @@ impl Parser {
         let is_mutable = self.consume(&Token::Mut);
         let ty = self.parse_type()?;
 
-        Some(Type::Pointer(Box::new(ty), is_mutable))
+        Some(Type::App(TypeCon::Pointer(is_mutable), vec![ty]))
     }
 
     fn parse_type_tuple(&mut self) -> Option<Type> {
@@ -704,7 +704,7 @@ impl Parser {
 
             self.expect(&Token::Rparen, &[Token::Rparen]);
 
-            Some(Type::Tuple(inner))
+            Some(Type::App(TypeCon::Tuple, inner))
         }
     }
 
@@ -726,13 +726,15 @@ impl Parser {
         self.expect(&Token::Lbrace, &[Token::Rbrace])?;
 
         if self.consume(&Token::Rbrace) {
-            Some(Type::Struct(Vec::new()))
+            Some(Type::App(TypeCon::Struct(vec![]), vec![]))
         } else {
             let mut fields = Vec::new();
+            let mut types = Vec::new();
 
             let first = self.parse_struct_field();
-            if let Some(first) = first {
-                fields.push(first);
+            if let Some((name, ty)) = first {
+                fields.push(name);
+                types.push(ty);
             }
 
             while self.peek().kind != Token::Rbrace && self.consume(&Token::Comma) {
@@ -741,14 +743,15 @@ impl Parser {
                 }
 
                 let field = self.parse_struct_field();
-                if let Some(field) = field {
-                    fields.push(field);
+                if let Some((name, ty)) = field {
+                    fields.push(name);
+                    types.push(ty);
                 }
             }
 
             self.expect(&Token::Rbrace, &[Token::Rbrace]);
 
-            Some(Type::Struct(fields))
+            Some(Type::App(TypeCon::Struct(fields), types))
         }
     }
 
@@ -773,7 +776,7 @@ impl Parser {
 
         self.expect(&Token::Rbracket, &[Token::Rbracket]);
 
-        Some(Type::Array(Box::new(ty), size))
+        Some(Type::App(TypeCon::Array(size), vec![ty]))
     }
 
     fn parse_type(&mut self) -> Option<Type> {

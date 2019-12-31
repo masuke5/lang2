@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::id::{Id, IdMap};
-use crate::ty::Type;
+use crate::ty::{Type, TypeCon};
 use crate::vm::VM;
 use crate::module::{Module, ModuleHeader, FunctionHeader, NativeFunctionBody as Body};
 
@@ -55,8 +55,8 @@ pub fn module() -> (Module, ModuleHeader) {
 
     func(&mut f, "printn", 1, vec![Type::Int], Type::Unit, Body(printn));
     func(&mut f, "printnln", 1, vec![Type::Int], Type::Unit, Body(printnln));
-    func(&mut f, "print", 1, vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, Body(print));
-    func(&mut f, "println", 1, vec![Type::Pointer(Box::new(Type::String), false)], Type::Unit, Body(println));
+    func(&mut f, "print", 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(print));
+    func(&mut f, "println", 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(println));
 
     let module = Module::Native(bodies);
     let header = ModuleHeader {
