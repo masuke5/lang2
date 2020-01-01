@@ -201,6 +201,11 @@ fn type_size(ty: &Type) -> usize {
 
             type_size(&subst(*body.clone(), &map))
         },
+        Type::App(TypeCon::Pointer(_), _) => 1,
+        Type::App(TypeCon::Array(size), types) => {
+            let elem_size = type_size(&types[0]);
+            elem_size * size
+        },
         Type::App(_, tys) => tys.iter().fold(0, |acc, ty| acc + type_size(ty)),
         Type::Poly(_, _) | Type::Var(_) => panic!("unknown size"),
         _ => 1,
