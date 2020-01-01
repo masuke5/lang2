@@ -1,5 +1,6 @@
+use std::fmt;
+
 use crate::span::Spanned;
-use crate::ty::Type;
 use crate::id::{Id, IdMap};
 use crate::utils::{escape_string, span_to_string};
 
@@ -83,16 +84,77 @@ pub enum Stmt {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct Param {
+    pub name: Id,
+    pub ty: Spanned<AstType>,
+    pub is_mutable: bool,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum TopLevel {
     Stmt(Spanned<Stmt>),
-    Function(Id, Vec<(Id, Type, bool)>, Type, Spanned<Stmt>),
-    Type(Id, Type),
+    Function(Id, Vec<Param>, Spanned<AstType>, Spanned<Stmt>),
+    Type(Id, Spanned<AstType>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
     pub top: Vec<Spanned<TopLevel>>,
     pub strings: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum AstType {
+    Int,
+    String,
+    Bool,
+    Unit,
+    Named(Id),
+    Pointer(Box<Spanned<AstType>>, bool),
+    Array(Box<Spanned<AstType>>, usize),
+    Tuple(Vec<Spanned<AstType>>),
+    Struct(Vec<(Spanned<Id>, Spanned<AstType>)>),
+}
+
+impl fmt::Display for AstType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AstType::Int => write!(f, "int"),
+            AstType::String => write!(f, "string"),
+            AstType::Bool => write!(f, "bool"),
+            AstType::Unit => write!(f, "unit"),
+            AstType::Named(id) => write!(f, "`{}`", IdMap::name(*id)),
+            AstType::Pointer(ty, is_mutable) => write!(f, "*{}{}", if *is_mutable { "mut " } else { "" }, ty.kind),
+            AstType::Array(ty, size) => write!(f, "[{}; {}]", ty.kind, size),
+            AstType::Tuple(types) => {
+                write!(f, "(")?;
+
+                if !types.is_empty() {
+                    let mut iter = types.iter();
+                    write!(f, "{}", iter.next().unwrap().kind)?;
+                    for ty in iter {
+                        write!(f, ", {}", ty.kind)?;
+                    }
+                }
+
+                write!(f, ")")
+            },
+            AstType::Struct(fields) => {
+                write!(f, "struct {{")?;
+
+                if !fields.is_empty() {
+                    let mut iter = fields.iter();
+                    let (id, ty) = iter.next().unwrap();
+                    write!(f, "{} : {}", IdMap::name(id.kind), ty.kind)?;
+                    for (id, ty) in iter {
+                        write!(f, ", {} : {}", IdMap::name(id.kind), ty.kind)?;
+                    }
+                }
+
+                write!(f, "}}")
+            }
+        }
+    }
 }
 
 pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
@@ -224,7 +286,7 @@ pub fn dump_toplevel(toplevel: &Spanned<TopLevel>, strings: &[String]) {
             println!(
                 "type {} {} {}",
                 IdMap::name(*name),
-                ty,
+                ty.kind,
                 span_to_string(&toplevel.span)
             );
         },

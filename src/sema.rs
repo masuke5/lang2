@@ -81,7 +81,6 @@ fn subst(ty: Type, map: &HashMap<TypeVar, Type>) -> Type {
             let ty = subst(ty, map);
             Type::Poly(new_vars, Box::new(ty))
         },
-        Type::Named(_) => panic!("Type::Named is passed to subst"),
     }
 }
 
@@ -190,7 +189,7 @@ fn_to_expect! {
 }
 
 // Returns size of a specified type. 
-// Panics if Named is specied or a specified type size coludn't be calculated.
+// Panics if a specified type size coludn't be calculated.
 // TODO: Don't panic
 fn type_size(ty: &Type) -> usize {
     match ty {
@@ -204,7 +203,6 @@ fn type_size(ty: &Type) -> usize {
         },
         Type::App(_, tys) => tys.iter().fold(0, |acc, ty| acc + type_size(ty)),
         Type::Poly(_, _) | Type::Var(_) => panic!("unknown size"),
-        Type::Named(_) => panic!("Named is passed to type_size"),
         _ => 1,
     }
 }
@@ -305,16 +303,23 @@ impl<'a> Analyzer<'a> {
     }
 
     // Insert parameters and return value as variables to `self.variables`
-    fn insert_params(&mut self, params: Vec<(Id, Type, bool)>, return_ty: &Type) {
-        let last_map = self.variables.last_mut().unwrap();
+    fn insert_params(&mut self, params: Vec<Param>, return_ty: &Type) -> Option<()> {
         let mut loc = -3isize; // fp, ip
-        for (id, ty, is_mutable) in params.into_iter().rev() {
+        for Param { name, ty, is_mutable } in params.into_iter().rev() {
+            let ty = self.walk_type(ty)?;
             loc -= type_size(&ty) as isize;
-            last_map.insert(id, Variable::new(ty.clone(), is_mutable, loc));
+
+            // Insert the parameter as a variable to the current scope
+            let last_map = self.variables.last_mut().unwrap();
+            last_map.insert(name, Variable::new(ty.clone(), is_mutable, loc));
         }
 
         loc -= type_size(return_ty) as isize;
+
+        let last_map = self.variables.last_mut().unwrap();
         last_map.insert(self.return_value_id, Variable::new(return_ty.clone(), false, loc));
+
+        Some(())
     }
 
     fn get_return_var(&self) -> &Variable {
@@ -350,6 +355,26 @@ impl<'a> Analyzer<'a> {
         let id = IdMap::new_id(&format!("$comp{}", self.next_temp_num));
         self.next_temp_num += 1;
         id
+    }
+
+    #[allow(dead_code)]
+    fn dump_variables(&self) {
+        let mut depth = 0;
+        for variables in self.variables.iter() {
+            if variables.is_empty() {
+                println!("{}EMPTY", "  ".repeat(depth));
+            }
+
+            for (id, var) in variables {
+                print!("{}", "  ".repeat(depth));
+                if var.is_mutable {
+                    print!("mut ");
+                }
+                println!("{}: {} ({})", IdMap::name(*id), var.ty, var.loc);
+            }
+
+            depth += 1;
+        }
     }
 
     fn find_var(&self, id: Id) -> Option<&Variable> {
@@ -869,38 +894,41 @@ impl<'a> Analyzer<'a> {
         Some(insts)
     }
 
-    // Unwrap Type::Named and check if the type exists
-    fn walk_type(&mut self, ty: Type, span: &Span) -> Option<Type> {
-        match ty {
-            Type::Named(name) => {
+    fn walk_type(&mut self, ty: Spanned<AstType>) -> Option<Type> {
+        match ty.kind {
+            AstType::Int => Some(Type::Int),
+            AstType::Bool => Some(Type::Bool),
+            AstType::Unit => Some(Type::Unit),
+            AstType::String => Some(Type::String),
+            AstType::Named(name) => {
                 match self.types.get(&name) {
                     Some(ty) => Some(ty.clone()),
                     None => {
-                        error!(self, span.clone(), "undefined type `{}`", IdMap::name(name));
+                        error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
                         None
                     }
                 }
             },
-            Type::App(TypeCon::Fun(params, body), tys) => {
-                let mut new_tys = Vec::with_capacity(tys.len());
-                for ty in tys {
-                    new_tys.push(self.walk_type(ty, span)?);
+            AstType::Pointer(ty, is_mutable) => Some(Type::App(TypeCon::Pointer(is_mutable), vec![self.walk_type(*ty)?])),
+            AstType::Array(ty, size) => Some(Type::App(TypeCon::Array(size), vec![self.walk_type(*ty)?])),
+            AstType::Tuple(types) => {
+                let mut new_types = Vec::new();
+                for ty in types {
+                    new_types.push(self.walk_type(ty)?);
                 }
 
-                Some(Type::App(TypeCon::Fun(params, Box::new(self.walk_type(*body, span)?)), new_tys))
+                Some(Type::App(TypeCon::Tuple, new_types))
             },
-            Type::App(tycon, tys) => {
-                let mut new_tys = Vec::with_capacity(tys.len());
-                for ty in tys {
-                    new_tys.push(self.walk_type(ty, span)?);
+            AstType::Struct(fields) => {
+                let mut field_names = Vec::new();
+                let mut types = Vec::new();
+                for (name, ty) in fields {
+                    field_names.push(name.kind);
+                    types.push(self.walk_type(ty)?);
                 }
 
-                Some(Type::App(tycon, new_tys))
+                Some(Type::App(TypeCon::Struct(field_names), types))
             },
-            Type::Poly(vars, ty) => {
-                Some(Type::Poly(vars, Box::new(self.walk_type(*ty, span)?)))
-            },
-            ty => Some(ty),
         }
     }
 
@@ -911,8 +939,15 @@ impl<'a> Analyzer<'a> {
 
                 self.push_scope();
 
+                let return_ty = match self.walk_type(return_ty) {
+                    Some(ty) => ty,
+                    None => return,
+                };
+
                 // params
-                self.insert_params(params, &return_ty);
+                if self.insert_params(params, &return_ty).is_none() {
+                    return;
+                }
 
                 code.begin_function(name);
                 // `None` is not returned because `stmt` is always a block statement
@@ -929,7 +964,7 @@ impl<'a> Analyzer<'a> {
                 self.pop_scope();
             },
             TopLevel::Type(_, ty) => {
-                self.walk_type(ty, &toplevel.span);
+                self.walk_type(ty);
             },
             _ => {},
         }
@@ -946,13 +981,26 @@ impl<'a> Analyzer<'a> {
     fn insert_function_header<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: &TopLevel) {
         match toplevel {
             TopLevel::Function(name, params, return_ty, _) => {
-                let param_types: Vec<Type> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
+                let mut param_types = Vec::new();
+                for Param { ty, .. } in params {
+                    let ty = match self.walk_type(ty.clone()) {
+                        Some(ty) => ty,
+                        None => return,
+                    };
+                    param_types.push(ty);
+                }
+
                 let param_size = param_types.iter().fold(0, |acc, ty| acc + type_size(ty));
+
+                let return_ty = match self.walk_type(return_ty.clone()) {
+                    Some(ty) => ty,
+                    None => return,
+                };
 
                 // Insert a header of the function
                 let header = FunctionHeader {
                     params: param_types,
-                    return_ty: return_ty.clone(),
+                    return_ty,
                 };
                 self.function_headers.insert(*name, header);
 
@@ -961,7 +1009,11 @@ impl<'a> Analyzer<'a> {
                 code.new_function(func);
             },
             TopLevel::Type(name, ty) => {
-                let mut ty = ty.clone();
+                let mut ty = match self.walk_type(ty.clone()) {
+                    Some(ty) => ty,
+                    None => return,
+                };
+
                 match &mut ty {
                     Type::App(tycon @ TypeCon::Struct(_), _) => {
                         let old_tycon = mem::replace(tycon, TypeCon::Tuple);

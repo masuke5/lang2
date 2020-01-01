@@ -4,7 +4,6 @@ use crate::span::{Span, Spanned};
 use crate::error::Error;
 use crate::token::*;
 use crate::ast::*;
-use crate::ty::{Type, TypeCon};
 use crate::id::Id;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
@@ -669,20 +668,24 @@ impl Parser {
         }
     }
 
-    fn parse_type_pointer(&mut self) -> Option<Type> {
+    fn parse_type_pointer(&mut self) -> Option<Spanned<AstType>> {
+        let asterisk_span = self.peek().span.clone();
         self.next(); // eat '*'
 
         let is_mutable = self.consume(&Token::Mut);
         let ty = self.parse_type()?;
 
-        Some(Type::App(TypeCon::Pointer(is_mutable), vec![ty]))
+        let span = Span::merge(&asterisk_span, &self.prev().span);
+        Some(spanned(AstType::Pointer(Box::new(ty), is_mutable), span))
     }
 
-    fn parse_type_tuple(&mut self) -> Option<Type> {
+    fn parse_type_tuple(&mut self) -> Option<Spanned<AstType>> {
+        let lparen_span = self.peek().span.clone();
         self.next(); // eat "("
 
         if self.consume(&Token::Rparen) {
-            Some(Type::Unit)
+            let span = Span::merge(&lparen_span, &self.prev().span);
+            Some(spanned(AstType::Unit, span))
         } else {
             let mut inner = Vec::new();
 
@@ -704,37 +707,42 @@ impl Parser {
 
             self.expect(&Token::Rparen, &[Token::Rparen]);
 
-            Some(Type::App(TypeCon::Tuple, inner))
+            let span = Span::merge(&lparen_span, &self.prev().span);
+            Some(spanned(AstType::Tuple(inner), span))
         }
     }
 
-    fn parse_struct_field(&mut self) -> Option<(Id, Type)> {
+    fn parse_struct_field(&mut self) -> Option<(Spanned<Id>, Spanned<AstType>)> {
         let tokens_to_skip = &[Token::Comma, Token::Rbrace];
 
         // name: ty
+        let span = self.peek().span.clone();
         let name = self.expect_identifier(tokens_to_skip)?;
+        let name = spanned(name, span);
+
         self.expect(&Token::Colon, tokens_to_skip)?;
         let ty = self.parse_skip(Self::parse_type, tokens_to_skip)?;
 
         Some((name, ty))
     }
 
-    fn parse_type_struct(&mut self) -> Option<Type> {
+    fn parse_type_struct(&mut self) -> Option<Spanned<AstType>> {
         // Eat "struct"
+        let struct_span = self.peek().span.clone();
         self.next();
 
         self.expect(&Token::Lbrace, &[Token::Rbrace])?;
 
         if self.consume(&Token::Rbrace) {
-            Some(Type::App(TypeCon::Struct(vec![]), vec![]))
+            // Empty structure
+            let span = Span::merge(&struct_span, &self.peek().span);
+            Some(spanned(AstType::Struct(Vec::new()), span))
         } else {
             let mut fields = Vec::new();
-            let mut types = Vec::new();
 
             let first = self.parse_struct_field();
-            if let Some((name, ty)) = first {
-                fields.push(name);
-                types.push(ty);
+            if let Some(field) = first {
+                fields.push(field);
             }
 
             while self.peek().kind != Token::Rbrace && self.consume(&Token::Comma) {
@@ -743,19 +751,20 @@ impl Parser {
                 }
 
                 let field = self.parse_struct_field();
-                if let Some((name, ty)) = field {
-                    fields.push(name);
-                    types.push(ty);
+                if let Some(field) = field {
+                    fields.push(field);
                 }
             }
 
             self.expect(&Token::Rbrace, &[Token::Rbrace]);
 
-            Some(Type::App(TypeCon::Struct(fields), types))
+            let span = Span::merge(&struct_span, &self.peek().span);
+            Some(spanned(AstType::Struct(fields), span))
         }
     }
 
-    fn parse_type_array(&mut self) -> Option<Type> {
+    fn parse_type_array(&mut self) -> Option<Spanned<AstType>> {
+        let lbracket_span = self.peek().span.clone();
         self.next(); // eat "["
 
         let ty = self.parse_skip(Self::parse_type, &[Token::Rbracket])?;
@@ -776,15 +785,17 @@ impl Parser {
 
         self.expect(&Token::Rbracket, &[Token::Rbracket]);
 
-        Some(Type::App(TypeCon::Array(size), vec![ty]))
+        let span = Span::merge(&lbracket_span, &self.peek().span);
+        Some(spanned(AstType::Array(Box::new(ty), size), span))
     }
 
-    fn parse_type(&mut self) -> Option<Type> {
+    fn parse_type(&mut self) -> Option<Spanned<AstType>> {
+        let first_span = self.peek().span.clone();
         match self.peek().kind {
-            Token::Int => self.next_and(Some(Type::Int)),
-            Token::Bool => self.next_and(Some(Type::Bool)),
-            Token::StringType => self.next_and(Some(Type::String)),
-            Token::Identifier(name) => self.next_and(Some(Type::Named(name))),
+            Token::Int => self.next_and(Some(spanned(AstType::Int, first_span))),
+            Token::Bool => self.next_and(Some(spanned(AstType::Bool, first_span))),
+            Token::StringType => self.next_and(Some(spanned(AstType::String, first_span))),
+            Token::Identifier(name) => self.next_and(Some(spanned(AstType::Named(name), first_span))),
             Token::Asterisk => self.parse_type_pointer(),
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
@@ -801,7 +812,7 @@ impl Parser {
         }
     }
 
-    fn parse_param(&mut self) -> Option<(Id, Type, bool)> {
+    fn parse_param(&mut self) -> Option<Param> {
         let tokens_to_skip = [Token::Comma, Token::Rparen];
 
         let is_mutable = self.consume(&Token::Mut);
@@ -813,10 +824,14 @@ impl Parser {
         self.expect(&Token::Colon, &tokens_to_skip)?;
         let ty = self.parse_skip(Self::parse_type, &tokens_to_skip)?;
 
-        Some((name, ty, is_mutable))
+        Some(Param {
+            name,
+            ty,
+            is_mutable,
+        })
     }
 
-    fn parse_param_list(&mut self) -> Option<Vec<(Id, Type, bool)>> {
+    fn parse_param_list(&mut self) -> Option<Vec<Param>> {
         let mut params = Vec::new();
 
         if self.consume(&Token::Rparen) {
@@ -861,7 +876,7 @@ impl Parser {
             self.parse_skip(Self::parse_type, &[Token::Lbrace])
         } else {
             // return unit if omit a type
-            Some(Type::Unit)
+            Some(spanned(AstType::Unit, self.prev().span.clone()))
         };
 
         let body = self.expect_block()?;

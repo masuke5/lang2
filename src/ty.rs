@@ -30,7 +30,6 @@ pub enum Type {
     String,
     Unit,
     Null,
-    Named(Id),
     App(TypeCon, Vec<Type>),
     Var(TypeVar),
     Poly(Vec<TypeVar>, Box<Type>),
@@ -44,7 +43,6 @@ impl fmt::Display for Type {
             Self::String => write!(f, "string"),
             Self::Unit => write!(f, "unit"),
             Self::Null => write!(f, "null"),
-            Self::Named(name) => write!(f, "named {}", IdMap::name(*name)),
             Self::App(tycon, tys) => {
                 write!(f, "{}[", tycon)?;
 
