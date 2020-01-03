@@ -206,11 +206,13 @@ impl Parser {
     }
 
     fn parse_struct(&mut self, name: Id, name_span: Span) -> Option<Spanned<Expr>> {
+        let ty = self.parse_type_app(spanned(name, name_span.clone()));
+
         self.expect(&Token::Lbrace, &[Token::Lbrace]);
 
         if self.consume(&Token::Rbrace) {
             let span = Span::merge(&name_span, &self.prev().span);
-            Some(spanned(Expr::Struct(spanned(name, name_span), Vec::new()), span))
+            Some(spanned(Expr::Struct(ty, Vec::new()), span))
         } else {
             let mut fields = Vec::new();
 
@@ -234,7 +236,7 @@ impl Parser {
             
 
             let span = Span::merge(&name_span, &self.prev().span);
-            Some(spanned(Expr::Struct(spanned(name, name_span), fields), span))
+            Some(spanned(Expr::Struct(ty, fields), span))
         }
     }
 
@@ -789,13 +791,51 @@ impl Parser {
         Some(spanned(AstType::Array(Box::new(ty), size), span))
     }
 
+    fn parse_type_app(&mut self, id: Spanned<Id>) -> Spanned<AstType> {
+        if !self.consume(&Token::LessThan) {
+            return spanned(AstType::Named(id.kind), id.span);
+        }
+
+        let lessthan_span = self.peek().span.clone();
+
+        if self.consume(&Token::GreaterThan) {
+            spanned(AstType::Named(id.kind), id.span)
+        } else {
+            let mut types = Vec::new();
+
+            let first = self.parse_skip(Self::parse_type, &[Token::GreaterThan, Token::Comma]);
+            if let Some(first) = first {
+                types.push(first);
+            }
+
+            while self.peek().kind != Token::GreaterThan && self.consume(&Token::Comma) {
+                if self.peek().kind == Token::GreaterThan {
+                    break;
+                }
+
+                if let Some(ty) = self.parse_skip(Self::parse_type, &[Token::GreaterThan, Token::Comma]) {
+                    types.push(ty);
+                }
+            }
+
+            self.expect(&Token::GreaterThan, &[Token::GreaterThan]);
+
+            let span = Span::merge(&lessthan_span, &self.peek().span);
+            spanned(AstType::App(id, types), span)
+        }
+    }
+
     fn parse_type(&mut self) -> Option<Spanned<AstType>> {
         let first_span = self.peek().span.clone();
         match self.peek().kind {
             Token::Int => self.next_and(Some(spanned(AstType::Int, first_span))),
             Token::Bool => self.next_and(Some(spanned(AstType::Bool, first_span))),
             Token::StringType => self.next_and(Some(spanned(AstType::String, first_span))),
-            Token::Identifier(name) => self.next_and(Some(spanned(AstType::Named(name), first_span))),
+            Token::Identifier(name) => {
+                let id = self.next_and(spanned(name, first_span));
+                let ty = self.parse_type_app(id);
+                Some(ty)
+            },
             Token::Asterisk => self.parse_type_pointer(),
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
@@ -803,7 +843,7 @@ impl Parser {
             _ => {
                 error!(self,
                     self.peek().span.clone(),
-                    "expected `int`, `bool`, `string`, `(`, `struct` or `identifier` but got `{}`",
+                    "expected `(`, `[`, `*`, `int`, `bool`, `string`, `struct` or `identifier` but got `{}`",
                     self.peek().kind
                 );
                 self.next();

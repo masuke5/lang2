@@ -534,8 +534,8 @@ impl<'a> Analyzer<'a> {
 
                 (insts, Type::App(TypeCon::Tuple, types))
             },
-            Expr::Struct(name, field_exprs) => {
-                let ty = self.walk_type(Spanned { kind: AstType::Named(name.kind), span: name.span })?;
+            Expr::Struct(ty, field_exprs) => {
+                let ty = self.walk_type(ty)?;
                 let expr_ty = subst(expand_unique(ty), &HashMap::new());
 
                 let fields = match expr_ty.clone() {
@@ -1002,22 +1002,28 @@ impl<'a> Analyzer<'a> {
 
                 Some(Type::App(TypeCon::Struct(field_names), types))
             },
-            AstType::Poly(ty, var_ids) => {
-                let vars: Vec<TypeVar> = var_ids.iter().map(|_| TypeVar::new()).collect();
-
+            AstType::App(name, types) => {
                 self.types.push_scope();
                 self.tycons.push_scope();
 
-                for (id, var) in var_ids.iter().zip(vars.iter()) {
-                    self.types.insert(id.kind, Type::Var(*var));
-                }
+                let tycon = match self.tycons.find(&name.kind) {
+                    Some(tycon) => tycon.clone(),
+                    None => {
+                        error!(self, name.span, "undefined type `{}`", IdMap::name(name.kind));
+                        return None;
+                    },
+                };
 
-                let ty = self.walk_type(*ty)?;
+                let mut new_types = Vec::with_capacity(types.len());
+                for ty in types {
+                    let ty = self.walk_type(ty)?;
+                    new_types.push(ty);
+                }
 
                 self.types.pop_scope();
                 self.tycons.pop_scope();
 
-                Some(Type::Poly(vars, Box::new(ty)))
+                Some(Type::App(tycon, new_types))
             },
         }
     }

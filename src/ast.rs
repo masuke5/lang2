@@ -59,7 +59,7 @@ pub enum Field {
 pub enum Expr {
     Literal(Literal),
     Tuple(Vec<Spanned<Expr>>),
-    Struct(Spanned<Id>, Vec<(Spanned<Id>, Spanned<Expr>)>),
+    Struct(Spanned<AstType>, Vec<(Spanned<Id>, Spanned<Expr>)>),
     Array(Box<Spanned<Expr>>, usize),
     Field(Box<Spanned<Expr>>, Field),
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
@@ -114,7 +114,7 @@ pub enum AstType {
     Array(Box<Spanned<AstType>>, usize),
     Tuple(Vec<Spanned<AstType>>),
     Struct(Vec<(Spanned<Id>, Spanned<AstType>)>),
-    Poly(Box<Spanned<AstType>>, Vec<Spanned<Id>>),
+    App(Spanned<Id>, Vec<Spanned<AstType>>),
 }
 
 impl fmt::Display for AstType {
@@ -124,7 +124,7 @@ impl fmt::Display for AstType {
             AstType::String => write!(f, "string"),
             AstType::Bool => write!(f, "bool"),
             AstType::Unit => write!(f, "unit"),
-            AstType::Named(id) => write!(f, "`{}`", IdMap::name(*id)),
+            AstType::Named(id) => write!(f, "{}", IdMap::name(*id)),
             AstType::Pointer(ty, is_mutable) => write!(f, "*{}{}", if *is_mutable { "mut " } else { "" }, ty.kind),
             AstType::Array(ty, size) => write!(f, "[{}; {}]", ty.kind, size),
             AstType::Tuple(types) => {
@@ -154,14 +154,14 @@ impl fmt::Display for AstType {
 
                 write!(f, "}}")
             }
-            AstType::Poly(ty, vars) => {
-                write!(f, "{}<", ty.kind)?;
+            AstType::App(name, types) => {
+                write!(f, "{}<", IdMap::name(name.kind))?;
 
-                if !vars.is_empty() {
-                    let mut iter = vars.iter();
-                    write!(f, "{}", IdMap::name(iter.next().unwrap().kind))?;
+                if !types.is_empty() {
+                    let mut iter = types.iter();
+                    write!(f, "{}", iter.next().unwrap().kind)?;
                     for ty in iter {
-                        write!(f, ", {}", IdMap::name(ty.kind))?;
+                        write!(f, ", {}", ty.kind)?;
                     }
                 }
 
@@ -188,8 +188,8 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
                 dump_expr(&expr, strings, depth + 1);
             }
         },
-        Expr::Struct(id, fields) => {
-            println!("struct {} {}", IdMap::name(id.kind), span_to_string(&expr.span));
+        Expr::Struct(ty, fields) => {
+            println!("struct {} {}", ty.kind, span_to_string(&expr.span));
             for (name, expr) in fields {
                 print!("{}", "  ".repeat(depth + 1));
                 println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
@@ -250,7 +250,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
 
     match &stmt.kind {
         Stmt::Bind(name, expr, is_mutable) => {
-            println!("let {}{} =", if *is_mutable { " mut " } else { "" }, IdMap::name(*name));
+            println!("let {}{} =", if *is_mutable { "mut " } else { "" }, IdMap::name(*name));
             dump_expr(&expr, strings, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {
