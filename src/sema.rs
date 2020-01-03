@@ -1,6 +1,8 @@
 use std::io::{Read, Write, Seek};
-use std::collections::HashMap;
-use std::mem;
+use std::collections::{LinkedList, HashMap};
+use std::hash::Hash;
+
+use rustc_hash::FxHashMap;
 
 use crate::ty::{Type, TypeCon, TypeVar};
 use crate::ast::*;
@@ -84,28 +86,28 @@ fn subst(ty: Type, map: &HashMap<TypeVar, Type>) -> Type {
     }
 }
 
-fn unify(errors: &mut Vec<Error>, types: &HashMap<Id, Type>, span: &Span, a: &Type, b: &Type) -> Option<()> {
+fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()> {
     match (a, b) {
         (Type::App(TypeCon::Struct(a_fields), a_tys), Type::App(TypeCon::Struct(b_fields), b_tys))
             if a_fields.len() == b_fields.len() &&
                a_fields.iter().zip(b_fields).all(|(a, b)| a == b) =>
         {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, types, span, a_ty, b_ty)?;
+                unify(errors, span, a_ty, b_ty)?;
             }
 
             return Some(());
         },
         (Type::App(TypeCon::Array(a_size), a_tys), Type::App(TypeCon::Array(b_size), b_tys)) if a_size == b_size => {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, types, span, a_ty, b_ty)?;
+                unify(errors, span, a_ty, b_ty)?;
             }
 
             return Some(());
         }
         (Type::App(TypeCon::Pointer(a_mut), a_tys), Type::App(TypeCon::Pointer(b_mut), b_tys)) if a_mut == b_mut => {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, types, span, a_ty, b_ty)?;
+                unify(errors, span, a_ty, b_ty)?;
             }
 
             return Some(());
@@ -114,7 +116,7 @@ fn unify(errors: &mut Vec<Error>, types: &HashMap<Id, Type>, span: &Span, a: &Ty
             match a_tycon {
                 TypeCon::Tuple => {
                     for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                        unify(errors, types, span, a_ty, b_ty)?;
+                        unify(errors, span, a_ty, b_ty)?;
                     }
 
                     return Some(());
@@ -132,7 +134,7 @@ fn unify(errors: &mut Vec<Error>, types: &HashMap<Id, Type>, span: &Span, a: &Ty
                 map.insert(param.clone(), ty.clone());
             }
 
-            unify(errors, types, span, &subst(*body.clone(), &map), b)?;
+            unify(errors, span, &subst(*body.clone(), &map), b)?;
             Some(())
         },
         (Type::App(TypeCon::Unique(_, uniq1), tys1), Type::App(TypeCon::Unique(_, uniq2), tys2)) => {
@@ -141,7 +143,7 @@ fn unify(errors: &mut Vec<Error>, types: &HashMap<Id, Type>, span: &Span, a: &Ty
             }
 
             for (ty1, ty2) in tys1.iter().zip(tys2.iter()) {
-                unify(errors, types, span, ty1, ty2)?;
+                unify(errors, span, ty1, ty2)?;
             }
 
             Some(())
@@ -152,7 +154,7 @@ fn unify(errors: &mut Vec<Error>, types: &HashMap<Id, Type>, span: &Span, a: &Ty
                 map.insert(var2.clone(), Type::Var(*var1));
             }
 
-            unify(errors, types, span, ty1, &subst(*ty2.clone(), &map))?;
+            unify(errors, span, ty1, &subst(*ty2.clone(), &map))?;
             Some(())
         },
         (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Some(()),
@@ -282,9 +284,46 @@ impl Variable {
 }
 
 #[derive(Debug)]
+struct HashMapWithScope<K: Hash + Eq, V> {
+    maps: LinkedList<FxHashMap<K, V>>,
+}
+
+impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
+    fn new() -> Self {
+        Self {
+            maps: LinkedList::new(),
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.maps.push_front(FxHashMap::default());
+    }
+
+    fn pop_scope(&mut self) {
+        self.maps.pop_front().unwrap();
+    }
+
+    fn find(&self, key: &K) -> Option<&V> {
+        for map in self.maps.iter() {
+            if let Some(value) = map.get(key) {
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        let front_map = self.maps.front_mut().unwrap();
+        front_map.insert(key, value);
+    }
+}
+
+#[derive(Debug)]
 pub struct Analyzer<'a> {
     function_headers: HashMap<Id, FunctionHeader>,
-    types: HashMap<Id, Type>,
+    types: HashMapWithScope<Id, Type>,
+    tycons: HashMapWithScope<Id, TypeCon>,
     variables: Vec<HashMap<Id, Variable>>,
     errors: Vec<Error>,
     main_func_id: Id,
@@ -304,7 +343,8 @@ impl<'a> Analyzer<'a> {
         Self {
             function_headers: HashMap::new(),
             variables: Vec::with_capacity(5),
-            types: HashMap::new(),
+            types: HashMapWithScope::new(),
+            tycons: HashMapWithScope::new(),
             errors: Vec::new(),
             main_func_id,
             return_value_id,
@@ -320,10 +360,12 @@ impl<'a> Analyzer<'a> {
         self.errors.push(Error::new(msg, span));
     }
 
+    #[inline]
     fn push_scope(&mut self) {
         self.variables.push(HashMap::new());
     }
 
+    #[inline]
     fn pop_scope(&mut self) {
         self.variables.pop().unwrap();
     }
@@ -493,10 +535,11 @@ impl<'a> Analyzer<'a> {
                 (insts, Type::App(TypeCon::Tuple, types))
             },
             Expr::Struct(name, field_exprs) => {
-                let ty = self.types.get(&name)?;
-                let expr_ty = ty.clone();
-                let fields = match ty.clone() {
-                    Type::App(TypeCon::Unique(box TypeCon::Struct(fields), _), tys) => fields.into_iter().zip(tys.into_iter()),
+                let ty = self.walk_type(Spanned { kind: AstType::Named(name.kind), span: name.span })?;
+                let expr_ty = subst(expand_unique(ty), &HashMap::new());
+
+                let fields = match expr_ty.clone() {
+                    Type::App(TypeCon::Struct(fields), tys) => fields.into_iter().zip(tys.into_iter()),
                     ty => {
                         error!(self, expr.span.clone(), "expected struct but got type `{}`", ty);
                         return None;
@@ -513,7 +556,7 @@ impl<'a> Analyzer<'a> {
                             // TODO: Avoid clone()
                             if let Some(expr) = self.walk_expr(code, expr.clone()) {
                                 insts.append(expr.insts);
-                                unify(&mut self.errors, &self.types, &expr.span, &field_ty, &expr.ty);
+                                unify(&mut self.errors, &expr.span, &field_ty, &expr.ty);
                             }
                         },
                         None => {
@@ -628,7 +671,7 @@ impl<'a> Analyzer<'a> {
                     },
                 };
 
-                unify(&mut self.errors, &self.types, &subscript_expr.span, &subscript_expr.ty, &Type::Int);
+                unify(&mut self.errors, &subscript_expr.span, &subscript_expr.ty, &Type::Int);
 
                 expr.insts = translate::subscript(
                     loc,
@@ -758,7 +801,7 @@ impl<'a> Analyzer<'a> {
                     let arg = self.walk_expr(code, arg);
                     if let Some(arg) = arg {
                         insts.push((arg.insts, type_size_nocheck(&arg.ty)));
-                        unify(&mut self.errors, &self.types, &arg.span, &arg.ty, &param_ty);
+                        unify(&mut self.errors, &arg.span, &arg.ty, &param_ty);
                     }
                 }
 
@@ -831,7 +874,7 @@ impl<'a> Analyzer<'a> {
                 let then_insts = self.walk_stmt(code, *stmt);
                 try_some!(cond, then_insts);
 
-                unify(&mut self.errors, &self.types, &cond.span, &Type::Bool, &cond.ty);
+                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
                 translate::if_stmt(cond.insts, type_size_nocheck(&cond.ty), then_insts)
             },
@@ -841,7 +884,7 @@ impl<'a> Analyzer<'a> {
                 let els = self.walk_stmt(code, *else_stmt);
                 try_some!(cond, then, els);
 
-                unify(&mut self.errors, &self.types, &cond.span, &Type::Bool, &cond.ty);
+                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
                 translate::if_else_stmt(cond.insts, type_size_nocheck(&cond.ty), then, els)
             },
@@ -850,7 +893,7 @@ impl<'a> Analyzer<'a> {
                 let body = self.walk_stmt(code, *stmt);
                 try_some!(cond, body);
 
-                unify(&mut self.errors, &self.types, &cond.span, &Type::Bool, &cond.ty);
+                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
                 translate::while_stmt(cond.insts, type_size_nocheck(&cond.ty), body)
             },
@@ -888,7 +931,7 @@ impl<'a> Analyzer<'a> {
                     return None;
                 }
 
-                unify(&mut self.errors, &self.types, &rhs.span, &lhs.ty, &rhs.ty)?;
+                unify(&mut self.errors, &rhs.span, &lhs.ty, &rhs.ty)?;
 
                 translate::assign_stmt(lhs.insts, rhs.insts, type_size_nocheck(&rhs.ty))
             },
@@ -912,7 +955,7 @@ impl<'a> Analyzer<'a> {
                 let loc = return_var.loc;
 
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
-                unify(&mut self.errors, &self.types, &stmt.span, &ty, return_ty);
+                unify(&mut self.errors, &stmt.span, &ty, return_ty);
 
                 translate::return_stmt(loc, expr.map(|expr| (expr.insts, type_size_nocheck(&expr.ty))))
             },
@@ -928,11 +971,14 @@ impl<'a> Analyzer<'a> {
             AstType::Unit => Some(Type::Unit),
             AstType::String => Some(Type::String),
             AstType::Named(name) => {
-                match self.types.get(&name) {
-                    Some(ty) => Some(ty.clone()),
-                    None => {
-                        error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
-                        None
+                match self.tycons.find(&name) {
+                    Some(tycon) => Some(Type::App(tycon.clone(), Vec::new())),
+                    None => match self.types.find(&name) {
+                        Some(ty) => Some(ty.clone()),
+                        None => {
+                            error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
+                            None
+                        },
                     }
                 }
             },
@@ -955,6 +1001,23 @@ impl<'a> Analyzer<'a> {
                 }
 
                 Some(Type::App(TypeCon::Struct(field_names), types))
+            },
+            AstType::Poly(ty, var_ids) => {
+                let vars: Vec<TypeVar> = var_ids.iter().map(|_| TypeVar::new()).collect();
+
+                self.types.push_scope();
+                self.tycons.push_scope();
+
+                for (id, var) in var_ids.iter().zip(vars.iter()) {
+                    self.types.insert(id.kind, Type::Var(*var));
+                }
+
+                let ty = self.walk_type(*ty)?;
+
+                self.types.pop_scope();
+                self.tycons.pop_scope();
+
+                Some(Type::Poly(vars, Box::new(ty)))
             },
         }
     }
@@ -990,8 +1053,29 @@ impl<'a> Analyzer<'a> {
 
                 self.pop_scope();
             },
-            TopLevel::Type(_, ty) => {
-                self.walk_type(ty);
+            TopLevel::Type(name, ty, var_ids) => {
+                self.types.push_scope();
+                self.tycons.push_scope();
+
+                let mut vars = Vec::with_capacity(var_ids.len());
+                for var in &var_ids {
+                    vars.push(TypeVar::new());
+                    self.types.insert(var.kind, Type::Var(*vars.last().unwrap()));
+                }
+
+                let ty = match self.walk_type(ty.clone()) {
+                    Some(ty) => ty,
+                    None => return,
+                };
+
+                let tycon = TypeCon::Fun(vars, Box::new(ty));
+                let uniq = self.next_unique;
+                self.next_unique += 1;
+
+                self.tycons.pop_scope();
+                self.types.pop_scope();
+
+                self.tycons.insert(name, TypeCon::Unique(Box::new(tycon), uniq));
             },
             _ => {},
         }
@@ -1040,23 +1124,6 @@ impl<'a> Analyzer<'a> {
                 let func = Function::new(*name, param_size);
                 code.new_function(func);
             },
-            TopLevel::Type(name, ty) => {
-                let mut ty = match self.walk_type(ty.clone()) {
-                    Some(ty) => ty,
-                    None => return,
-                };
-
-                match &mut ty {
-                    Type::App(tycon @ TypeCon::Struct(_), _) => {
-                        let old_tycon = mem::replace(tycon, TypeCon::Tuple);
-                        *tycon = TypeCon::Unique(Box::new(old_tycon), self.next_unique);
-                        self.next_unique += 1;
-                    },
-                    _ => {},
-                };
-
-                self.types.insert(*name, ty);
-            },
             _ => {},
         }
     }
@@ -1074,6 +1141,9 @@ impl<'a> Analyzer<'a> {
         // Insert main function
         let func = Function::new(self.main_func_id, 0);
         code.new_function(func);
+
+        self.types.push_scope();
+        self.tycons.push_scope();
 
         // Insert function headers
         for toplevel in program.top.iter() {
@@ -1097,6 +1167,8 @@ impl<'a> Analyzer<'a> {
         code.end_function(self.main_func_id, insts);
 
         self.pop_scope();
+        self.tycons.pop_scope();
+        self.types.pop_scope();
 
         if !self.errors.is_empty() {
             Err(self.errors)

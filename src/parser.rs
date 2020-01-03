@@ -210,7 +210,7 @@ impl Parser {
 
         if self.consume(&Token::Rbrace) {
             let span = Span::merge(&name_span, &self.prev().span);
-            Some(spanned(Expr::Struct(name, Vec::new()), span))
+            Some(spanned(Expr::Struct(spanned(name, name_span), Vec::new()), span))
         } else {
             let mut fields = Vec::new();
 
@@ -234,7 +234,7 @@ impl Parser {
             
 
             let span = Span::merge(&name_span, &self.prev().span);
-            Some(spanned(Expr::Struct(name, fields), span))
+            Some(spanned(Expr::Struct(spanned(name, name_span), fields), span))
         }
     }
 
@@ -885,17 +885,50 @@ impl Parser {
         Some(spanned(TopLevel::Function(name?, params, return_ty?, body), span))
     }
 
+    fn parse_type_vars(&mut self) -> Vec<Spanned<Id>> {
+        if !self.consume(&Token::LessThan) {
+            return Vec::new();
+        }
+
+        if self.consume(&Token::GreaterThan) {
+            Vec::new()
+        } else {
+            let mut vars = Vec::new();
+
+            let first = self.expect_identifier(&[Token::GreaterThan, Token::Comma]);
+            if let Some(first) = first {
+                vars.push(spanned(first, self.prev().span.clone()));
+            }
+
+            while self.peek().kind != Token::GreaterThan && self.consume(&Token::Comma) {
+                if self.peek().kind == Token::GreaterThan {
+                    break;
+                }
+
+                if let Some(var) = self.expect_identifier(&[Token::GreaterThan, Token::Comma]) {
+                    vars.push(spanned(var, self.prev().span.clone()));
+                }
+            }
+
+            self.expect(&Token::GreaterThan, &[Token::GreaterThan]);
+
+            vars
+        }
+    }
+
     fn parse_def_type(&mut self) -> Option<Spanned<TopLevel>> {
         let type_span = self.peek().span.clone();
         self.next(); // eat "type"
 
         let name = self.expect_identifier(&[Token::Semicolon])?;
+        let vars = self.parse_type_vars();
+
         let ty = self.parse_skip(Self::parse_type, &[Token::Semicolon])?;
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let span = Span::merge(&type_span, &self.prev().span);
-        Some(spanned(TopLevel::Type(name, ty), span))
+        Some(spanned(TopLevel::Type(name, ty, vars), span))
     }
 
     fn parse_toplevel(&mut self) -> Option<Spanned<TopLevel>> {

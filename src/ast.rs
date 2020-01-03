@@ -59,7 +59,7 @@ pub enum Field {
 pub enum Expr {
     Literal(Literal),
     Tuple(Vec<Spanned<Expr>>),
-    Struct(Id, Vec<(Spanned<Id>, Spanned<Expr>)>),
+    Struct(Spanned<Id>, Vec<(Spanned<Id>, Spanned<Expr>)>),
     Array(Box<Spanned<Expr>>, usize),
     Field(Box<Spanned<Expr>>, Field),
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
@@ -94,7 +94,7 @@ pub struct Param {
 pub enum TopLevel {
     Stmt(Spanned<Stmt>),
     Function(Id, Vec<Param>, Spanned<AstType>, Spanned<Stmt>),
-    Type(Id, Spanned<AstType>),
+    Type(Id, Spanned<AstType>, Vec<Spanned<Id>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -114,6 +114,7 @@ pub enum AstType {
     Array(Box<Spanned<AstType>>, usize),
     Tuple(Vec<Spanned<AstType>>),
     Struct(Vec<(Spanned<Id>, Spanned<AstType>)>),
+    Poly(Box<Spanned<AstType>>, Vec<Spanned<Id>>),
 }
 
 impl fmt::Display for AstType {
@@ -153,6 +154,19 @@ impl fmt::Display for AstType {
 
                 write!(f, "}}")
             }
+            AstType::Poly(ty, vars) => {
+                write!(f, "{}<", ty.kind)?;
+
+                if !vars.is_empty() {
+                    let mut iter = vars.iter();
+                    write!(f, "{}", IdMap::name(iter.next().unwrap().kind))?;
+                    for ty in iter {
+                        write!(f, ", {}", IdMap::name(ty.kind))?;
+                    }
+                }
+
+                write!(f, ">")
+            },
         }
     }
 }
@@ -175,7 +189,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             }
         },
         Expr::Struct(id, fields) => {
-            println!("struct {} {}", IdMap::name(*id), span_to_string(&expr.span));
+            println!("struct {} {}", IdMap::name(id.kind), span_to_string(&expr.span));
             for (name, expr) in fields {
                 print!("{}", "  ".repeat(depth + 1));
                 println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
@@ -282,10 +296,20 @@ pub fn dump_toplevel(toplevel: &Spanned<TopLevel>, strings: &[String]) {
             println!("fn {}({}): {:?} {}", IdMap::name(*name), params.len(), return_ty, span_to_string(&toplevel.span));
             dump_stmt(&body, strings, 1);
         },
-        TopLevel::Type(name, ty) => {
+        TopLevel::Type(name, ty, vars) => {
+            let vars = if vars.is_empty() {
+                String::from("")
+            } else {
+                format!("<{}>", vars.iter()
+                    .map(|id| IdMap::name(id.kind))
+                    .collect::<Vec<String>>()
+                    .join(", "))
+            };
+
             println!(
-                "type {} {} {}",
+                "type {}{} {} {}",
                 IdMap::name(*name),
+                vars,
                 ty.kind,
                 span_to_string(&toplevel.span)
             );
