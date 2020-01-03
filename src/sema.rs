@@ -165,7 +165,7 @@ fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()>
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
         (a, b) => {
-            errors.push(Error::new(&format!("{} and {} are not equivalent", a, b), span.clone()));
+            errors.push(Error::new(&format!("`{}` and `{}` are not equivalent", a, b), span.clone()));
             None
         },
     }

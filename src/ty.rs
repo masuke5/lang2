@@ -23,6 +23,23 @@ impl TypeVar {
     }
 }
 
+macro_rules! write_iter {
+    ($f:expr, $iter:expr) => {
+        write_iter!($f, $iter, |a| a);
+    };
+    ($f:expr, $iter:expr, $filter:expr) => {
+        let filter = $filter;
+        let mut iter = $iter;
+
+        if let Some(first) = iter.next() {
+            write!($f, "{}", filter(first))?;
+            for value in iter {
+                write!($f, ", {}", filter(value))?;
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Int,
@@ -43,31 +60,28 @@ impl fmt::Display for Type {
             Self::String => write!(f, "string"),
             Self::Unit => write!(f, "unit"),
             Self::Null => write!(f, "null"),
+            Self::App(TypeCon::Pointer(is_mutable), types) => write!(f, "*{}{}", if *is_mutable { "mut " } else { "" }, types[0]),
+            Self::App(TypeCon::Tuple, types) => {
+                write!(f, "(")?;
+                write_iter!(f, types.iter());
+                write!(f, ")")
+            },
+            Self::App(TypeCon::Struct(fields), types) => {
+                write!(f, "{{")?;
+                write_iter!(f, fields.iter().zip(types.iter()), |(name, ty): (&Id, &Type)| format!("{}: {}", IdMap::name(*name), ty));
+                write!(f, "}}")
+            },
+            Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
+            Self::App(TypeCon::Unique(tycon, uniq), types) => write!(f, "{} (u{})", Type::App(*tycon.clone(), types.clone()), uniq),
             Self::App(tycon, tys) => {
                 write!(f, "{}[", tycon)?;
-
-                if !tys.is_empty() {
-                    let mut iter = tys.iter();
-                    write!(f, "{}", *iter.next().unwrap())?;
-                    for ty in iter {
-                        write!(f, ", {}", ty)?;
-                    }
-                }
-
+                write_iter!(f, tys.iter());
                 write!(f, "]")
             },
             Self::Var(var) => write!(f, "var({})", var),
             Self::Poly(vars, ty) => {
                 write!(f, "{}<", ty)?;
-
-                if !vars.is_empty() {
-                    let mut iter = vars.iter();
-                    write!(f, "{}", *iter.next().unwrap())?;
-                    for var in vars {
-                        write!(f, ", {}", var)?;
-                    }
-                }
-
+                write_iter!(f, vars.iter());
                 write!(f, ">")
             },
         }
@@ -91,29 +105,13 @@ impl fmt::Display for TypeCon {
             Self::Tuple => write!(f, "tuple"),
             Self::Struct(fields) => {
                 write!(f, "{{")?;
-
-                if !fields.is_empty() {
-                    let mut iter = fields.iter();
-                    write!(f, "{}", IdMap::name(*iter.next().unwrap()))?;
-                    for field in iter {
-                        write!(f, ", {}", IdMap::name(*field))?;
-                    }
-                }
-
+                write_iter!(f, fields.iter(), |id: &Id| IdMap::name(*id));
                 write!(f, "}}")
             },
             Self::Array(size) => write!(f, "array({})", size),
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
-
-                if !params.is_empty() {
-                    let mut iter = params.iter();
-                    write!(f, "{}", iter.next().unwrap())?;
-                    for param in iter {
-                        write!(f, ", {}", param)?;
-                    }
-                }
-
+                write_iter!(f, params.iter());
                 write!(f, ") = {}", body)
             },
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
