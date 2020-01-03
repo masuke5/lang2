@@ -1028,113 +1028,104 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_toplevel<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: Spanned<TopLevel>) {
-        match toplevel.kind {
-            TopLevel::Function(name, params, return_ty, stmt) => {
-                self.current_func = name;
+    fn walk_type_def(&mut self, tydef: AstTypeDef) {
+        self.types.push_scope();
+        self.tycons.push_scope();
 
-                self.push_scope();
-
-                let return_ty = match self.walk_type(return_ty) {
-                    Some(ty) => ty,
-                    None => return,
-                };
-
-                // params
-                if self.insert_params(params, &return_ty).is_none() {
-                    return;
-                }
-
-                code.begin_function(name);
-                // `None` is not returned because `stmt` is always a block statement
-                let mut insts = self.walk_stmt(code, stmt).unwrap();
-
-                // Push a return instruction if the return value type is unit
-                let return_var = self.get_return_var();
-                if let Type::Unit = return_var.ty {
-                    insts.push_inst_noarg(opcode::RETURN);
-                }
-
-                code.end_function(name, insts);
-
-                self.pop_scope();
-            },
-            TopLevel::Type(name, ty, var_ids) => {
-                self.types.push_scope();
-                self.tycons.push_scope();
-
-                let mut vars = Vec::with_capacity(var_ids.len());
-                for var in &var_ids {
-                    vars.push(TypeVar::new());
-                    self.types.insert(var.kind, Type::Var(*vars.last().unwrap()));
-                }
-
-                let ty = match self.walk_type(ty.clone()) {
-                    Some(ty) => ty,
-                    None => return,
-                };
-
-                let tycon = TypeCon::Fun(vars, Box::new(ty));
-                let uniq = self.next_unique;
-                self.next_unique += 1;
-
-                self.tycons.pop_scope();
-                self.types.pop_scope();
-
-                self.tycons.insert(name, TypeCon::Unique(Box::new(tycon), uniq));
-            },
-            _ => {},
+        let mut vars = Vec::with_capacity(tydef.var_ids.len());
+        for var in &tydef.var_ids {
+            vars.push(TypeVar::new());
+            self.types.insert(var.kind, Type::Var(*vars.last().unwrap()));
         }
+
+        let ty = match self.walk_type(tydef.ty.clone()) {
+            Some(ty) => ty,
+            None => return,
+        };
+
+        let tycon = TypeCon::Fun(vars, Box::new(ty));
+        let uniq = self.next_unique;
+        self.next_unique += 1;
+
+        self.tycons.pop_scope();
+        self.types.pop_scope();
+
+        self.tycons.insert(tydef.name, TypeCon::Unique(Box::new(tycon), uniq));
     }
 
-    fn walk_main_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: Spanned<TopLevel>) -> Option<InstList> {
-        if let TopLevel::Stmt(stmt) = toplevel.kind {
-            self.walk_stmt(code, stmt)
-        } else {
-            None
+    fn walk_function<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, func: AstFunction) {
+        self.current_func = func.name;
+
+        self.push_scope();
+
+        let return_ty = match self.walk_type(func.return_ty) {
+            Some(ty) => ty,
+            None => return,
+        };
+
+        // params
+        if self.insert_params(func.params, &return_ty).is_none() {
+            return;
         }
+
+        code.begin_function(func.name);
+        // `None` is not returned because `func.body` is always a block statement
+        let mut insts = self.walk_stmt(code, func.body).unwrap();
+
+        // Push a return instruction if the return value type is unit
+        let return_var = self.get_return_var();
+        if let Type::Unit = return_var.ty {
+            insts.push_inst_noarg(opcode::RETURN);
+        }
+
+        code.end_function(func.name, insts);
+
+        self.pop_scope();
     }
 
-    fn insert_function_header<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, toplevel: &TopLevel) {
-        match toplevel {
-            TopLevel::Function(name, params, return_ty, _) => {
-                let mut param_types = Vec::new();
-                let mut param_size = 0;
-                for Param { ty, .. } in params {
-                    let ty_span = ty.span.clone();
-                    let ty = match self.walk_type(ty.clone()) {
-                        Some(ty) => ty,
-                        None => return,
-                    };
-
-                    param_size += type_size_err(&mut self.errors, ty_span, &ty);
-                    param_types.push(ty);
-                }
-
-                let return_ty_span = return_ty.span.clone();
-                let return_ty = match self.walk_type(return_ty.clone()) {
-                    Some(ty) => ty,
-                    None => return,
-                };
-
-                type_size_err(&mut self.errors, return_ty_span, &return_ty);
-
-                // Insert a header of the function
-                let header = FunctionHeader {
-                    params: param_types,
-                    return_ty,
-                };
-                self.function_headers.insert(*name, header);
-
-                // Insert function
-                let func = Function::new(*name, param_size);
-                code.new_function(func);
-            },
-            _ => {},
-        }
+    fn walk_main_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, stmt: Spanned<Stmt>) -> Option<InstList> {
+        self.walk_stmt(code, stmt)
     }
 
-    pub fn analyze<W: Read + Write + Seek>(mut self, code: W, mut program: Program) -> Result<BytecodeStream<W>, Vec<Error>> {
+    // =================================
+    //  Header
+    // =================================
+
+    fn insert_function_header<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, func: &AstFunction) {
+        let mut param_types = Vec::new();
+        let mut param_size = 0;
+        for Param { ty, .. } in &func.params {
+            let ty_span = ty.span.clone();
+            let ty = match self.walk_type(ty.clone()) {
+                Some(ty) => ty,
+                None => return,
+            };
+
+            param_size += type_size_err(&mut self.errors, ty_span, &ty);
+            param_types.push(ty);
+        }
+
+        let return_ty_span = func.return_ty.span.clone();
+        let return_ty = match self.walk_type(func.return_ty.clone()) {
+            Some(ty) => ty,
+            None => return,
+        };
+
+        type_size_err(&mut self.errors, return_ty_span, &return_ty);
+
+        // Insert a header of the function
+        let header = FunctionHeader {
+            params: param_types,
+            return_ty,
+        };
+        self.function_headers.insert(func.name, header);
+
+        // Insert function
+        let func = Function::new(func.name, param_size);
+        code.new_function(func);
+    }
+
+    pub fn analyze<W: Read + Write + Seek>(mut self, code: W, program: Program) -> Result<BytecodeStream<W>, Vec<Error>> {
         let mut code = BytecodeBuilder::new(BytecodeStream::new(code), &program.strings, &[&self.std_module]);
 
         // Insert main function header
@@ -1150,23 +1141,29 @@ impl<'a> Analyzer<'a> {
 
         self.types.push_scope();
         self.tycons.push_scope();
+        self.push_scope();
+
+        // Type definition
+        for tydef in program.types {
+            self.walk_type_def(tydef);
+        }
 
         // Insert function headers
-        for toplevel in program.top.iter() {
-            self.insert_function_header(&mut code, &toplevel.kind);
+        for func in &program.functions {
+            self.insert_function_header(&mut code, func);
         }
         code.end_new_function();
 
-        self.push_scope();
-
-        for toplevel in program.top.drain_filter(|toplevel| match toplevel.kind { TopLevel::Stmt(_) => false, _ => true }) {
-            self.walk_toplevel(&mut code, toplevel);
+        // Function body
+        for func in program.functions {
+            self.walk_function(&mut code, func);
         }
 
+        // Main statements
         code.begin_function(self.main_func_id);
         let mut insts = InstList::new();
-        for toplevel in program.top {
-            if let Some(stmt_insts) = self.walk_main_stmt(&mut code, toplevel) {
+        for stmt in program.main_stmts {
+            if let Some(stmt_insts) = self.walk_main_stmt(&mut code, stmt) {
                 insts.append(stmt_insts);
             }
         }

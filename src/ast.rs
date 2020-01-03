@@ -91,15 +91,25 @@ pub struct Param {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TopLevel {
-    Stmt(Spanned<Stmt>),
-    Function(Id, Vec<Param>, Spanned<AstType>, Spanned<Stmt>),
-    Type(Id, Spanned<AstType>, Vec<Spanned<Id>>),
+pub struct AstFunction {
+    pub name: Id,
+    pub params: Vec<Param>,
+    pub return_ty: Spanned<AstType>,
+    pub body: Spanned<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct AstTypeDef {
+    pub name: Id,
+    pub ty: Spanned<AstType>,
+    pub var_ids: Vec<Spanned<Id>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
-    pub top: Vec<Spanned<TopLevel>>,
+    pub main_stmts: Vec<Spanned<Stmt>>,
+    pub functions: Vec<AstFunction>,
+    pub types: Vec<AstTypeDef>,
     pub strings: Vec<String>,
 }
 
@@ -141,18 +151,18 @@ impl fmt::Display for AstType {
                 write!(f, ")")
             },
             AstType::Struct(fields) => {
-                write!(f, "struct {{")?;
+                write!(f, "struct {{ ")?;
 
                 if !fields.is_empty() {
                     let mut iter = fields.iter();
                     let (id, ty) = iter.next().unwrap();
-                    write!(f, "{} : {}", IdMap::name(id.kind), ty.kind)?;
+                    write!(f, "{}: {}", IdMap::name(id.kind), ty.kind)?;
                     for (id, ty) in iter {
                         write!(f, ", {} : {}", IdMap::name(id.kind), ty.kind)?;
                     }
                 }
 
-                write!(f, "}}")
+                write!(f, " }}")
             }
             AstType::App(name, types) => {
                 write!(f, "{}<", IdMap::name(name.kind))?;
@@ -289,36 +299,33 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
     }
 }
 
-pub fn dump_toplevel(toplevel: &Spanned<TopLevel>, strings: &[String]) {
-    match &toplevel.kind {
-        TopLevel::Stmt(stmt) => dump_stmt(&stmt, strings, 0),
-        TopLevel::Function(name, params, return_ty, body) => {
-            println!("fn {}({}): {:?} {}", IdMap::name(*name), params.len(), return_ty, span_to_string(&toplevel.span));
-            dump_stmt(&body, strings, 1);
-        },
-        TopLevel::Type(name, ty, vars) => {
-            let vars = if vars.is_empty() {
-                String::from("")
-            } else {
-                format!("<{}>", vars.iter()
-                    .map(|id| IdMap::name(id.kind))
-                    .collect::<Vec<String>>()
-                    .join(", "))
-            };
-
-            println!(
-                "type {}{} {} {}",
-                IdMap::name(*name),
-                vars,
-                ty.kind,
-                span_to_string(&toplevel.span)
-            );
-        },
-    }
-}
-
 pub fn dump_ast(program: &Program) {
-    for toplevel in &program.top {
-        dump_toplevel(&toplevel, &program.strings);
+    for ty in &program.types {
+        println!("type {}<{}> {}",
+            IdMap::name(ty.name), 
+            ty.var_ids
+                .iter()
+                .map(|id| IdMap::name(id.kind))
+                .collect::<Vec<String>>()
+                .join(", "),
+            ty.ty.kind,
+        );
+    }
+
+    for stmt in &program.main_stmts {
+        dump_stmt(&stmt, &program.strings, 0);
+    }
+
+    for func in &program.functions {
+        println!("fn {}({}): {}",
+            IdMap::name(func.name),
+            func.params
+                .iter()
+                .map(|p| format!("{}{}: {}", if p.is_mutable { "mut " } else { "" }, IdMap::name(p.name), p.ty.kind))
+                .collect::<Vec<String>>()
+                .join(", "),
+            func.return_ty.kind,
+        );
+        dump_stmt(&func.body, &program.strings, 1);
     }
 }

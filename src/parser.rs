@@ -21,6 +21,10 @@ pub struct Parser {
     tokens: Vec<Spanned<Token>>,
     pos: usize,
     errors: Vec<Error>,
+
+    main_stmts: Vec<Spanned<Stmt>>,
+    functions: Vec<AstFunction>,
+    types: Vec<AstTypeDef>,
     strings: Vec<String>,
 }
 
@@ -30,6 +34,9 @@ impl Parser {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            main_stmts: Vec::new(),
+            functions: Vec::new(),
+            types: Vec::new(),
             strings: Vec::new(),
         }
     }
@@ -899,9 +906,8 @@ impl Parser {
         Some(params)
     }
 
-    fn parse_fn_decl(&mut self) -> Option<Spanned<TopLevel>> {
+    fn parse_fn_decl(&mut self) -> Option<AstFunction> {
         // Eat "fn"
-        let fn_span = self.peek().span.clone();
         self.next();
 
         // Parse the function name
@@ -921,8 +927,12 @@ impl Parser {
 
         let body = self.expect_block()?;
 
-        let span = Span::merge(&fn_span, &body.span);
-        Some(spanned(TopLevel::Function(name?, params, return_ty?, body), span))
+        Some(AstFunction {
+            name: name?,
+            params,
+            return_ty: return_ty?,
+            body
+        })
     }
 
     fn parse_type_vars(&mut self) -> Vec<Spanned<Id>> {
@@ -956,50 +966,58 @@ impl Parser {
         }
     }
 
-    fn parse_def_type(&mut self) -> Option<Spanned<TopLevel>> {
-        let type_span = self.peek().span.clone();
+    fn parse_def_type(&mut self) -> Option<AstTypeDef> {
         self.next(); // eat "type"
 
         let name = self.expect_identifier(&[Token::Semicolon])?;
-        let vars = self.parse_type_vars();
+        let var_ids = self.parse_type_vars();
 
         let ty = self.parse_skip(Self::parse_type, &[Token::Semicolon])?;
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
-        let span = Span::merge(&type_span, &self.prev().span);
-        Some(spanned(TopLevel::Type(name, ty, vars), span))
+        Some(AstTypeDef {
+            name,
+            ty,
+            var_ids,
+        })
     }
 
-    fn parse_toplevel(&mut self) -> Option<Spanned<TopLevel>> {
+    fn parse_toplevel(&mut self) -> Option<()> {
         match self.peek().kind {
-            Token::Fn => self.parse_fn_decl(),
-            Token::Type => self.parse_def_type(),
-            _ => self.parse_stmt().map(|stmt| {
-                let span = stmt.span.clone();
-                spanned(TopLevel::Stmt(stmt), span)
-            }),
-        }
+            Token::Fn => {
+                let func = self.parse_fn_decl()?;
+                self.functions.push(func);
+            },
+            Token::Type => {
+                let tydef = self.parse_def_type()?;
+                self.types.push(tydef);
+            },
+            _ => {
+                let stmt = self.parse_stmt()?;
+                self.main_stmts.push(stmt);
+            },
+        };
+
+        Some(())
     }
 
     pub fn parse(mut self) -> Result<Program, Vec<Error>> {
-        let mut toplevels = Vec::new();
-
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
                 continue;
             }
 
-            if let Some(toplevel) = self.parse_toplevel() {
-                toplevels.push(toplevel);
-            }
+            self.parse_toplevel();
         }
 
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
             Ok(Program {
-                top: toplevels,
+                functions: self.functions,
+                types: self.types,
+                main_stmts: self.main_stmts,
                 strings: self.strings,
             })
         }
