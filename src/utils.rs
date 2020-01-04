@@ -1,4 +1,55 @@
+use std::collections::LinkedList;
+use std::hash::Hash;
+
+use rustc_hash::FxHashMap;
+
 use crate::span::Span;
+
+#[derive(Debug)]
+pub struct HashMapWithScope<K: Hash + Eq, V> {
+    maps: LinkedList<FxHashMap<K, V>>,
+}
+
+impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
+    pub fn new() -> Self {
+        Self {
+            maps: LinkedList::new(),
+        }
+    }
+
+    pub fn push_scope(&mut self) {
+        self.maps.push_front(FxHashMap::default());
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.maps.pop_front().unwrap();
+    }
+
+    pub fn find(&self, key: &K) -> Option<&V> {
+        for map in self.maps.iter() {
+            if let Some(value) = map.get(key) {
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
+    pub fn insert(&mut self, key: K, value: V) {
+        let front_map = self.maps.front_mut().unwrap();
+        front_map.insert(key, value);
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        for map in self.maps.iter() {
+            if map.contains_key(key) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
 
 pub fn escape_string(raw: &str) -> String {
     let mut s = String::new();

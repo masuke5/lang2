@@ -1,8 +1,5 @@
 use std::io::{Read, Write, Seek};
-use std::collections::{LinkedList, HashMap};
-use std::hash::Hash;
-
-use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 
 use crate::ty::{Type, TypeCon, TypeVar};
 use crate::ast::*;
@@ -12,6 +9,7 @@ use crate::id::{Id, IdMap};
 use crate::bytecode::{Function, opcode, BytecodeBuilder, BytecodeStream, InstList};
 use crate::module::{FunctionHeader, ModuleHeader};
 use crate::translate;
+use crate::utils::HashMapWithScope;
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
@@ -280,52 +278,6 @@ impl Variable {
             is_mutable,
             loc,
         }
-    }
-}
-
-#[derive(Debug)]
-struct HashMapWithScope<K: Hash + Eq, V> {
-    maps: LinkedList<FxHashMap<K, V>>,
-}
-
-impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
-    fn new() -> Self {
-        Self {
-            maps: LinkedList::new(),
-        }
-    }
-
-    fn push_scope(&mut self) {
-        self.maps.push_front(FxHashMap::default());
-    }
-
-    fn pop_scope(&mut self) {
-        self.maps.pop_front().unwrap();
-    }
-
-    fn find(&self, key: &K) -> Option<&V> {
-        for map in self.maps.iter() {
-            if let Some(value) = map.get(key) {
-                return Some(value);
-            }
-        }
-
-        None
-    }
-
-    fn insert(&mut self, key: K, value: V) {
-        let front_map = self.maps.front_mut().unwrap();
-        front_map.insert(key, value);
-    }
-
-    fn contains_key(&self, key: &K) -> bool {
-        for map in self.maps.iter() {
-            if map.contains_key(key) {
-                return true;
-            }
-        }
-
-        false
     }
 }
 
