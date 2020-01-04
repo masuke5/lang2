@@ -317,13 +317,23 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
         let front_map = self.maps.front_mut().unwrap();
         front_map.insert(key, value);
     }
+
+    fn contains_key(&self, key: &K) -> bool {
+        for map in self.maps.iter() {
+            if map.contains_key(key) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Debug)]
 pub struct Analyzer<'a> {
     function_headers: HashMap<Id, FunctionHeader>,
     types: HashMapWithScope<Id, Type>,
-    tycons: HashMapWithScope<Id, TypeCon>,
+    tycons: HashMapWithScope<Id, Option<TypeCon>>,
     variables: Vec<HashMap<Id, Variable>>,
     errors: Vec<Error>,
     main_func_id: Id,
@@ -392,6 +402,25 @@ impl<'a> Analyzer<'a> {
 
     fn get_return_var(&self) -> &Variable {
         self.find_var(self.return_value_id).unwrap()
+    }
+
+    fn expand_name(&self, ty: Type) -> Option<Type> {
+        let ty = expand_unique(ty);
+
+        match ty {
+            Type::App(TypeCon::Fun(params, body), args) => {
+                // { params_i -> args_i }
+                let map: HashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
+                self.expand_name(subst(*body, &map))
+            },
+            Type::App(TypeCon::Named(name), types) => {
+                match self.tycons.find(&name) {
+                    Some(tycon) => self.expand_name(Type::App(tycon.clone().unwrap(), types)),
+                    None => None,
+                }
+            },
+            ty => Some(ty),
+        }
     }
 
     // ====================================
@@ -536,7 +565,8 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Struct(ty, field_exprs) => {
                 let ty = self.walk_type(ty)?;
-                let expr_ty = subst(expand_unique(ty), &HashMap::new());
+                let ty = self.expand_name(ty)?;
+                let expr_ty = subst(ty, &HashMap::new());
 
                 let fields = match expr_ty.clone() {
                     Type::App(TypeCon::Struct(fields), tys) => fields.into_iter().zip(tys.into_iter()),
@@ -971,15 +1001,13 @@ impl<'a> Analyzer<'a> {
             AstType::Unit => Some(Type::Unit),
             AstType::String => Some(Type::String),
             AstType::Named(name) => {
-                match self.tycons.find(&name) {
-                    Some(tycon) => Some(Type::App(tycon.clone(), Vec::new())),
-                    None => match self.types.find(&name) {
-                        Some(ty) => Some(ty.clone()),
-                        None => {
-                            error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
-                            None
-                        },
-                    }
+                if let Some(ty) = self.types.find(&name) {
+                    Some(ty.clone())
+                } else if self.tycons.contains_key(&name) {
+                    Some(Type::App(TypeCon::Named(name), Vec::new()))
+                } else {
+                    error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
+                    None
                 }
             },
             AstType::Pointer(ty, is_mutable) => Some(Type::App(TypeCon::Pointer(is_mutable), vec![self.walk_type(*ty)?])),
@@ -1006,13 +1034,10 @@ impl<'a> Analyzer<'a> {
                 self.types.push_scope();
                 self.tycons.push_scope();
 
-                let tycon = match self.tycons.find(&name.kind) {
-                    Some(tycon) => tycon.clone(),
-                    None => {
-                        error!(self, name.span, "undefined type `{}`", IdMap::name(name.kind));
-                        return None;
-                    },
-                };
+                if !self.tycons.contains_key(&name.kind) {
+                    error!(self, name.span, "undefined type `{}`", IdMap::name(name.kind));
+                    return None;
+                }
 
                 let mut new_types = Vec::with_capacity(types.len());
                 for ty in types {
@@ -1023,9 +1048,13 @@ impl<'a> Analyzer<'a> {
                 self.types.pop_scope();
                 self.tycons.pop_scope();
 
-                Some(Type::App(tycon, new_types))
+                Some(Type::App(TypeCon::Named(name.kind), new_types))
             },
         }
+    }
+    
+    fn insert_type_header(&mut self, tydef: &AstTypeDef) {
+        self.tycons.insert(tydef.name, None);
     }
 
     fn walk_type_def(&mut self, tydef: AstTypeDef) {
@@ -1050,7 +1079,7 @@ impl<'a> Analyzer<'a> {
         self.tycons.pop_scope();
         self.types.pop_scope();
 
-        self.tycons.insert(tydef.name, TypeCon::Unique(Box::new(tycon), uniq));
+        self.tycons.insert(tydef.name, Some(TypeCon::Unique(Box::new(tycon), uniq)));
     }
 
     fn walk_function<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, func: AstFunction) {
@@ -1144,6 +1173,10 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
 
         // Type definition
+        for tydef in &program.types {
+            self.insert_type_header(tydef);
+        }
+
         for tydef in program.types {
             self.walk_type_def(tydef);
         }
