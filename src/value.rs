@@ -1,97 +1,59 @@
-use std::str; use std::fmt;
+use std::str;
+use std::fmt;
 use std::slice;
 use std::ptr;
-use std::ptr::NonNull;
-use crate::gc::GcRegion;
+use std::mem;
 
-pub trait FromValue {
-    fn from_value_ref(value: &Value) -> &Self;
-    fn from_value(value: Value) -> Self;
-}
-
-#[derive(Debug, Clone)]
-pub enum Value {
-    Unintialized,
-    Int(i64),
-    Bool(bool),
-    Ref(NonNull<Value>),
-    PointerToStack(NonNull<Value>),
-    PointerToHeap(NonNull<GcRegion>),
-}
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Value(u64);
 
 impl Value {
+    pub fn is_heap_ptr(self) -> bool {
+        (self.0 & 1) != 0
+    }
+
+    pub fn as_u64(self) -> u64 {
+        self.0 >> 1
+    }
+
+    pub fn as_i64(self) -> i64 {
+        let value: i64 = unsafe { mem::transmute(self.0) };
+        value >> 1
+    }
+
+    pub fn as_ptr<T>(self) -> *mut T {
+        let ptr = self.0;
+        let ptr = ptr & !1;
+        ptr as _
+    }
+
+    pub fn new_u64(value: u64) -> Self {
+        Self(value << 1)
+    }
+
+    pub fn new_i64(value: i64) -> Self {
+        let value = value << 1;
+        unsafe { mem::transmute(value) }
+    }
+
+    pub fn new_ptr<T>(ptr: *const T) -> Self {
+        unsafe { Self::new(ptr as u64) }
+    }
+
+    pub fn new_ptr_to_heap<T>(ptr: *const T) -> Self {
+        let value = ptr as u64;
+        let value = value | 1;
+        unsafe { Self::new(value) }
+    }
+
+    pub unsafe fn new(value: u64) -> Self {
+        Self(value)
+    }
+
     #[allow(dead_code)]
-    pub fn expect_ptr_ref(&self) -> NonNull<Value> {
-        match self {
-            Value::PointerToStack(ptr) => *ptr,
-            Value::PointerToHeap(mut ptr) => {
-                let region = unsafe { ptr.as_mut() };
-                region.as_non_null()
-            },
-            _ => panic!("expected pointer"),
-        }
+    pub unsafe fn raw(self) -> u64 {
+        self.0
     }
-
-    pub fn expect_ptr(self) -> NonNull<Value> {
-        match self {
-            Value::PointerToStack(ptr) => ptr,
-            Value::PointerToHeap(mut ptr) => {
-                let region = unsafe { ptr.as_mut() };
-                region.as_non_null()
-            },
-            _ => panic!("expected pointer"),
-        }
-    }
-
-    // reference to Value::Ref
-    #[allow(dead_code)]
-    pub fn expect_ref_ref(&self) -> NonNull<Value> {
-        match self {
-            Value::Ref(ptr) => *ptr,
-            _ => panic!("expected ref"),
-        }
-    }
-
-    pub fn expect_ref(self) -> NonNull<Value> {
-        match self {
-            Value::Ref(ptr) => ptr,
-            _ => panic!("expected ref"),
-        }
-    }
-}
-
-macro_rules! impl_from_value {
-    ($ty:ty, $mess:tt, $($pat:pat => $expr:expr),* $(,)*) => {
-        impl FromValue for $ty {
-            #[allow(unreachable_patterns)]
-            fn from_value_ref(value: &Value) -> &Self {
-                match value {
-                    $($pat => $expr,)*
-                    _ => panic!($mess),
-                }
-            }
-
-            #[allow(unreachable_patterns)]
-            fn from_value(value: Value) -> Self {
-                match value {
-                    $($pat => $expr,)*
-                    _ => panic!($mess),
-                }
-            }
-        }
-    }
-}
-
-impl_from_value! {i64, "expected int",
-    Value::Int(n) => n,
-}
-
-impl_from_value! {bool, "expected bool",
-    Value::Bool(b) => b,
-}
-
-impl_from_value! {Value, "",
-    value => value,
 }
 
 #[repr(C)]

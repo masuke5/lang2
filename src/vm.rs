@@ -1,5 +1,4 @@
 use std::time::Instant;
-use std::ptr::NonNull;
 use std::mem;
 use std::mem::size_of;
 use std::slice;
@@ -10,23 +9,16 @@ use rustc_hash::FxHashMap;
 
 use crate::bytecode;
 use crate::bytecode::{Bytecode, opcode, opcode_name};
-use crate::value::{FromValue, Value, Lang2String};
+use crate::value::{Value, Lang2String};
 use crate::gc::Gc;
 use crate::module::Module;
 
 const STACK_SIZE: usize = 10000;
 
 macro_rules! pop {
-    ($self:ident, $ty:ty) => {
-        {
-            let v: $ty = FromValue::from_value(mem::replace(&mut $self.stack[$self.sp], Value::Unintialized));
-            $self.sp -= 1;
-            v
-        }
-    };
     ($self:ident) => {
         {
-            let v = FromValue::from_value(mem::replace(&mut $self.stack[$self.sp], Value::Unintialized));
+            let v = $self.stack[$self.sp];
             $self.sp -= 1;
             v
         }
@@ -141,41 +133,25 @@ impl VM {
         self.fp - args_size - n
     }
 
-    pub fn get_value<V: FromValue>(&self, loc: usize) -> V {
-        let value = self.stack[loc].clone();
-        FromValue::from_value(value)
-    }
-
-    #[allow(dead_code)]
-    pub fn get_value_ref<V: FromValue>(&self, loc: usize) -> &V {
-        let value = &self.stack[loc];
-        FromValue::from_value_ref(value)
+    pub fn get_value(&self, loc: usize) -> Value {
+        self.stack[loc]
     }
 
     pub fn get_string(&self, loc: usize) -> &Lang2String {
-        let value = &self.stack[loc];
-        let ptr = match value {
-            Value::PointerToHeap(ptr) => ptr,
-            _ => panic!(),
-        };
+        let value = self.stack[loc];
+        if !value.is_heap_ptr() {
+            panic!();
+        }
 
-        unsafe { &*ptr.as_ref().as_ptr::<Lang2String>() }
+        unsafe { &*value.as_ptr() }
     }
 
     fn dump_value(value: &Value, depth: usize) {
-        print!("{}", "  ".repeat(depth));
-        match value {
-            Value::Int(n) => println!("int {}", n),
-            Value::Bool(true) => println!("bool true"),
-            Value::Bool(false) => println!("bool false"),
-            Value::Ref(ptr) => {
-                println!("ref");
-                let value = unsafe { ptr.as_ref() };
-                Self::dump_value(value, depth + 1);
-            },
-            Value::PointerToStack(ptr) => println!("ptr {:p}", ptr.as_ptr()),
-            Value::PointerToHeap(ptr) => unsafe { println!("ptr {:p}", ptr.as_ref().as_ptr::<Value>()) },
-            Value::Unintialized => println!("uninitialized"),
+        print!("{}{:x}", "  ".repeat(depth), value.as_u64());
+        if value.is_heap_ptr() {
+            println!(" (HEAP)");
+        } else {
+            println!();
         }
     }
 
@@ -343,11 +319,11 @@ impl VM {
                 },
                 opcode::INT => {
                     let value = self.get_ref_value_i64(&bytecode, arg);
-                    push!(self, Value::Int(value));
+                    push!(self, Value::new_i64(value));
                 },
                 opcode::TINY_INT => {
                     let n = i8::from_le_bytes([arg]);
-                    push!(self, Value::Int(n as i64));
+                    push!(self, Value::new_i64(n as i64));
                 },
                 opcode::STRING => {
                     let loc = bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
@@ -371,32 +347,32 @@ impl VM {
                         let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
                         bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
                     }
-                    
-                    push!(self, Value::PointerToHeap(region));
+
+                    unsafe {
+                        push!(self, Value::new_ptr_to_heap(region.as_mut().as_ptr::<Value>()));
+                    }
                 },
                 opcode::TRUE => {
-                    push!(self, Value::Bool(true));
+                    push!(self, Value::new_u64(1));
                 },
                 opcode::FALSE => {
-                    push!(self, Value::Bool(false));
+                    push!(self, Value::new_u64(0));
                 },
                 opcode::NULL => {
-                    let nullptr = unsafe { NonNull::new_unchecked(ptr::null_mut()) };
-                    push!(self, Value::PointerToStack(nullptr));
+                    let nullptr = ptr::null_mut::<Value>();
+                    push!(self, Value::new_ptr(nullptr));
                 },
                 opcode::POINTER => {
-                    let value = pop!(self, Value).expect_ref();
-                    push!(self, Value::PointerToStack(value));
+                    let value = pop!(self);
+                    push!(self, Value::new_ptr(value.as_ptr::<Value>()));
                 },
                 opcode::DEREFERENCE => {
-                    let ptr = pop!(self, Value).expect_ptr();
-                    push!(self, Value::Ref(ptr));
+                    let ptr = pop!(self);
+                    push!(self, ptr);
                 },
                 opcode::NEGATIVE => {
-                    match self.stack[self.sp] {
-                        Value::Int(ref mut n) => *n = -*n,
-                        _ => panic!("expected int"),
-                    };
+                    let tos = &mut self.stack[self.sp];
+                    *tos = Value::new_i64(-tos.as_i64());
                 },
                 opcode::COPY => {
                     let size = arg as usize;
@@ -404,7 +380,7 @@ impl VM {
                         panic!("stack overflow");
                     }
 
-                    let value_ref = pop!(self, Value).expect_ref();
+                    let value_ref = pop!(self);
 
                     unsafe {
                         let value_ref = value_ref.as_ptr();
@@ -415,18 +391,14 @@ impl VM {
                     self.sp += size;
                 },
                 opcode::OFFSET => {
-                    let offset: i64 = pop!(self);
+                    let offset = pop!(self).as_i64();
                     if offset < 0 {
                         panic!("negative offset");
                     }
 
-                    let ptr = match self.stack[self.sp] {
-                        Value::Ref(ref mut ptr) => ptr,
-                        _ => panic!("expected ref"),
-                    };
-
-                    let new_ptr = unsafe { ptr.as_ptr().add(offset as usize) };
-                    *ptr = NonNull::new(new_ptr).unwrap();
+                    let ptr = self.stack[self.sp].as_ptr::<Value>();
+                    let new_ptr = unsafe { ptr.add(offset as usize) };
+                    self.stack[self.sp] = Value::new_ptr(new_ptr);
                 },
                 opcode::DUPLICATE => {
                     let value = self.get_ref_value_u64(&bytecode, arg);
@@ -451,8 +423,7 @@ impl VM {
                     }
 
                     let value = &mut self.stack[loc];
-                    let ptr = unsafe { NonNull::new_unchecked(value as *mut _) };
-                    push!(self, Value::Ref(ptr));
+                    push!(self, Value::new_ptr(value as *mut Value));
                 },
                 opcode::LOAD_COPY => {
                     let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
@@ -475,7 +446,7 @@ impl VM {
                     let size = arg as usize;
 
                     unsafe {
-                        let dst = pop!(self, Value).expect_ref().as_ptr();
+                        let dst = pop!(self).as_ptr();
                         let src = &self.stack[self.sp - size + 1] as *const _;
                         ptr::copy_nonoverlapping(src, dst, size);
                     }
@@ -483,40 +454,25 @@ impl VM {
                     self.sp -= size;
                 },
                 opcode::BINOP_ADD..=opcode::BINOP_NEQ => {
-                    match pop!(self, Value) {
-                        Value::Int(rhs) => {
-                            let lhs: i64 = pop!(self);
+                    let rhs = pop!(self).as_i64();
+                    let lhs = pop!(self).as_i64();
 
-                            let result = match opcode {
-                                opcode::BINOP_ADD => Value::Int(lhs + rhs),
-                                opcode::BINOP_SUB => Value::Int(lhs - rhs),
-                                opcode::BINOP_MUL => Value::Int(lhs * rhs),
-                                opcode::BINOP_DIV => Value::Int(lhs / rhs),
-                                opcode::BINOP_MOD => Value::Int(lhs % rhs),
-                                opcode::BINOP_LT => Value::Bool(lhs < rhs),
-                                opcode::BINOP_LE => Value::Bool(lhs <= rhs),
-                                opcode::BINOP_GT => Value::Bool(lhs > rhs),
-                                opcode::BINOP_GE => Value::Bool(lhs >= rhs),
-                                opcode::BINOP_EQ => Value::Bool(lhs == rhs),
-                                opcode::BINOP_NEQ => Value::Bool(lhs != rhs),
-                                _ => panic!("bug"),
-                            };
+                    let result = match opcode {
+                        opcode::BINOP_ADD => Value::new_i64(lhs + rhs),
+                        opcode::BINOP_SUB => Value::new_i64(lhs - rhs),
+                        opcode::BINOP_MUL => Value::new_i64(lhs * rhs),
+                        opcode::BINOP_DIV => Value::new_i64(lhs / rhs),
+                        opcode::BINOP_MOD => Value::new_i64(lhs % rhs),
+                        opcode::BINOP_LT => Value::new_u64(if lhs <  rhs { 1 } else { 0 }),
+                        opcode::BINOP_LE => Value::new_u64(if lhs <= rhs { 1 } else { 0 }),
+                        opcode::BINOP_GT => Value::new_u64(if lhs >  rhs { 1 } else { 0 }),
+                        opcode::BINOP_GE => Value::new_u64(if lhs >= rhs { 1 } else { 0 }),
+                        opcode::BINOP_EQ => Value::new_u64(if lhs == rhs { 1 } else { 0 }),
+                        opcode::BINOP_NEQ => Value::new_u64(if lhs != rhs { 1 } else { 0 }),
+                        _ => panic!("bug"),
+                    };
 
-                            push!(self, result);
-                        },
-                        lhs => {
-                            let lhs = lhs.expect_ptr();
-                            let rhs = pop!(self, Value).expect_ptr();
-
-                            let result = match opcode {
-                                opcode::BINOP_EQ => Value::Bool(lhs == rhs),
-                                opcode::BINOP_NEQ => Value::Bool(lhs != rhs),
-                                _ => panic!("unexpected binary operator"),
-                            };
-
-                            push!(self, result);
-                        },
-                    }
+                    push!(self, result);
                 },
                 opcode::POP => {
                     self.sp -= 1;
@@ -534,16 +490,17 @@ impl VM {
 
                     self.sp -= size;
 
-                    push!(self, Value::PointerToHeap(region));
+                    let region = unsafe { region.as_mut() };
+                    push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
                 },
                 opcode::CALL => {
                     let func = &self.functions[arg as usize];
 
-                    push!(self, Value::Int(self.current_func as i64));
+                    push!(self, Value::new_u64(self.current_func as u64));
                     self.current_func = arg as usize;
 
-                    push!(self, Value::Int(self.ip as i64));
-                    push!(self, Value::Int(self.fp as i64));
+                    push!(self, Value::new_u64(self.ip as u64));
+                    push!(self, Value::new_u64(self.fp as u64));
 
                     self.ip = func.pos;
 
@@ -576,10 +533,10 @@ impl VM {
                 opcode::RETURN => {
                     // Restore stack frame
                     self.sp = self.fp - 1;
-                    self.fp = pop!(self, i64) as usize;
+                    self.fp = pop!(self).as_u64() as usize;
 
-                    self.ip = pop!(self, i64) as usize;
-                    let prev_func = pop!(self, i64) as usize;
+                    self.ip = pop!(self).as_u64() as usize;
+                    let prev_func = pop!(self).as_u64() as usize;
 
                     // Pop arguments
                     self.sp -= self.functions[self.current_func].param_size as usize;
@@ -593,14 +550,14 @@ impl VM {
                     self.ip = ip_after_jump_to(self.ip, arg);
                 },
                 opcode::JUMP_IF_FALSE => {
-                    let cond: bool = pop!(self);
-                    if !cond {
+                    let cond = pop!(self).as_u64();
+                    if cond == 0 {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 },
                 opcode::JUMP_IF_TRUE => {
-                    let cond: bool = pop!(self);
-                    if cond {
+                    let cond = pop!(self).as_u64();
+                    if cond != 0 {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 },

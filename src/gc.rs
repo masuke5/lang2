@@ -4,7 +4,7 @@ use std::mem;
 use std::ptr::NonNull;
 use std::ffi::c_void;
 use libc;
-use crate::value::{Value};
+use crate::value::Value;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -65,6 +65,7 @@ impl GcRegion {
         (self.bits & 0b01000000) != 0
     }
 
+    #[allow(dead_code)]
     pub fn as_ptr<T>(&self) -> *const T {
         self.data.as_ptr() as *const c_void as *const T
     }
@@ -73,6 +74,7 @@ impl GcRegion {
         self.data.as_ptr() as *mut T
     }
 
+    #[allow(dead_code)]
     pub fn as_non_null<T>(&mut self) -> NonNull<T> {
         unsafe { NonNull::new_unchecked(self.data.as_ptr() as *mut _) }
     }
@@ -124,23 +126,21 @@ impl Gc {
 
     fn mark(&mut self, stack: &mut [Value]) {
         fn mark(value: &mut Value) {
-            match value {
-                Value::PointerToHeap(ptr) => {
-                    let region = unsafe { ptr.as_mut() };
-                    region.mark();
+            if value.is_heap_ptr() {
+                let ptr = value.as_ptr::<GcRegion>();
+                let region = unsafe { &mut *ptr.sub(1) };
+                region.mark();
 
-                    // Regions can consist of string and more
-                    if region.consists_of_value() {
-                        unsafe {
-                            let base = region.as_mut_ptr::<Value>();
-                            let field_count = region.size / mem::size_of::<Value>();
-                            for i in 0..field_count {
-                                mark(&mut *base.add(i));
-                            }
+                // Regions can consist of string and more
+                if region.consists_of_value() {
+                    unsafe {
+                        let base = region.as_mut_ptr::<Value>();
+                        let field_count = region.size / mem::size_of::<Value>();
+                        for i in 0..field_count {
+                            mark(&mut *base.add(i));
                         }
                     }
-                },
-                _ => {},
+                }
             }
         }
 
@@ -197,17 +197,18 @@ impl Drop for Gc {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::size_of;
     use super::*;
 
     fn write(mut region: NonNull<GcRegion>, values: &[Value]) {
         let region = unsafe { region.as_mut() };
-        if values.len() != region.size {
+        if size_of::<Value>() * values.len() != region.size {
             panic!("value size != region size");
         }
         
         unsafe {
             let ptr = region.as_mut_ptr::<Value>();
-            for i in 0..region.size {
+            for i in 0..values.len() {
                 ptr.add(i).write(values[i].clone());
             }
         }
@@ -215,28 +216,28 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let mut gc = Gc::new();
-
-        let region1 = gc.alloc::<Value>(2, true, &mut []);
-        write(region1, &[Value::Int(1), Value::Int(2)]);
-
-        let region2 = gc.alloc::<Value>(2, true, &mut [Value::PointerToHeap(region1)]);
-        write(region2, &[Value::Int(3), Value::PointerToHeap(region1)]);
-
-        let region3 = gc.alloc::<Value>(1, true, &mut [Value::PointerToHeap(region1), Value::PointerToHeap(region2)]);
-        write(region3, &[Value::Int(190419041)]);
-
-        let mut stack = vec![
-            Value::Int(5),
-            Value::Int(6),
-            Value::PointerToHeap(region2),
-        ];
-
-        gc.gc(&mut stack);
-
         unsafe {
-            assert_eq!(region3.as_ref(), gc.freelist_map.get_mut(&1).unwrap().pop_front().unwrap().as_ref());
+            let mut gc = Gc::new();
+
+            let mut region1 = gc.alloc::<Value>(2, true, &mut []);
+            write(region1, &[Value::new_i64(1), Value::new_i64(2)]);
+
+            let mut region2 = gc.alloc::<Value>(2, true, &mut [Value::new_ptr_to_heap(region1.as_mut())]);
+            write(region2, &[Value::new_i64(3), Value::new_ptr_to_heap(region1.as_mut())]);
+
+            let region3 = gc.alloc::<Value>(1, true, &mut [Value::new_ptr_to_heap(region1.as_mut()), Value::new_ptr_to_heap(region2.as_mut())]);
+            write(region3, &[Value::new_i64(190419041)]);
+
+            let mut stack = vec![
+                Value::new_i64(5),
+                Value::new_i64(6),
+                Value::new_ptr_to_heap(region2.as_mut()),
+            ];
+
+            gc.gc(&mut stack);
+
+            assert_eq!(region3.as_ref(), gc.freelist_map.get_mut(&8).unwrap().pop_front().unwrap().as_ref());
+            assert_eq!(None, gc.freelist_map.get(&2));
         }
-        assert_eq!(None, gc.freelist_map.get(&2));
     }
 }

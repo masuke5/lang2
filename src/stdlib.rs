@@ -6,13 +6,13 @@ use crate::vm::VM;
 use crate::module::{Module, ModuleHeader, FunctionHeader, NativeFunctionBody as Body};
 
 fn printnln(vm: &mut VM) {
-    let n: i64 = vm.get_value(vm.arg_loc(0, 1));
+    let n = vm.get_value(vm.arg_loc(0, 1)).as_i64();
 
     println!("{}", n);
 }
 
 fn printn(vm: &mut VM) {
-    let n: i64 = vm.get_value(vm.arg_loc(0, 1));
+    let n = vm.get_value(vm.arg_loc(0, 1)).as_i64();
 
     print!("{}", n);
 }
