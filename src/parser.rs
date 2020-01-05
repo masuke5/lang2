@@ -843,13 +843,12 @@ impl Parser {
     }
 
     fn parse_type_app(&mut self, id: Spanned<Id>) -> Spanned<AstType> {
-        let lessthan_span = self.peek().span.clone();
         let args = self.parse_type_args().unwrap_or(Vec::new());
 
         if args.is_empty() {
             spanned(AstType::Named(id.kind), id.span)
         } else {
-            let span = Span::merge(&lessthan_span, &self.peek().span);
+            let span = Span::merge(&id.span, &self.prev().span);
             spanned(AstType::App(id, args), span)
         }
     }

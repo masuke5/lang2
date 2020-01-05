@@ -1,16 +1,19 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::RwLock;
+
+use lazy_static::lazy_static;
+use rustc_hash::FxHashMap;
+
 use crate::id::{Id, IdMap};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TypeVar(u32);
 
-// const LETTERS: [char; 26] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'n', 'm', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'];
-
-impl fmt::Display for TypeVar {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
+lazy_static! {
+    static ref VAR_ID_MAP: RwLock<FxHashMap<TypeVar, Id>> = {
+        RwLock::new(FxHashMap::default())
+    };
 }
 
 static NEXT_VAR: AtomicU32 = AtomicU32::new(0);
@@ -20,6 +23,29 @@ impl TypeVar {
         let var = Self(NEXT_VAR.load(Ordering::Acquire));
         NEXT_VAR.fetch_add(1, Ordering::Acquire);
         var
+    }
+
+    pub fn with_id(id: Id) -> Self {
+        let var = Self(NEXT_VAR.load(Ordering::Acquire));
+        NEXT_VAR.fetch_add(1, Ordering::Acquire);
+
+        let mut var_id_map = VAR_ID_MAP.write().expect("STR_MAP poisoned");
+        var_id_map.insert(var, id);
+
+        var
+    }
+}
+
+impl fmt::Display for TypeVar {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let var_id_map = VAR_ID_MAP.read().expect("STR_MAP poisoned");
+        let id = var_id_map.get(self);
+
+        match id {
+            Some(id) if cfg!(debug_assertions) => write!(f, "{}'{}", IdMap::name(*id), self.0),
+            Some(id) if !cfg!(debug_assertions) => write!(f, "{}", IdMap::name(*id)),
+            _ => write!(f, "'{}", self.0),
+        }
     }
 }
 
@@ -78,7 +104,7 @@ impl fmt::Display for Type {
                 write_iter!(f, tys.iter());
                 write!(f, ")")
             },
-            Self::Var(var) => write!(f, "'{}", var),
+            Self::Var(var) => write!(f, "{}", var),
             Self::Poly(vars, ty) => {
                 write!(f, "{}<", ty)?;
                 write_iter!(f, vars.iter());
@@ -112,8 +138,8 @@ impl fmt::Display for TypeCon {
             Self::Array(size) => write!(f, "array({})", size),
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
-                write_iter!(f, params.iter(), |a| format!("'{}", a));
-                write!(f, ") = {}", body)
+                write_iter!(f, params.iter(), |a| format!("{}", a));
+                write!(f, ") {}", body)
             },
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
             Self::Named(name) => write!(f, "{}", IdMap::name(*name)),

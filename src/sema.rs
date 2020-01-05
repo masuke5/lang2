@@ -352,7 +352,8 @@ impl<'a> Analyzer<'a> {
                     map.insert(param.clone(), ty.clone());
                 }
 
-                self.type_size(&subst(*body.clone(), &map))
+                let body = subst(*body.clone(), &map);
+                self.type_size(&body)
             },
             Type::App(TypeCon::Pointer(_), _) => Some(1),
             Type::App(TypeCon::Array(size), types) => {
@@ -1069,7 +1070,7 @@ impl<'a> Analyzer<'a> {
 
         let mut vars = Vec::with_capacity(tydef.var_ids.len());
         for var in &tydef.var_ids {
-            vars.push(TypeVar::new());
+            vars.push(TypeVar::with_id(var.kind));
             self.types.insert(var.kind, Type::Var(*vars.last().unwrap()));
         }
 
@@ -1138,7 +1139,7 @@ impl<'a> Analyzer<'a> {
 
         let mut vars = Vec::new();
         for var_id in &func.ty_params {
-            vars.push((var_id.kind, TypeVar::new()));
+            vars.push((var_id.kind, TypeVar::with_id(var_id.kind)));
             self.types.insert(var_id.kind, Type::Var(vars.last().unwrap().1));
         }
 
