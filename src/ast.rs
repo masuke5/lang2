@@ -65,7 +65,7 @@ pub enum Expr {
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
-    Call(Id, Vec<Spanned<Expr>>),
+    Call(Id, Vec<Spanned<Expr>>, Vec<Spanned<AstType>>),
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
@@ -96,6 +96,7 @@ pub struct AstFunction {
     pub params: Vec<Param>,
     pub return_ty: Spanned<AstType>,
     pub body: Spanned<Stmt>,
+    pub ty_params: Vec<Spanned<Id>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -229,8 +230,25 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             dump_expr(&lhs, strings, depth + 1);
             dump_expr(&rhs, strings, depth + 1);
         },
-        Expr::Call(name, args) => {
-            println!("{} {}", IdMap::name(*name), span_to_string(&expr.span));
+        Expr::Call(name, args, tyargs) => {
+            print!("{}", IdMap::name(*name));
+
+            if !args.is_empty() {
+                print!(".<");
+
+                let mut tyargs = tyargs.iter();
+                if let Some(tyarg) = tyargs.next() {
+                    print!("{}", tyarg.kind);
+                }
+
+                for tyarg in tyargs {
+                    print!(", {}", tyarg.kind);
+                }
+
+                print!(">");
+            }
+
+            println!(" {}", span_to_string(&expr.span));
             for arg in args {
                 dump_expr(&arg, strings, depth + 1);
             }
@@ -317,8 +335,22 @@ pub fn dump_ast(program: &Program) {
     }
 
     for func in &program.functions {
-        println!("fn {}({}): {}",
-            IdMap::name(func.name),
+        print!("fn {}", IdMap::name(func.name));
+
+        if !func.ty_params.is_empty() {
+            print!("<");
+
+            let mut iter = func.ty_params.iter();
+            let first = iter.next().unwrap();
+            print!("{}", IdMap::name(first.kind));
+            for var in iter {
+                print!(", {}", IdMap::name(var.kind));
+            }
+
+            print!(">");
+        }
+
+        println!("({}): {}",
             func.params
                 .iter()
                 .map(|p| format!("{}{}: {}", if p.is_mutable { "mut " } else { "" }, IdMap::name(p.name), p.ty.kind))

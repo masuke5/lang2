@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::id::{Id, IdMap};
-use crate::ty::{Type, TypeCon};
+use crate::ty::{Type, TypeCon, TypeVar};
 use crate::vm::VM;
 use crate::module::{Module, ModuleHeader, FunctionHeader, NativeFunctionBody as Body};
 
@@ -33,6 +33,7 @@ fn println(vm: &mut VM) {
 fn func(
     funcs: &mut (&mut Vec<(usize, Body)>, &mut HashMap<Id, (u16, FunctionHeader)>),
     name: &'static str,
+    ty_params: Vec<(Id, TypeVar)>,
     param_size: usize,
     params: Vec<Type>,
     return_ty: Type,
@@ -42,6 +43,7 @@ fn func(
     let header = FunctionHeader {
         params,
         return_ty,
+        ty_params,
     };
     
     funcs.0.push((param_size, body));
@@ -53,10 +55,10 @@ pub fn module() -> (Module, ModuleHeader) {
     let mut bodies = Vec::new();
     let mut f = (&mut bodies, &mut funcs);
 
-    func(&mut f, "printn", 1, vec![Type::Int], Type::Unit, Body(printn));
-    func(&mut f, "printnln", 1, vec![Type::Int], Type::Unit, Body(printnln));
-    func(&mut f, "print", 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(print));
-    func(&mut f, "println", 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(println));
+    func(&mut f, "printn", vec![], 1, vec![Type::Int], Type::Unit, Body(printn));
+    func(&mut f, "printnln", vec![], 1, vec![Type::Int], Type::Unit, Body(printnln));
+    func(&mut f, "print", vec![], 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(print));
+    func(&mut f, "println", vec![], 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(println));
 
     let module = Module::Native(bodies);
     let header = ModuleHeader {

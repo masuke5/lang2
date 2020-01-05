@@ -2,7 +2,7 @@ use std::fmt;
 use std::collections::HashMap;
 
 use crate::vm::VM;
-use crate::ty::Type;
+use crate::ty::{Type, TypeVar};
 use crate::id::Id;
 
 pub struct NativeFunctionBody(pub fn(&mut VM));
@@ -23,6 +23,7 @@ pub enum Module {
 pub struct FunctionHeader {
     pub params: Vec<Type>,
     pub return_ty: Type,
+    pub ty_params: Vec<(Id, TypeVar)>,
 }
 
 #[derive(Debug)]

@@ -72,13 +72,13 @@ impl fmt::Display for Type {
                 write!(f, "}}")
             },
             Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
-            Self::App(TypeCon::Unique(tycon, uniq), types) => write!(f, "{} (u{})", Type::App(*tycon.clone(), types.clone()), uniq),
+            Self::App(TypeCon::Unique(tycon, uniq), types) => write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq),
             Self::App(tycon, tys) => {
-                write!(f, "{}[", tycon)?;
+                write!(f, "{}(", tycon)?;
                 write_iter!(f, tys.iter());
-                write!(f, "]")
+                write!(f, ")")
             },
-            Self::Var(var) => write!(f, "var({})", var),
+            Self::Var(var) => write!(f, "'{}", var),
             Self::Poly(vars, ty) => {
                 write!(f, "{}<", ty)?;
                 write_iter!(f, vars.iter());
@@ -112,7 +112,7 @@ impl fmt::Display for TypeCon {
             Self::Array(size) => write!(f, "array({})", size),
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
-                write_iter!(f, params.iter());
+                write_iter!(f, params.iter(), |a| format!("'{}", a));
                 write!(f, ") = {}", body)
             },
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),

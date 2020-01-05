@@ -102,14 +102,21 @@ fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()>
             }
 
             return Some(());
-        }
+        },
         (Type::App(TypeCon::Pointer(a_mut), a_tys), Type::App(TypeCon::Pointer(b_mut), b_tys)) if a_mut == b_mut => {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
                 unify(errors, span, a_ty, b_ty)?;
             }
 
             return Some(());
-        }
+        },
+        (Type::App(TypeCon::Named(a_name), a_tys), Type::App(TypeCon::Named(b_name), b_tys)) if a_name == b_name => {
+            for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
+                unify(errors, span, a_ty, b_ty)?;
+            }
+
+            return Some(());
+        },
         (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) if a_tycon == b_tycon => {
             match a_tycon {
                 TypeCon::Tuple => {
@@ -159,7 +166,7 @@ fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()>
         (Type::Int, Type::Int) => Some(()),
         (Type::Bool, Type::Bool) => Some(()),
         (Type::String, Type::String) => Some(()),
-        (Type::Unit, Type::Int) => Some(()),
+        (Type::Unit, Type::Unit) => Some(()),
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
         (a, b) => {
@@ -357,19 +364,25 @@ impl<'a> Analyzer<'a> {
     }
 
     fn expand_name(&self, ty: Type) -> Option<Type> {
-        let ty = expand_unique(ty);
-
         match ty {
-            Type::App(TypeCon::Fun(params, body), args) => {
-                // { params_i -> args_i }
-                let map: HashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
+            Type::App(TypeCon::Fun(params, body), types) => {
+                let map = params.into_iter().zip(types.into_iter()).collect();
                 self.expand_name(subst(*body, &map))
             },
             Type::App(TypeCon::Named(name), types) => {
                 match self.tycons.find(&name) {
-                    Some(tycon) => self.expand_name(Type::App(tycon.clone().unwrap(), types)),
+                    Some(tycon) => Some(Type::App(tycon.clone().unwrap(), types)),
                     None => None,
                 }
+            },
+            Type::App(tycon, types) => {
+                let mut new_types = Vec::with_capacity(types.len());
+                for ty in types {
+                    let ty = self.expand_name(ty)?;
+                    new_types.push(ty);
+                }
+
+                Some(Type::App(tycon, new_types))
             },
             ty => Some(ty),
         }
@@ -476,7 +489,7 @@ impl<'a> Analyzer<'a> {
             // always
             Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => true,
             // only if the return value is a compound value
-            Expr::Call(_, _) => true,
+            Expr::Call(_, _, _) => true,
             _ => false,
         }
     }
@@ -517,10 +530,13 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Struct(ty, field_exprs) => {
                 let ty = self.walk_type(ty)?;
-                let ty = self.expand_name(ty)?;
-                let expr_ty = subst(ty, &HashMap::new());
+                let expr_ty = ty.clone();
 
-                let fields = match expr_ty.clone() {
+                let ty = self.expand_name(ty)?;
+                let ty = expand_unique(ty);
+                let ty = subst(ty, &HashMap::new());
+
+                let fields = match ty {
                     Type::App(TypeCon::Struct(fields), tys) => fields.into_iter().zip(tys.into_iter()),
                     ty => {
                         error!(self, expr.span.clone(), "expected struct but got type `{}`", ty);
@@ -570,7 +586,9 @@ impl<'a> Analyzer<'a> {
                     None
                 };
 
-                let should_deref = match &comp_expr.ty {
+                let ty = self.expand_name(comp_expr.ty.clone())?;
+
+                let should_deref = match &ty {
                     Type::App(TypeCon::Pointer(_), _) => true,
                     _ => false,
                 };
@@ -578,7 +596,7 @@ impl<'a> Analyzer<'a> {
                 // Get the field type and offset
                 let (field_ty, offset) = match field {
                     Field::Number(i) => {
-                        let types = match &comp_expr.ty {
+                        let types = match &ty {
                             Type::App(TypeCon::Pointer(is_mutable_), tys) => {
                                 is_mutable = *is_mutable_;
                                 expect_tuple(&mut self.errors, &tys[0], comp_expr.span.clone())?
@@ -598,7 +616,7 @@ impl<'a> Analyzer<'a> {
                         }
                     },
                     Field::Id(name) => {
-                        let (fields, is_mutable_) = self.get_struct_fields(&comp_expr.ty, &comp_expr.span, is_mutable)?;
+                        let (fields, is_mutable_) = self.get_struct_fields(&ty, &comp_expr.span, is_mutable)?;
                         is_mutable = is_mutable_;
 
                         let i = match fields.iter().position(|(id, _)| *id == name) {
@@ -746,28 +764,54 @@ impl<'a> Analyzer<'a> {
                 let rhs_size = type_size_nocheck(&rhs.ty);
                 (translate::binop(binop, lhs.insts, lhs_size, rhs.insts, rhs_size), ty)
             },
-            Expr::Call(name, args) => {
-                let (return_ty, params, code_id, module_id) = {
-                    // Get the callee function
-                    let (callee_func, code_id, module_id) = match self.function_headers.get(&name) {
-                        Some(func) => (func, code.get_function(name).unwrap().code_id, None),
-                        None => {
-                            if let Some((id, func)) = self.std_module.find_func(name) {
-                                (func, *id, Some(0))
-                            } else {
-                                error!(self, expr.span.clone(), "undefined function");
-                                return None;
-                            }
-                        },
-                    };
-
-                    (
-                        callee_func.return_ty.clone(),
-                        callee_func.params.clone(),
-                        code_id,
-                        module_id,
-                    )
+            Expr::Call(name, args, ty_args) => {
+                let (callee_func, code_id, module_id) = match self.function_headers.get(&name) {
+                    Some(func) => (func, code.get_function(name).unwrap().code_id, None),
+                    None => {
+                        if let Some((id, func)) = self.std_module.find_func(name) {
+                            (func, *id, Some(0))
+                        } else {
+                            error!(self, expr.span.clone(), "undefined function");
+                            return None;
+                        }
+                    },
                 };
+
+                let ty_params = callee_func.ty_params.clone();
+                let return_ty = callee_func.return_ty.clone();
+                let old_params = callee_func.params.clone();
+
+                // Check type parameter length
+                if ty_params.len() != ty_args.len() {
+                    error!(self, expr.span.clone(),
+                        "the function takes {} type parameters. but got {} type arguments",
+                        ty_params.len(),
+                        ty_args.len());
+                    return None;
+                }
+
+                // map <- { ty_params_i -> ty_args_i }
+                let iter = ty_params
+                    .iter()
+                    .map(|(_, var)| var)
+                    .copied()
+                    .zip(ty_args.iter().cloned());
+                let mut map = HashMap::with_capacity(ty_params.len());
+
+                for (var, ty) in iter {
+                    let ty = self.walk_type(ty)?;
+                    map.insert(var, ty);
+                }
+
+                // Substitute type arguments for return types
+                let return_ty = subst(return_ty, &map);
+
+                // Substitute type arguments for parameter types
+                let mut params = Vec::with_capacity(old_params.len());
+                for param in old_params {
+                    let ty = subst(param, &map);
+                    params.push(ty);
+                }
 
                 // Check parameter length
                 if args.len() != params.len() {
@@ -778,6 +822,7 @@ impl<'a> Analyzer<'a> {
                     return None;
                 }
 
+                // Check argument types
                 let mut insts = Vec::new();
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
                     let arg = self.walk_expr(code, arg);
@@ -1038,11 +1083,15 @@ impl<'a> Analyzer<'a> {
         self.current_func = func.name;
 
         self.push_scope();
+        self.types.push_scope();
+        self.tycons.push_scope();
 
-        let return_ty = match self.walk_type(func.return_ty) {
-            Some(ty) => ty,
-            None => return,
-        };
+        let header = &self.function_headers[&func.name];
+        let return_ty = header.return_ty.clone();
+
+        for (id, var) in &header.ty_params {
+            self.types.insert(*id, Type::Var(*var));
+        }
 
         // params
         if self.insert_params(func.params, &return_ty).is_none() {
@@ -1061,6 +1110,8 @@ impl<'a> Analyzer<'a> {
 
         code.end_function(func.name, insts);
 
+        self.tycons.pop_scope();
+        self.types.pop_scope();
         self.pop_scope();
     }
 
@@ -1073,6 +1124,15 @@ impl<'a> Analyzer<'a> {
     // =================================
 
     fn insert_function_header<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, func: &AstFunction) {
+        self.types.push_scope();
+        self.tycons.push_scope();
+
+        let mut vars = Vec::new();
+        for var_id in &func.ty_params {
+            vars.push((var_id.kind, TypeVar::new()));
+            self.types.insert(var_id.kind, Type::Var(vars.last().unwrap().1));
+        }
+
         let mut param_types = Vec::new();
         let mut param_size = 0;
         for Param { ty, .. } in &func.params {
@@ -1092,12 +1152,16 @@ impl<'a> Analyzer<'a> {
             None => return,
         };
 
+        self.tycons.pop_scope();
+        self.types.pop_scope();
+
         type_size_err(&mut self.errors, return_ty_span, &return_ty);
 
         // Insert a header of the function
         let header = FunctionHeader {
             params: param_types,
             return_ty,
+            ty_params: vars,
         };
         self.function_headers.insert(func.name, header);
 
@@ -1113,6 +1177,7 @@ impl<'a> Analyzer<'a> {
         let header = FunctionHeader {
             params: Vec::new(),
             return_ty: Type::Unit,
+            ty_params: Vec::new(),
         };
         self.function_headers.insert(self.main_func_id, header);
 

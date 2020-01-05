@@ -64,6 +64,11 @@ impl Parser {
     }
 
     #[inline]
+    fn next_token(&self) -> &Spanned<Token> {
+        &self.tokens[self.pos + 1]
+    }
+
+    #[inline]
     fn consume(&mut self, token: &Token) -> bool {
         if &self.peek().kind == token {
             self.pos += 1;
@@ -192,11 +197,11 @@ impl Parser {
         }
     }
 
-    fn parse_call(&mut self, name: Id, name_span: Span) -> Option<Spanned<Expr>> {
+    fn parse_call(&mut self, name: Id, name_span: Span, tyargs: Vec<Spanned<AstType>>) -> Option<Spanned<Expr>> {
         let args = self.parse_args()?;
         let rparen_span = &self.prev().span;
 
-        Some(spanned(Expr::Call(name, args), Span::merge(&name_span, &rparen_span)))
+        Some(spanned(Expr::Call(name, args, tyargs), Span::merge(&name_span, &rparen_span)))
     }
 
     fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {
@@ -250,8 +255,16 @@ impl Parser {
     fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<Spanned<Expr>> {
         self.next();
 
-        if self.consume(&Token::Lparen) {
-            self.parse_call(ident, ident_span)
+        if self.peek().kind == Token::Dot && self.next_token().kind == Token::LessThan {
+            self.next();
+
+            // parse_type_args() returns None only when the current token is not Token::LessThan
+            let tyargs = self.parse_type_args().unwrap();
+            self.expect(&Token::Lparen, &[Token::Lparen]);
+
+            self.parse_call(ident, ident_span, tyargs)
+        } else if self.consume(&Token::Lparen) {
+            self.parse_call(ident, ident_span, Vec::new())
         } else if self.consume(&Token::Colon) {
             self.parse_struct(ident, ident_span)
         } else {
@@ -798,15 +811,13 @@ impl Parser {
         Some(spanned(AstType::Array(Box::new(ty), size), span))
     }
 
-    fn parse_type_app(&mut self, id: Spanned<Id>) -> Spanned<AstType> {
+    fn parse_type_args(&mut self) -> Option<Vec<Spanned<AstType>>> {
         if !self.consume(&Token::LessThan) {
-            return spanned(AstType::Named(id.kind), id.span);
+            return None;
         }
 
-        let lessthan_span = self.peek().span.clone();
-
         if self.consume(&Token::GreaterThan) {
-            spanned(AstType::Named(id.kind), id.span)
+            Some(Vec::new())
         } else {
             let mut types = Vec::new();
 
@@ -827,8 +838,19 @@ impl Parser {
 
             self.expect(&Token::GreaterThan, &[Token::GreaterThan]);
 
+            Some(types)
+        }
+    }
+
+    fn parse_type_app(&mut self, id: Spanned<Id>) -> Spanned<AstType> {
+        let lessthan_span = self.peek().span.clone();
+        let args = self.parse_type_args().unwrap_or(Vec::new());
+
+        if args.is_empty() {
+            spanned(AstType::Named(id.kind), id.span)
+        } else {
             let span = Span::merge(&lessthan_span, &self.peek().span);
-            spanned(AstType::App(id, types), span)
+            spanned(AstType::App(id, args), span)
         }
     }
 
@@ -912,6 +934,8 @@ impl Parser {
 
         // Parse the function name
         let name = self.expect_identifier(&[Token::Lparen]);
+        // Parse the type parameters
+        let ty_params = self.parse_type_vars();
 
         // Parse parameters
         self.expect(&Token::Lparen, &[Token::Lparen]);
@@ -931,7 +955,8 @@ impl Parser {
             name: name?,
             params,
             return_ty: return_ty?,
-            body
+            body,
+            ty_params,
         })
     }
 
