@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Instant;
 use std::ptr::NonNull;
 use std::mem;
@@ -6,6 +5,8 @@ use std::mem::size_of;
 use std::slice;
 use std::str;
 use std::ptr;
+
+use rustc_hash::FxHashMap;
 
 use crate::bytecode;
 use crate::bytecode::{Bytecode, opcode, opcode_name};
@@ -66,7 +67,7 @@ impl InstPerformance {
 
 #[derive(Debug)]
 pub struct Performance {
-    insts: HashMap<u8, InstPerformance>,
+    insts: FxHashMap<u8, InstPerformance>,
     current_opcode: u8,
     started_time: Instant,
     total: f32,
@@ -75,7 +76,7 @@ pub struct Performance {
 impl Performance {
     pub fn new() -> Self {
         Performance {
-            insts: HashMap::new(),
+            insts: FxHashMap::default(),
             current_opcode: opcode::NOP,
             started_time: Instant::now(),
             total: 0.0,
@@ -237,7 +238,7 @@ impl VM {
         }
     }
 
-    fn read_modules(&mut self, bytecode: &Bytecode, all_module_id: &HashMap<String, usize>) -> Vec<usize> {
+    fn read_modules(&mut self, bytecode: &Bytecode, all_module_id: &FxHashMap<String, usize>) -> Vec<usize> {
         let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START as usize) as usize;
         let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT as usize) as usize;
 
@@ -291,7 +292,7 @@ impl VM {
         // Module
         let mut all_modules = vec![std_module];
 
-        let mut all_module_id = HashMap::new();
+        let mut all_module_id = FxHashMap::default();
         all_module_id.insert(String::from("$std"), 0);
 
         let modules = self.read_modules(&bytecode, &all_module_id);

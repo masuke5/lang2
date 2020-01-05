@@ -1,5 +1,6 @@
 use std::io::{Read, Write, Seek};
-use std::collections::HashMap;
+
+use rustc_hash::FxHashMap;
 
 use crate::ty::{Type, TypeCon, TypeVar};
 use crate::ast::*;
@@ -39,7 +40,7 @@ macro_rules! fn_to_expect {
     };
 }
 
-fn subst(ty: Type, map: &HashMap<TypeVar, Type>) -> Type {
+fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
     match ty {
         Type::Int => Type::Int,
         Type::Bool => Type::Bool,
@@ -53,7 +54,7 @@ fn subst(ty: Type, map: &HashMap<TypeVar, Type>) -> Type {
             }
         },
         Type::App(TypeCon::Fun(params, body), tys) => {
-            let mut map_in_func = HashMap::new();
+            let mut map_in_func = FxHashMap::default();
             for (param, ty) in params.into_iter().zip(tys.into_iter()) {
                 map_in_func.insert(param, ty);
             }
@@ -70,7 +71,7 @@ fn subst(ty: Type, map: &HashMap<TypeVar, Type>) -> Type {
             Type::App(tycon, new_tys)
         },
         Type::Poly(vars, ty) => {
-            let mut new_map = HashMap::new();
+            let mut new_map = FxHashMap::default();
             let mut new_vars = Vec::with_capacity(vars.len());
             for var in vars {
                 new_vars.push(TypeVar::new());
@@ -134,7 +135,7 @@ fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()>
 
     match (a, b) {
         (Type::App(TypeCon::Fun(params, body), tys), b) | (b, Type::App(TypeCon::Fun(params, body), tys)) => {
-            let mut map = HashMap::new();
+            let mut map = FxHashMap::default();
             for (param, ty) in params.iter().zip(tys.iter()) {
                 map.insert(param.clone(), ty.clone());
             }
@@ -154,7 +155,7 @@ fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()>
             Some(())
         },
         (Type::Poly(vars1, ty1), Type::Poly(vars2, ty2)) => {
-            let mut map = HashMap::new();
+            let mut map = FxHashMap::default();
             for (var1, var2) in vars1.iter().zip(vars2.iter()) {
                 map.insert(var2.clone(), Type::Var(*var1));
             }
@@ -180,7 +181,7 @@ fn expand_unique(ty: Type) -> Type {
     match ty {
         Type::App(TypeCon::Fun(params, body), args) => {
             // { params_i -> args_i }
-            let map: HashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
+            let map: FxHashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
             expand_unique(subst(*body, &map))
         },
         Type::App(TypeCon::Unique(tycon, _), tys) => {
@@ -245,10 +246,10 @@ impl Variable {
 
 #[derive(Debug)]
 pub struct Analyzer<'a> {
-    function_headers: HashMap<Id, FunctionHeader>,
+    function_headers: FxHashMap<Id, FunctionHeader>,
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
-    variables: Vec<HashMap<Id, Variable>>,
+    variables: Vec<FxHashMap<Id, Variable>>,
     errors: Vec<Error>,
     main_func_id: Id,
     return_value_id: Id,
@@ -265,7 +266,7 @@ impl<'a> Analyzer<'a> {
         let return_value_id = IdMap::new_id("$rv");
 
         Self {
-            function_headers: HashMap::new(),
+            function_headers: FxHashMap::default(),
             variables: Vec::with_capacity(5),
             types: HashMapWithScope::new(),
             tycons: HashMapWithScope::new(),
@@ -286,7 +287,7 @@ impl<'a> Analyzer<'a> {
 
     #[inline]
     fn push_scope(&mut self) {
-        self.variables.push(HashMap::new());
+        self.variables.push(FxHashMap::default());
     }
 
     #[inline]
@@ -347,7 +348,7 @@ impl<'a> Analyzer<'a> {
     fn type_size(&self, ty: &Type) -> Option<usize> {
         match ty {
             Type::App(TypeCon::Fun(params, body), tys) => {
-                let mut map = HashMap::new();
+                let mut map = FxHashMap::default();
                 for (param, ty) in params.iter().zip(tys.iter()) {
                     map.insert(param.clone(), ty.clone());
                 }
@@ -544,7 +545,7 @@ impl<'a> Analyzer<'a> {
 
                 let ty = self.expand_name(ty)?;
                 let ty = expand_unique(ty);
-                let ty = subst(ty, &HashMap::new());
+                let ty = subst(ty, &FxHashMap::default());
 
                 let fields = match ty {
                     Type::App(TypeCon::Struct(fields), tys) => fields.into_iter().zip(tys.into_iter()),
@@ -806,7 +807,7 @@ impl<'a> Analyzer<'a> {
                     .map(|(_, var)| var)
                     .copied()
                     .zip(ty_args.iter().cloned());
-                let mut map = HashMap::with_capacity(ty_params.len());
+                let mut map = FxHashMap::default();
 
                 for (var, ty) in iter {
                     let ty = self.walk_type(ty)?;

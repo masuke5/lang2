@@ -1,5 +1,6 @@
 use std::fmt;
-use std::collections::HashMap;
+
+use rustc_hash::FxHashMap;
 
 use crate::vm::VM;
 use crate::ty::{Type, TypeVar};
@@ -29,7 +30,7 @@ pub struct FunctionHeader {
 #[derive(Debug)]
 pub struct ModuleHeader {
     pub id: Id,
-    pub functions: HashMap<Id, (u16, FunctionHeader)>,
+    pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
 }
 
 impl ModuleHeader {

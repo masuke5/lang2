@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::id::{Id, IdMap};
 use crate::ty::{Type, TypeCon, TypeVar};
@@ -31,7 +31,7 @@ fn println(vm: &mut VM) {
 }
 
 fn func(
-    funcs: &mut (&mut Vec<(usize, Body)>, &mut HashMap<Id, (u16, FunctionHeader)>),
+    funcs: &mut (&mut Vec<(usize, Body)>, &mut FxHashMap<Id, (u16, FunctionHeader)>),
     name: &'static str,
     ty_params: Vec<(Id, TypeVar)>,
     param_size: usize,
@@ -51,7 +51,7 @@ fn func(
 }
 
 pub fn module() -> (Module, ModuleHeader) {
-    let mut funcs = HashMap::new();
+    let mut funcs = FxHashMap::default();
     let mut bodies = Vec::new();
     let mut f = (&mut bodies, &mut funcs);
 
