@@ -185,15 +185,6 @@ test_eq("dereference struct field", 34, ptr.age);
 
 ## structure ##
 
-type Value struct {
-    n: int,
-    next: Node,
-};
-
-type Node struct {
-    value: Value,
-};
-
 type Child struct {
     age: int,
     age_in_months: int,
@@ -265,6 +256,25 @@ fn one_to_ten(): [int; 10] {
 
     return arr;
 }
+
+## parametric polymorphism ##
+
+type Value<T> struct {
+    v: T,
+    next: *Node<T>,
+};
+
+type Node<T> struct {
+    value: Value<T>,
+};
+
+let node = Node:<int> {
+    value: Value:<int> {
+        v: 12410943,
+        next: __null__,
+    },
+};
+test_eq("mutually recursive data type", 12410943, node.value.v);
 
 ## other expressions ##
 
