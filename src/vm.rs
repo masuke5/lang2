@@ -454,22 +454,30 @@ impl VM {
                     self.sp -= size;
                 },
                 opcode::BINOP_ADD..=opcode::BINOP_NEQ => {
-                    let rhs = pop!(self).as_i64();
-                    let lhs = pop!(self).as_i64();
+                    let result = unsafe {
+                        let rhs = pop!(self).raw_i64();
+                        let lhs = pop!(self).raw_i64();
 
-                    let result = match opcode {
-                        opcode::BINOP_ADD => Value::new_i64(lhs + rhs),
-                        opcode::BINOP_SUB => Value::new_i64(lhs - rhs),
-                        opcode::BINOP_MUL => Value::new_i64(lhs * rhs),
-                        opcode::BINOP_DIV => Value::new_i64(lhs / rhs),
-                        opcode::BINOP_MOD => Value::new_i64(lhs % rhs),
-                        opcode::BINOP_LT => Value::new_u64(if lhs <  rhs { 1 } else { 0 }),
-                        opcode::BINOP_LE => Value::new_u64(if lhs <= rhs { 1 } else { 0 }),
-                        opcode::BINOP_GT => Value::new_u64(if lhs >  rhs { 1 } else { 0 }),
-                        opcode::BINOP_GE => Value::new_u64(if lhs >= rhs { 1 } else { 0 }),
-                        opcode::BINOP_EQ => Value::new_u64(if lhs == rhs { 1 } else { 0 }),
-                        opcode::BINOP_NEQ => Value::new_u64(if lhs != rhs { 1 } else { 0 }),
-                        _ => panic!("bug"),
+                        match opcode {
+                            opcode::BINOP_ADD => Value::from_raw_i64(lhs + rhs),
+                            opcode::BINOP_SUB => Value::from_raw_i64(lhs - rhs),
+                            opcode::BINOP_MUL => {
+                                let lhs = lhs >> 1;
+                                let rhs = rhs >> 1;
+                                Value::from_raw_i64((lhs * rhs) << 1)
+                            },
+                            opcode::BINOP_DIV => {
+                                Value::new_i64(lhs / rhs)
+                            },
+                            opcode::BINOP_MOD => Value::from_raw_i64(lhs % rhs),
+                            opcode::BINOP_LT => Value::new_u64(if lhs < rhs { 1 } else { 0 }),
+                            opcode::BINOP_LE => Value::new_u64(if lhs <= rhs { 1 } else { 0 }),
+                            opcode::BINOP_GT => Value::new_u64(if lhs > rhs { 1 } else { 0 }),
+                            opcode::BINOP_GE => Value::new_u64(if lhs >= rhs { 1 } else { 0 }),
+                            opcode::BINOP_EQ => Value::new_u64(if lhs == rhs { 1 } else { 0 }),
+                            opcode::BINOP_NEQ => Value::new_u64(if lhs != rhs { 1 } else { 0 }),
+                            _ => panic!("bug"),
+                        }
                     };
 
                     push!(self, result);

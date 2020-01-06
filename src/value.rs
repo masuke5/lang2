@@ -37,22 +37,29 @@ impl Value {
     }
 
     pub fn new_ptr<T>(ptr: *const T) -> Self {
-        unsafe { Self::new(ptr as u64) }
+        unsafe { Self::from_raw(ptr as u64) }
     }
 
     pub fn new_ptr_to_heap<T>(ptr: *const T) -> Self {
         let value = ptr as u64;
         let value = value | 1;
-        unsafe { Self::new(value) }
+        unsafe { Self::from_raw(value) }
     }
 
-    pub unsafe fn new(value: u64) -> Self {
+    pub unsafe fn from_raw(value: u64) -> Self {
         Self(value)
     }
 
-    #[allow(dead_code)]
+    pub unsafe fn from_raw_i64(value: i64) -> Self {
+        Self(mem::transmute(value))
+    }
+
     pub unsafe fn raw(self) -> u64 {
         self.0
+    }
+
+    pub unsafe fn raw_i64(self) -> i64 {
+        mem::transmute(self.0)
     }
 }
 
