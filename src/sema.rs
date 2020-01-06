@@ -849,12 +849,17 @@ impl<'a> Analyzer<'a> {
             Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr(code, *expr)?;
 
-                if !expr.is_lvalue {
-                    error!(self, expr.span, "this expression is not lvalue");
-                    return None;
-                } else if is_mutable && !expr.is_mutable {
+                if is_mutable && !expr.is_mutable {
                     error!(self, expr.span, "this expression is immutable");
                     return None;
+                } 
+
+                if !expr.is_lvalue {
+                    let temp = self.gen_temp_id();
+                    let loc = self.new_var(code.current_func_mut(), temp, expr.ty.clone(), is_mutable);
+
+                    let insts = translate::address_no_lvalue(expr.insts, loc, self.type_size_nocheck(&expr.ty));
+                    (insts, Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty]))
                 } else {
                     let insts = translate::address(expr.insts);
                     (insts, Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty]))

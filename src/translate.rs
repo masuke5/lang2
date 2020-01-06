@@ -303,6 +303,15 @@ pub fn address(expr: InstList) -> InstList {
     insts
 }
 
+pub fn address_no_lvalue(expr: InstList, loc: isize, expr_size: usize) -> InstList {
+    let mut insts = expr;
+    insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
+    insts.push_inst(opcode::STORE, expr_size as u8);
+    insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
+    insts.push_inst_noarg(opcode::POINTER);
+    insts
+}
+
 pub fn dereference(expr: InstList, expr_size: usize) -> InstList {
     let mut insts = expr;
     push_copy_inst(&mut insts, expr_size);
