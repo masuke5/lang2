@@ -154,13 +154,15 @@ pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: InstList, comp_e
         insts.push_inst_noarg(opcode::DEREFERENCE);
     }
 
-    if let Ok(offset) = offset.try_into() {
-        insts.push_inst(opcode::TINY_INT, offset);
-    } else {
-        insts.push_inst_ref(opcode::INT, offset as i64);
-    }
+    if offset > 0 {
+        if let Ok(offset) = offset.try_into() {
+            insts.push_inst(opcode::TINY_INT, offset);
+        } else {
+            insts.push_inst_ref(opcode::INT, offset as i64);
+        }
 
-    insts.push_inst_noarg(opcode::OFFSET);
+        insts.push_inst_noarg(opcode::OFFSET);
+    }
 
     insts
 }
