@@ -353,10 +353,10 @@ impl VM {
                     }
                 },
                 opcode::TRUE => {
-                    push!(self, Value::new_u64(1));
+                    push!(self, Value::new_true());
                 },
                 opcode::FALSE => {
-                    push!(self, Value::new_u64(0));
+                    push!(self, Value::new_false());
                 },
                 opcode::NULL => {
                     let nullptr = ptr::null_mut::<Value>();
@@ -470,12 +470,12 @@ impl VM {
                                 Value::new_i64(lhs / rhs)
                             },
                             opcode::BINOP_MOD => Value::from_raw_i64(lhs % rhs),
-                            opcode::BINOP_LT => Value::new_u64(if lhs < rhs { 1 } else { 0 }),
-                            opcode::BINOP_LE => Value::new_u64(if lhs <= rhs { 1 } else { 0 }),
-                            opcode::BINOP_GT => Value::new_u64(if lhs > rhs { 1 } else { 0 }),
-                            opcode::BINOP_GE => Value::new_u64(if lhs >= rhs { 1 } else { 0 }),
-                            opcode::BINOP_EQ => Value::new_u64(if lhs == rhs { 1 } else { 0 }),
-                            opcode::BINOP_NEQ => Value::new_u64(if lhs != rhs { 1 } else { 0 }),
+                            opcode::BINOP_LT => Value::new_bool(lhs < rhs),
+                            opcode::BINOP_LE => Value::new_bool(lhs <= rhs),
+                            opcode::BINOP_GT => Value::new_bool(lhs > rhs),
+                            opcode::BINOP_GE => Value::new_bool(lhs >= rhs),
+                            opcode::BINOP_EQ => Value::new_bool(lhs == rhs),
+                            opcode::BINOP_NEQ => Value::new_bool(lhs != rhs),
                             _ => panic!("bug"),
                         }
                     };
@@ -558,14 +558,14 @@ impl VM {
                     self.ip = ip_after_jump_to(self.ip, arg);
                 },
                 opcode::JUMP_IF_FALSE => {
-                    let cond = pop!(self).as_u64();
-                    if cond == 0 {
+                    let cond = pop!(self);
+                    if cond.is_false() {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 },
                 opcode::JUMP_IF_TRUE => {
-                    let cond = pop!(self).as_u64();
-                    if cond != 0 {
+                    let cond = pop!(self);
+                    if cond.is_true() {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 },
