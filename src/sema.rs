@@ -47,7 +47,7 @@ fn_to_expect! {
 }
 
 #[derive(Debug)]
-struct ExprInfo {
+pub struct ExprInfo {
     pub ty: Type,
     pub span: Span,
     pub insts: InstList,
@@ -408,16 +408,16 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Array(expr, size) => {
                 let expr = self.walk_expr(code, *expr)?;
+                let ty = expr.ty.clone();
 
                 (
-                    translate::literal_array(expr.insts, type_size_nocheck(&expr.ty), size),
-                    Type::App(TypeCon::Array(size), vec![expr.ty]),
+                    translate::literal_array(expr, size),
+                    Type::App(TypeCon::Array(size), vec![ty]),
                 )
             },
             Expr::Field(comp_expr, field) => {
                 let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
                 let comp_expr = self.walk_expr(code, *comp_expr)?;
-                let comp_expr_size = type_size_nocheck(&comp_expr.ty);
                 let mut is_mutable = comp_expr.is_mutable;
 
                 let loc = if should_store {
@@ -474,7 +474,7 @@ impl<'a> Analyzer<'a> {
                     }
                 };
 
-                let insts = translate::field(loc, should_deref, comp_expr.insts, comp_expr_size, offset);
+                let insts = translate::field(loc, should_deref, comp_expr, offset);
                 let ty = field_ty.clone();
                 return Some(ExprInfo::new_lvalue(insts, ty, expr.span, is_mutable));
             },
@@ -515,16 +515,23 @@ impl<'a> Analyzer<'a> {
 
                 unify(&mut self.errors, &subscript_expr.span, &subscript_expr.ty, &Type::Int);
 
-                expr.insts = translate::subscript(
+                let span = expr.span.clone();
+                let is_lvalue = expr.is_lvalue;
+                let is_mutable = expr.is_mutable;
+                let insts = translate::subscript(
                     loc,
                     should_deref,
-                    expr.insts,
-                    type_size_nocheck(&expr.ty),
-                    subscript_expr.insts,
-                    type_size_nocheck(&subscript_expr.ty),
+                    expr,
+                    subscript_expr,
                 );
-                expr.ty = ty;
-                return Some(expr);
+
+                return Some(ExprInfo {
+                    ty,
+                    insts,
+                    span,
+                    is_lvalue,
+                    is_mutable,
+                });
             },
             Expr::Variable(name) => {
                 let var = match self.find_var(name) {
@@ -551,9 +558,7 @@ impl<'a> Analyzer<'a> {
                     },
                 }
 
-                let lhs_size = type_size_nocheck(&lhs.ty);
-                let rhs_size = type_size_nocheck(&rhs.ty);
-                (translate::binop_and(lhs.insts, lhs_size, rhs.insts, rhs_size), Type::Bool)
+                (translate::binop_and(lhs, rhs), Type::Bool)
             },
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
                 let lhs = self.walk_expr(code, *lhs);
@@ -568,9 +573,7 @@ impl<'a> Analyzer<'a> {
                     },
                 }
 
-                let lhs_size = type_size_nocheck(&lhs.ty);
-                let rhs_size = type_size_nocheck(&rhs.ty);
-                (translate::binop_or(lhs.insts, lhs_size, rhs.insts, rhs_size), Type::Bool)
+                (translate::binop_or(lhs, rhs), Type::Bool)
             },
             Expr::BinOp(binop, lhs, rhs) => {
                 let lhs = self.walk_expr(code, *lhs);
@@ -602,9 +605,7 @@ impl<'a> Analyzer<'a> {
                     }
                 };
 
-                let lhs_size = type_size_nocheck(&lhs.ty);
-                let rhs_size = type_size_nocheck(&rhs.ty);
-                (translate::binop(binop, lhs.insts, lhs_size, rhs.insts, rhs_size), ty)
+                (translate::binop(binop, lhs, rhs), ty)
             },
             Expr::Call(name, args, ty_args) => {
                 let (callee_func, code_id, module_id) = match self.function_headers.get(&name) {
@@ -681,16 +682,14 @@ impl<'a> Analyzer<'a> {
                             false
                         };
 
-                        insts.push((arg.insts, type_size_nocheck(&arg.ty), should_wrap));
                         unify(&mut self.errors, &arg.span, &arg.ty, &param_ty);
+                        insts.push((arg, should_wrap));
                     }
                 }
 
                 let return_ty_wrapped = expand_wrap(return_ty.clone());
 
-                let return_size = type_size_nocheck(&return_ty);
-                let return_size_wrapped = type_size_nocheck(&return_ty_wrapped);
-                let insts = translate::call(code_id, module_id, insts, return_size, should_unwrap, return_size_wrapped);
+                let insts = translate::call(code_id, module_id, insts, &return_ty, should_unwrap, &return_ty_wrapped);
                 (insts, return_ty_wrapped)
             },
             Expr::Address(expr, is_mutable) => {
@@ -701,24 +700,25 @@ impl<'a> Analyzer<'a> {
                     return None;
                 } 
 
+                let ty = Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty.clone()]);
+
                 if !expr.is_lvalue {
                     let temp = self.gen_temp_id();
                     let loc = self.new_var(code.current_func_mut(), temp, expr.ty.clone(), is_mutable);
 
-                    let insts = translate::address_no_lvalue(expr.insts, loc, type_size_nocheck(&expr.ty));
-                    (insts, Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty]))
+                    let insts = translate::address_no_lvalue(expr, loc);
+                    (insts, ty)
                 } else {
-                    let insts = translate::address(expr.insts);
-                    (insts, Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty]))
+                    let insts = translate::address(expr);
+                    (insts, ty)
                 }
             },
-            Expr::Dereference(expr) => {
-                let expr = self.walk_expr(code, *expr)?;
-                let expr_size = type_size_nocheck(&expr.ty);
+            Expr::Dereference(expr_) => {
+                let expr_ = self.walk_expr(code, *expr_)?;
 
-                match expr.ty {
+                match expr_.ty.clone() {
                     Type::App(TypeCon::Pointer(is_mutable), tys) => {
-                        let insts = translate::dereference(expr.insts, expr_size);
+                        let insts = translate::dereference(expr_);
                         return Some(ExprInfo::new_lvalue(insts, tys[0].clone(), expr.span, is_mutable));
                     }
                     ty => {
@@ -729,11 +729,10 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Negative(expr) => {
                 let expr = self.walk_expr(code, *expr)?;
-                let expr_size = type_size_nocheck(&expr.ty);
 
-                match expr.ty {
+                match expr.ty.clone() {
                     ty @ Type::Int /* | Type::Float */ => {
-                        (translate::negative(expr.insts, expr_size), ty)
+                        (translate::negative(expr), ty)
                     },
                     ty => {
                         error!(self, expr.span, "expected type `int` or `float` but got type `{}`", ty);
@@ -744,8 +743,9 @@ impl<'a> Analyzer<'a> {
             Expr::Alloc(expr, is_mutable) => {
                 let expr = self.walk_expr(code, *expr)?;
 
-                let insts = translate::alloc(expr.insts, type_size_nocheck(&expr.ty));
-                (insts, Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty]))
+                let ty = Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty.clone()]);
+                let insts = translate::alloc(expr);
+                (insts, ty)
             },
         };
 
@@ -757,7 +757,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Expr(expr) => {
                 let expr = self.walk_expr(code, expr)?;
 
-                translate::expr_stmt(expr.insts, type_size_nocheck(&expr.ty))
+                translate::expr_stmt(expr)
             },
             Stmt::If(cond, stmt, None) => {
                 let cond = self.walk_expr(code, cond);
@@ -766,7 +766,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
-                translate::if_stmt(cond.insts, type_size_nocheck(&cond.ty), then_insts)
+                translate::if_stmt(cond, then_insts)
             },
             Stmt::If(cond, then_stmt, Some(else_stmt)) => {
                 let cond = self.walk_expr(code, cond);
@@ -776,7 +776,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
-                translate::if_else_stmt(cond.insts, type_size_nocheck(&cond.ty), then, els)
+                translate::if_else_stmt(cond, then, els)
             },
             Stmt::While(cond, stmt) => {
                 let cond = self.walk_expr(code, cond);
@@ -785,7 +785,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
-                translate::while_stmt(cond.insts, type_size_nocheck(&cond.ty), body)
+                translate::while_stmt(cond, body)
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
@@ -803,8 +803,7 @@ impl<'a> Analyzer<'a> {
                 let expr = self.walk_expr(code, expr)?;
                 let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
 
-                let size = self.type_size_err(expr.span, &expr.ty);
-                translate::bind_stmt(loc, expr.insts, size)
+                translate::bind_stmt(loc, expr)
             },
             Stmt::Assign(lhs, rhs) => {
                 let lhs = self.walk_expr(code, lhs);
@@ -823,7 +822,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&mut self.errors, &rhs.span, &lhs.ty, &rhs.ty)?;
 
-                translate::assign_stmt(lhs.insts, rhs.insts, type_size_nocheck(&rhs.ty))
+                translate::assign_stmt(lhs, rhs)
             },
             Stmt::Return(expr) => {
                 let func_name = code.current_func().name;
@@ -845,10 +844,9 @@ impl<'a> Analyzer<'a> {
                 let loc = return_var.loc;
 
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
-                let rv_size = type_size_nocheck(&ty);
                 unify(&mut self.errors, &stmt.span, &ty, return_ty);
 
-                translate::return_stmt(loc, expr.map(|expr| (expr.insts, rv_size)))
+                translate::return_stmt(loc, expr, &ty)
             },
         };
 

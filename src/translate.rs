@@ -3,6 +3,8 @@ use std::mem;
 
 use crate::bytecode::{opcode, InstList};
 use crate::ast::BinOp;
+use crate::ty::{Type, type_size_nocheck};
+use crate::sema::ExprInfo;
 
 struct Label(u8, Option<usize>);
 
@@ -61,13 +63,14 @@ macro_rules! let_label {
     };
 }
 
-fn push_copy_inst(insts: &mut InstList, size: usize) {
+fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     if insts.len() < 1 {
         panic!();
     }
 
     let [opcode, arg] = insts.prev_inst();
     let loc = i8::from_le_bytes([arg]);
+    let size = type_size_nocheck(ty);
 
     match opcode {
         opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
@@ -126,31 +129,33 @@ pub fn literal_null() -> InstList {
     insts
 }
 
-pub fn literal_array(expr: InstList, expr_size: usize, arr_size: usize) -> InstList {
-    let mut insts = expr;
-    push_copy_inst(&mut insts, expr_size);
+pub fn literal_array(expr: ExprInfo, arr_len: usize) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
 
-    if arr_size >= 2 {
-        let count = (arr_size - 1) as u64;
-        let arg: u64 = ((expr_size as u64) << 32) | count;
+    if arr_len >= 2 {
+        let element_size = type_size_nocheck(&expr.ty);
+        let count = (arr_len - 1) as u64;
+        let arg: u64 = ((element_size as u64) << 32) | count;
         insts.push_inst_ref(opcode::DUPLICATE, arg);
     }
 
     insts
 }
 
-pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: InstList, comp_expr_size: usize, offset: usize) -> InstList {
-    let mut insts = comp_expr;
+pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset: usize) -> InstList {
+    let mut insts = comp_expr.insts;
 
     if let Some(loc) = loc {
         let loc = i8::to_le_bytes(loc as i8)[0];
+        let size = type_size_nocheck(&comp_expr.ty);
         insts.push_inst(opcode::LOAD_REF, loc);
-        insts.push_inst(opcode::STORE, comp_expr_size as u8);
+        insts.push_inst(opcode::STORE, size as u8);
         insts.push_inst(opcode::LOAD_REF, loc);
     }
 
     if should_deref {
-        push_copy_inst(&mut insts, 1);
+        push_copy_inst(&mut insts, &comp_expr.ty);
         insts.push_inst_noarg(opcode::DEREFERENCE);
     }
 
@@ -167,23 +172,23 @@ pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: InstList, comp_e
     insts
 }
 
-pub fn subscript(loc: Option<isize>, should_deref: bool, expr: InstList, expr_size: usize, subscript_expr: InstList, subscript_expr_size: usize) -> InstList {
-    let mut insts = expr;
+pub fn subscript(loc: Option<isize>, should_deref: bool, expr: ExprInfo, subscript_expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
 
     if let Some(loc) = loc {
         let loc = i8::to_le_bytes(loc as i8)[0];
         insts.push_inst(opcode::LOAD_REF, loc);
-        insts.push_inst(opcode::STORE, expr_size as u8);
+        insts.push_inst(opcode::STORE, type_size_nocheck(&expr.ty) as u8);
         insts.push_inst(opcode::LOAD_REF, loc);
     }
 
     if should_deref {
-        push_copy_inst(&mut insts, 1);
+        push_copy_inst(&mut insts, &expr.ty);
         insts.push_inst_noarg(opcode::DEREFERENCE);
     }
 
-    insts.append(subscript_expr);
-    push_copy_inst(&mut insts, subscript_expr_size);
+    insts.append(subscript_expr.insts);
+    push_copy_inst(&mut insts, &subscript_expr.ty);
     // TODO: element size
     insts.push_inst_noarg(opcode::OFFSET);
 
@@ -205,13 +210,13 @@ pub fn variable(loc: isize) -> InstList {
 // a:
 //   FALSE
 // end:
-pub fn binop_and(lhs: InstList, lhs_size: usize, rhs: InstList, rhs_size: usize) -> InstList {
+pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
     with_label!([a, end], {
-        let mut insts = lhs;
-        push_copy_inst(&mut insts, lhs_size);
+        let mut insts = lhs.insts;
+        push_copy_inst(&mut insts, &lhs.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, a.id());
-        insts.append(rhs);
-        push_copy_inst(&mut insts, rhs_size);
+        insts.append(rhs.insts);
+        push_copy_inst(&mut insts, &rhs.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, a.id());
         insts.push_inst_noarg(opcode::TRUE);
         insts.push_jump(opcode::JUMP, end.id());
@@ -231,13 +236,13 @@ pub fn binop_and(lhs: InstList, lhs_size: usize, rhs: InstList, rhs_size: usize)
 // a:
 //   TRUE
 // end:
-pub fn binop_or(lhs: InstList, lhs_size: usize, rhs: InstList, rhs_size: usize) -> InstList {
+pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
     with_label!([a, end], {
-        let mut insts = lhs;
-        push_copy_inst(&mut insts, lhs_size);
+        let mut insts = lhs.insts;
+        push_copy_inst(&mut insts, &lhs.ty);
         insts.push_jump(opcode::JUMP_IF_TRUE, a.id());
-        insts.append(rhs);
-        push_copy_inst(&mut insts, rhs_size);
+        insts.append(rhs.insts);
+        push_copy_inst(&mut insts, &rhs.ty);
         insts.push_jump(opcode::JUMP_IF_TRUE, a.id());
         insts.push_inst_noarg(opcode::FALSE);
         insts.push_jump(opcode::JUMP, end.id());
@@ -248,11 +253,11 @@ pub fn binop_or(lhs: InstList, lhs_size: usize, rhs: InstList, rhs_size: usize) 
     })
 }
 
-pub fn binop(binop: BinOp, lhs: InstList, lhs_size: usize, rhs: InstList, rhs_size: usize) -> InstList {
-    let mut insts = lhs;
-    push_copy_inst(&mut insts, lhs_size);
-    insts.append(rhs);
-    push_copy_inst(&mut insts, rhs_size);
+pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> InstList {
+    let mut insts = lhs.insts;
+    push_copy_inst(&mut insts, &lhs.ty);
+    insts.append(rhs.insts);
+    push_copy_inst(&mut insts, &rhs.ty);
 
     // Insert an instruction
     let opcode = match binop {
@@ -276,25 +281,26 @@ pub fn binop(binop: BinOp, lhs: InstList, lhs_size: usize, rhs: InstList, rhs_si
 pub fn call(
     code_id: u16,
     module_id: Option<u16>,
-    args: Vec<(InstList, usize, bool)>,
-    return_value_size: usize,
+    args: Vec<(ExprInfo, bool)>,
+    return_ty: &Type,
     should_unwrap: bool,
-    return_value_size_wrapped: usize,
+    return_ty_wrapped: &Type,
 ) -> InstList {
     let mut insts = InstList::new();
     
     // Push placeholder for the return value
+    let return_value_size = type_size_nocheck(return_ty);
     if return_value_size > 0 {
         insts.push_inst(opcode::ZERO, return_value_size as u8);
     }
 
     // Push arguments
-    for (arg_insts, arg_size, should_wrap) in args {
-        insts.append(arg_insts);
-        push_copy_inst(&mut insts, arg_size);
+    for (arg, should_wrap) in args {
+        insts.append(arg.insts);
+        push_copy_inst(&mut insts, &arg.ty);
 
         if should_wrap {
-            insts.push_inst(opcode::WRAP, arg_size as u8);
+            insts.push_inst(opcode::WRAP, type_size_nocheck(&arg.ty) as u8);
         }
     }
 
@@ -308,62 +314,63 @@ pub fn call(
     }
 
     if should_unwrap {
-        insts.push_inst(opcode::UNWRAP, return_value_size_wrapped as u8);
+        insts.push_inst(opcode::UNWRAP, type_size_nocheck(return_ty_wrapped) as u8);
     }
 
     insts
 }
 
-pub fn address(expr: InstList) -> InstList {
-    let mut insts = expr;
+pub fn address(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
     insts.push_inst_noarg(opcode::POINTER);
     insts
 }
 
-pub fn address_no_lvalue(expr: InstList, loc: isize, expr_size: usize) -> InstList {
-    let mut insts = expr;
+pub fn address_no_lvalue(expr: ExprInfo, loc: isize) -> InstList {
+    let mut insts = expr.insts;
     insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
-    insts.push_inst(opcode::STORE, expr_size as u8);
+    insts.push_inst(opcode::STORE, type_size_nocheck(&expr.ty) as u8);
     insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
     insts.push_inst_noarg(opcode::POINTER);
     insts
 }
 
-pub fn dereference(expr: InstList, expr_size: usize) -> InstList {
-    let mut insts = expr;
-    push_copy_inst(&mut insts, expr_size);
+pub fn dereference(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
     insts.push_inst_noarg(opcode::DEREFERENCE);
     insts
 }
 
-pub fn negative(expr: InstList, expr_size: usize) -> InstList {
-    let mut insts = expr;
-    push_copy_inst(&mut insts, expr_size);
+pub fn negative(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
     insts.push_inst_noarg(opcode::NEGATIVE);
     insts
 }
 
-pub fn alloc(expr: InstList, expr_size: usize) -> InstList {
-    let mut insts = expr;
-    push_copy_inst(&mut insts, expr_size);
-    insts.push_inst(opcode::ALLOC, expr_size as u8);
+pub fn alloc(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
+    insts.push_inst(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
     insts
 }
 
 // Statement
 
-pub fn expr_stmt(expr: InstList, expr_size: usize) -> InstList {
-    let mut insts = expr;
-    for _ in 0..expr_size {
+pub fn expr_stmt(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    let size = type_size_nocheck(&expr.ty);
+    for _ in 0..size {
         insts.push_inst_noarg(opcode::POP);
     }
     insts
 }
 
-pub fn if_stmt(cond: InstList, cond_size: usize, then: InstList) -> InstList {
+pub fn if_stmt(cond: ExprInfo, then: InstList) -> InstList {
     with_label!([end], {
-        let mut insts = cond;
-        push_copy_inst(&mut insts, cond_size);
+        let mut insts = cond.insts;
+        push_copy_inst(&mut insts, &cond.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, end.id());
         insts.append(then);
         end.set_here(&insts);
@@ -371,10 +378,10 @@ pub fn if_stmt(cond: InstList, cond_size: usize, then: InstList) -> InstList {
     })
 }
 
-pub fn if_else_stmt(cond: InstList, cond_size: usize, then: InstList, els: InstList) -> InstList {
+pub fn if_else_stmt(cond: ExprInfo, then: InstList, els: InstList) -> InstList {
     with_label!([elsl, end], {
-        let mut insts = cond;
-        push_copy_inst(&mut insts, cond_size);
+        let mut insts = cond.insts;
+        push_copy_inst(&mut insts, &cond.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, elsl.id());
         insts.append(then);
         insts.push_jump(opcode::JUMP, end.id());
@@ -385,12 +392,12 @@ pub fn if_else_stmt(cond: InstList, cond_size: usize, then: InstList, els: InstL
     })
 }
 
-pub fn while_stmt(cond: InstList, cond_size: usize, body: InstList) -> InstList {
+pub fn while_stmt(cond: ExprInfo, body: InstList) -> InstList {
     with_label!([begin, end], {
         let mut insts = InstList::new();
         begin.set_here(&insts);
-        insts.append(cond);
-        push_copy_inst(&mut insts, cond_size);
+        insts.append(cond.insts);
+        push_copy_inst(&mut insts, &cond.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, end.id());
         insts.append(body);
         insts.push_jump(opcode::JUMP, begin.id());
@@ -399,30 +406,30 @@ pub fn while_stmt(cond: InstList, cond_size: usize, body: InstList) -> InstList 
     })
 }
 
-pub fn bind_stmt(loc: isize, expr: InstList, expr_size: usize) -> InstList {
-    let mut insts = expr;
-    push_copy_inst(&mut insts, expr_size);
+pub fn bind_stmt(loc: isize, expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
     insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
-    insts.push_inst(opcode::STORE, expr_size as u8);
+    insts.push_inst(opcode::STORE, type_size_nocheck(&expr.ty) as u8);
     insts
 }
 
-pub fn assign_stmt(lhs: InstList, rhs: InstList, rhs_size: usize) -> InstList {
-    let mut insts = rhs;
-    push_copy_inst(&mut insts, rhs_size);
-    insts.append(lhs);
-    insts.push_inst(opcode::STORE, rhs_size as u8);
+pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
+    let mut insts = rhs.insts;
+    push_copy_inst(&mut insts, &rhs.ty);
+    insts.append(lhs.insts);
+    insts.push_inst(opcode::STORE, type_size_nocheck(&rhs.ty) as u8);
     insts
 }
 
-pub fn return_stmt(loc: isize, expr: Option<(InstList, usize)>) -> InstList {
+pub fn return_stmt(loc: isize, expr: Option<ExprInfo>, return_ty: &Type) -> InstList {
     let mut insts = InstList::new();
 
-    if let Some((expr_insts, expr_size)) = expr {
-        insts.append(expr_insts);
-        push_copy_inst(&mut insts, expr_size);
+    if let Some(expr) = expr {
+        insts.append(expr.insts);
+        push_copy_inst(&mut insts, return_ty);
         insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
-        insts.push_inst(opcode::STORE, expr_size as u8);
+        insts.push_inst(opcode::STORE, type_size_nocheck(return_ty) as u8);
     }
 
     insts.push_inst_noarg(opcode::RETURN);
