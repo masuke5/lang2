@@ -123,7 +123,7 @@ pub enum TypeCon {
     Array(usize),
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, u32),
-    Named(Id),
+    Named(Id, usize),
     Wrapped,
 }
 
@@ -144,7 +144,7 @@ impl fmt::Display for TypeCon {
                 write!(f, ") {}", body)
             },
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
-            Self::Named(name) => write!(f, "{}", IdMap::name(*name)),
+            Self::Named(name, size) => write!(f, "{}{{size={}}}", IdMap::name(*name), size),
             Self::Wrapped => write!(f, "wrapped"),
         }
     }

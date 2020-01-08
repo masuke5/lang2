@@ -7,7 +7,7 @@ use crate::span::Span;
 
 #[derive(Debug)]
 pub struct HashMapWithScope<K: Hash + Eq, V> {
-    maps: LinkedList<FxHashMap<K, V>>,
+    pub(crate) maps: LinkedList<FxHashMap<K, V>>,
 }
 
 impl<K: Hash + Eq, V> HashMapWithScope<K, V> {

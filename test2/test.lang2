@@ -263,22 +263,22 @@ fn one_to_ten(): [int; 10] {
 
 ## parametric polymorphism ##
 
-type Value<T> struct {
-    v: T,
-    next: *Node<T>,
-};
-
-type Node<T> struct {
-    value: Value<T>,
-};
-
-let node = Node:<int> {
-    value: Value:<int> {
-        v: 12410943,
-        next: __null__,
-    },
-};
-test_eq("mutually recursive data type", 12410943, node.value.v);
+# type Value<T> struct {
+#     v: T,
+#     next: *Node<T>,
+# };
+# 
+# type Node<T> struct {
+#     value: Value<T>,
+# };
+# 
+# let node = Node:<int> {
+#     value: Value:<int> {
+#         v: 12410943,
+#         next: __null__,
+#     },
+# };
+# test_eq("mutually recursive data type", 12410943, node.value.v);
 
 fn f<T>(x: T): T {
     return x;
