@@ -280,6 +280,19 @@ let node = Node:<int> {
 };
 test_eq("mutually recursive data type", 12410943, node.value.v);
 
+fn f<T>(x: T): T {
+    return x;
+}
+
+fn f2<T>(x: T): T {
+    return f.<T>(x);
+}
+
+let value = f2.<int>(139857);
+test_eq("call with instantiation 1", 139857, value);
+let tuple = f2.<(int, int)>((31847, 138947));
+test_eq("call with instantiation 2", 170794, tuple.0 + tuple.1);
+
 ## other expressions ##
 
 test_eq("negative", -39, -15 - 24);

@@ -48,6 +48,8 @@ pub mod opcode {
     pub const ZERO: u8 = 0x22;
     pub const CALL_EXTERN: u8 = 0x23;
     pub const TINY_INT: u8 = 0x24;
+    pub const WRAP: u8 = 0x25;
+    pub const UNWRAP: u8 = 0x26;
 
     pub const END: u8 = 0x50;
 }
@@ -92,6 +94,8 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::RETURN => "RETURN",
         opcode::ZERO => "ZERO",
         opcode::CALL_EXTERN => "CALL_EXTERN",
+        opcode::WRAP => "WRAP",
+        opcode::UNWRAP => "UNWRAP",
         opcode::END => "END",
         _ => "UNKNOWN",
     }
@@ -233,6 +237,8 @@ impl Bytecode {
             },
             opcode::RETURN => println!(),
             opcode::ZERO => println!("count={}", arg),
+            opcode::WRAP => println!("size={}", arg),
+            opcode::UNWRAP => println!("size={}", arg),
             _ => println!("(0x{:x})", opcode),
         };
     }

@@ -453,6 +453,35 @@ impl VM {
 
                     self.sp -= size;
                 },
+                opcode::WRAP => {
+                    let size = arg as usize;
+                    if size != 1 {
+                        let mut region = self.gc.alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
+
+                        unsafe {
+                            let dst = region.as_mut().as_mut_ptr::<Value>();
+                            let src = &self.stack[self.sp - size + 1] as *const _;
+                            ptr::copy_nonoverlapping(src, dst, size);
+                        }
+
+                        self.sp -= size;
+
+                        let region = unsafe { region.as_mut() };
+                        push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
+                    }
+                },
+                opcode::UNWRAP => {
+                    let size = arg as usize;
+                    if size != 1 {
+                        unsafe {
+                            let dst = &mut self.stack[self.sp] as *mut _;
+                            let src = self.stack[self.sp].as_ptr::<Value>();
+                            ptr::copy_nonoverlapping(src, dst, size);
+                        }
+
+                        self.sp += size - 1;
+                    }
+                },
                 opcode::BINOP_ADD..=opcode::BINOP_NEQ => {
                     let result = unsafe {
                         let rhs = pop!(self).raw_i64();
@@ -583,7 +612,7 @@ impl VM {
             let main_func_stack_size = self.functions[0].stack_size as usize;
             if (main_func_stack_size != 0 || self.sp != 0) && self.sp != main_func_stack_size - 1 {
                 self.dump_stack(self.sp);
-                eprintln!("warning: expected stack size {}, but sp is {}.", main_func_stack_size, self.sp);
+                eprintln!("warning: expected sp {}, but sp is {}.", main_func_stack_size - 1, self.sp);
             }
         }
 

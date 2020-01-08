@@ -273,7 +273,14 @@ pub fn binop(binop: BinOp, lhs: InstList, lhs_size: usize, rhs: InstList, rhs_si
     insts
 }
 
-pub fn call(code_id: u16, module_id: Option<u16>, args: Vec<(InstList, usize)>, return_value_size: usize) -> InstList {
+pub fn call(
+    code_id: u16,
+    module_id: Option<u16>,
+    args: Vec<(InstList, usize, bool)>,
+    return_value_size: usize,
+    should_unwrap: bool,
+    return_value_size_wrapped: usize,
+) -> InstList {
     let mut insts = InstList::new();
     
     // Push placeholder for the return value
@@ -282,9 +289,13 @@ pub fn call(code_id: u16, module_id: Option<u16>, args: Vec<(InstList, usize)>, 
     }
 
     // Push arguments
-    for (arg_insts, arg_size) in args {
+    for (arg_insts, arg_size, should_wrap) in args {
         insts.append(arg_insts);
         push_copy_inst(&mut insts, arg_size);
+
+        if should_wrap {
+            insts.push_inst(opcode::WRAP, arg_size as u8);
+        }
     }
 
     if let Some(module_id) = module_id {
@@ -294,6 +305,10 @@ pub fn call(code_id: u16, module_id: Option<u16>, args: Vec<(InstList, usize)>, 
         insts.push_inst(opcode::CALL_EXTERN, arg);
     } else {
         insts.push_inst(opcode::CALL, code_id as u8);
+    }
+
+    if should_unwrap {
+        insts.push_inst(opcode::UNWRAP, return_value_size_wrapped as u8);
     }
 
     insts

@@ -3,7 +3,7 @@ use std::io::{Read, Write, Seek};
 use rustc_hash::FxHashMap;
 
 use crate::ty::{Type, TypeCon, TypeVar};
-use crate::ast::*;
+use crate::ast::{*, Param as AstParam};
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
@@ -86,6 +86,13 @@ fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 }
 
 fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()> {
+    if let Type::App(TypeCon::Wrapped, types) = a {
+        return unify(errors, span, &types[0], b);
+    }
+    if let Type::App(TypeCon::Wrapped, types) = b {
+        return unify(errors, span, a, &types[0]);
+    }
+
     match (a, b) {
         (Type::App(TypeCon::Struct(a_fields), a_tys), Type::App(TypeCon::Struct(b_fields), b_tys))
             if a_fields.len() == b_fields.len() &&
@@ -191,6 +198,20 @@ fn expand_unique(ty: Type) -> Type {
     }
 }
 
+fn expand_wrap(ty: Type) -> Type {
+    match ty {
+        Type::App(TypeCon::Fun(params, body), args) => {
+            // { params_i -> args_i }
+            let map: FxHashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
+            expand_wrap(subst(*body, &map))
+        },
+        Type::App(TypeCon::Wrapped, types) => {
+            expand_wrap(types[0].clone())
+        },
+        ty => ty,
+    }
+}
+
 fn_to_expect! {
     expect_tuple, "tuple", Vec<Type>,
     Type::App(TypeCon::Tuple, types) => Some(types),
@@ -225,6 +246,13 @@ impl ExprInfo {
             is_mutable,
         }
     }
+}
+
+#[derive(Debug)]
+struct Param {
+    name: Id,
+    ty: Type,
+    is_mutable: bool,
 }
 
 #[derive(Debug)]
@@ -299,7 +327,6 @@ impl<'a> Analyzer<'a> {
     fn insert_params(&mut self, params: Vec<Param>, return_ty: &Type) -> Option<()> {
         let mut loc = -3isize; // fp, ip
         for Param { name, ty, is_mutable } in params.into_iter().rev() {
-            let ty = self.walk_type(ty)?;
             loc -= self.type_size_nocheck(&ty) as isize;
 
             // Insert the parameter as a variable to the current scope
@@ -357,6 +384,7 @@ impl<'a> Analyzer<'a> {
                 self.type_size(&body)
             },
             Type::App(TypeCon::Pointer(_), _) => Some(1),
+            Type::App(TypeCon::Wrapped, _) => Some(1),
             Type::App(TypeCon::Array(size), types) => {
                 let elem_size = self.type_size(&types[0])?;
                 Some(elem_size * size)
@@ -545,6 +573,7 @@ impl<'a> Analyzer<'a> {
 
                 let ty = self.expand_name(ty)?;
                 let ty = expand_unique(ty);
+                let ty = expand_wrap(ty);
                 let ty = subst(ty, &FxHashMap::default());
 
                 let fields = match ty {
@@ -598,6 +627,7 @@ impl<'a> Analyzer<'a> {
                 };
 
                 let ty = self.expand_name(comp_expr.ty.clone())?;
+                let ty = expand_wrap(ty);
 
                 let should_deref = match &ty {
                     Type::App(TypeCon::Pointer(_), _) => true,
@@ -816,6 +846,11 @@ impl<'a> Analyzer<'a> {
 
                 // Substitute type arguments for return types
                 let return_ty = subst(return_ty, &map);
+                let should_unwrap = if let Type::App(TypeCon::Wrapped, types) = &return_ty {
+                    if let Type::Var(_) = &types[0] { false } else { true }
+                } else {
+                    false
+                };
 
                 // Substitute type arguments for parameter types
                 let mut params = Vec::with_capacity(old_params.len());
@@ -838,13 +873,24 @@ impl<'a> Analyzer<'a> {
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
                     let arg = self.walk_expr(code, arg);
                     if let Some(arg) = arg {
-                        insts.push((arg.insts, self.type_size_nocheck(&arg.ty)));
+                        // param_ty is a wrapped type and arg.ty is not a wrapped type
+                        let should_wrap = if let Type::App(TypeCon::Wrapped, _) = param_ty {
+                            if let Type::App(TypeCon::Wrapped, _) = &arg.ty { false } else { true }
+                        } else {
+                            false
+                        };
+
+                        insts.push((arg.insts, self.type_size_nocheck(&arg.ty), should_wrap));
                         unify(&mut self.errors, &arg.span, &arg.ty, &param_ty);
                     }
                 }
 
-                let insts = translate::call(code_id, module_id, insts, self.type_size_nocheck(&return_ty));
-                (insts, return_ty)
+                let return_ty_wrapped = expand_wrap(return_ty.clone());
+
+                let return_size = self.type_size_nocheck(&return_ty);
+                let return_size_wrapped = self.type_size_nocheck(&return_ty_wrapped);
+                let insts = translate::call(code_id, module_id, insts, return_size, should_unwrap, return_size_wrapped);
+                (insts, return_ty_wrapped)
             },
             Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr(code, *expr)?;
@@ -998,9 +1044,10 @@ impl<'a> Analyzer<'a> {
                 let loc = return_var.loc;
 
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
+                let rv_size = self.type_size_nocheck(&ty);
                 unify(&mut self.errors, &stmt.span, &ty, return_ty);
 
-                translate::return_stmt(loc, expr.map(|expr| (expr.insts, self.type_size_nocheck(&expr.ty))))
+                translate::return_stmt(loc, expr.map(|expr| (expr.insts, rv_size)))
             },
         };
 
@@ -1110,7 +1157,16 @@ impl<'a> Analyzer<'a> {
         }
 
         // params
-        if self.insert_params(func.params, &return_ty).is_none() {
+        let params: Vec<Param> = func.params
+            .iter()
+            .zip(header.params.iter())
+            .map(|(ap, ty)| Param {
+                name: ap.name,
+                ty: ty.clone(),
+                is_mutable: ap.is_mutable,
+            })
+            .collect();
+        if self.insert_params(params, &return_ty).is_none() {
             return;
         }
 
@@ -1151,22 +1207,30 @@ impl<'a> Analyzer<'a> {
 
         let mut param_types = Vec::new();
         let mut param_size = 0;
-        for Param { ty, .. } in &func.params {
+        for AstParam { ty, .. } in &func.params {
             let ty_span = ty.span.clone();
-            let ty = match self.walk_type(ty.clone()) {
+            let mut ty = match self.walk_type(ty.clone()) {
                 Some(ty) => ty,
                 None => return,
             };
+
+            if let vty @ Type::Var(_) = ty {
+                ty = Type::App(TypeCon::Wrapped, vec![vty]);
+            }
 
             param_size += self.type_size_err(ty_span, &ty);
             param_types.push(ty);
         }
 
         let return_ty_span = func.return_ty.span.clone();
-        let return_ty = match self.walk_type(func.return_ty.clone()) {
+        let mut return_ty = match self.walk_type(func.return_ty.clone()) {
             Some(ty) => ty,
             None => return,
         };
+
+        if let vty @ Type::Var(_) = return_ty {
+            return_ty = Type::App(TypeCon::Wrapped, vec![vty]);
+        }
 
         self.tycons.pop_scope();
         self.types.pop_scope();

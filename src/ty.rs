@@ -42,7 +42,7 @@ impl fmt::Display for TypeVar {
         let id = var_id_map.get(self);
 
         match id {
-            Some(id) if cfg!(debug_assertions) => write!(f, "{}'{}", IdMap::name(*id), self.0),
+            Some(id) if cfg!(debug_assertions) => write!(f, "{}{{{}}}", IdMap::name(*id), self.0),
             Some(id) if !cfg!(debug_assertions) => write!(f, "{}", IdMap::name(*id)),
             _ => write!(f, "'{}", self.0),
         }
@@ -99,6 +99,7 @@ impl fmt::Display for Type {
             },
             Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
             Self::App(TypeCon::Unique(tycon, uniq), types) => write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq),
+            Self::App(TypeCon::Wrapped, types) => write!(f, "'{}", types[0]),
             Self::App(tycon, tys) => {
                 write!(f, "{}(", tycon)?;
                 write_iter!(f, tys.iter());
@@ -123,6 +124,7 @@ pub enum TypeCon {
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, u32),
     Named(Id),
+    Wrapped,
 }
 
 impl fmt::Display for TypeCon {
@@ -143,6 +145,7 @@ impl fmt::Display for TypeCon {
             },
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
             Self::Named(name) => write!(f, "{}", IdMap::name(*name)),
+            Self::Wrapped => write!(f, "wrapped"),
         }
     }
 }
