@@ -207,47 +207,13 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
     }
 
     match (a, b) {
-        (Type::App(TypeCon::Struct(a_fields), a_tys), Type::App(TypeCon::Struct(b_fields), b_tys))
-            if a_fields.len() == b_fields.len() &&
-               a_fields.iter().zip(b_fields).all(|(a, b)| a == b) =>
-        {
-            for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, span, a_ty, b_ty)?;
-            }
-
-            return Some(());
-        },
-        (Type::App(TypeCon::Array(a_size), a_tys), Type::App(TypeCon::Array(b_size), b_tys)) if a_size == b_size => {
-            for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, span, a_ty, b_ty)?;
-            }
-
-            return Some(());
-        },
-        (Type::App(TypeCon::Pointer(a_mut), a_tys), Type::App(TypeCon::Pointer(b_mut), b_tys)) if a_mut == b_mut => {
-            for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, span, a_ty, b_ty)?;
-            }
-
-            return Some(());
-        },
-        (Type::App(TypeCon::Named(a_name, _), a_tys), Type::App(TypeCon::Named(b_name, _), b_tys)) if a_name == b_name => {
-            for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, span, a_ty, b_ty)?;
-            }
-
-            return Some(());
-        },
         (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) if a_tycon == b_tycon => {
-            match a_tycon {
-                TypeCon::Tuple => {
-                    for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                        unify(errors, span, a_ty, b_ty)?;
-                    }
+            if a_tycon == b_tycon {
+                for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
+                    unify(errors, span, a_ty, b_ty)?;
+                }
 
-                    return Some(());
-                },
-                _ => {},
+                return Some(());
             }
         },
         _ => {},
