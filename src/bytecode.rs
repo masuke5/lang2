@@ -2,8 +2,6 @@ use std::mem;
 use std::ptr;
 use std::str;
 use std::collections::{LinkedList, HashMap};
-use std::io;
-use std::io::{Read, Write, Seek, SeekFrom};
 
 use crate::id::{Id, IdMap};
 use crate::utils;
@@ -102,17 +100,17 @@ pub fn opcode_name(opcode: u8) -> &'static str {
 }
 
 pub const HEADER: [u8; 4] = *b"L2BC";
-pub const POS_FUNC_COUNT: u64 = 4;
-pub const POS_STRING_COUNT: u64 = 5;
-pub const POS_MODULE_COUNT: u64 = 13;
-pub const POS_FUNC_MAP_START: u64 = 6;
-pub const POS_STRING_MAP_START: u64 = 8;
-pub const POS_MODULE_MAP_START: u64 = 10;
+pub const POS_FUNC_COUNT: usize = 4;
+pub const POS_STRING_COUNT: usize = 5;
+pub const POS_MODULE_COUNT: usize = 13;
+pub const POS_FUNC_MAP_START: usize = 6;
+pub const POS_STRING_MAP_START: usize = 8;
+pub const POS_MODULE_MAP_START: usize = 10;
 
-pub const FUNC_OFFSET_STACK_SIZE: u64 = 2;
-pub const FUNC_OFFSET_PARAM_SIZE: u64 = 3;
-pub const FUNC_OFFSET_POS: u64 = 4;
-pub const FUNC_OFFSET_REF_START: u64 = 6;
+pub const FUNC_OFFSET_STACK_SIZE: usize = 2;
+pub const FUNC_OFFSET_PARAM_SIZE: usize = 3;
+pub const FUNC_OFFSET_POS: usize = 4;
+pub const FUNC_OFFSET_REF_START: usize = 6;
 
 macro_rules! bfn_read {
     ($ty:ty, $name:ident) => {
@@ -127,17 +125,67 @@ macro_rules! bfn_read {
     };
 }
 
+macro_rules! bfn_write {
+    ($ty:ty, $push:ident, $write:ident) => {
+        #[allow(dead_code)]
+        pub fn $write(&mut self, pos: usize, value: $ty) {
+            if pos >= self.bytes.len() {
+                panic!("out of bounds");
+            }
+
+            unsafe {
+                let ptr = self.bytes.as_mut_ptr() as *mut $ty;
+                *ptr.add(pos) = value;
+            }
+        }
+
+        #[allow(dead_code)]
+        pub fn $push(&mut self, value: $ty) {
+            self.bytes.reserve(self.bytes.len() + mem::size_of::<$ty>());
+            unsafe {
+                let ptr = self.bytes.as_mut_ptr() as *mut $ty;
+                *ptr.add(self.bytes.len()) = value;
+                self.bytes.set_len(self.bytes.len() + mem::size_of::<$ty>());
+            }
+        }
+    };
+}
+
 pub struct Bytecode {
     bytes: Vec<u8>,
 }
 
 impl Bytecode {
-    pub fn from_stream<W: Read + Seek>(mut stream: BytecodeStream<W>) -> Self {
-        // TODO: with_capacity
-        let mut bytecode = Self { bytes: Vec::new() };
-        stream.read_to_end(&mut bytecode.bytes);
+    pub fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+        }
+    }
 
-        bytecode
+    pub fn push_header(&mut self) {
+        if self.len() > 0 {
+            panic!("pushed the header already");
+        }
+
+        self.push_bytes(&HEADER);
+        self.push_bytes(&[
+            0, // the number of function
+            0, // the number of string
+            0, // funcmap_start (2byte)
+            0,
+            0, // string_map_start (2byte)
+            0,
+            0, // the number of module
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]);
+    }
+
+    pub fn len(&self) -> usize {
+        self.bytes.len()
     }
 
     bfn_read!(u8, read_u8);
@@ -156,6 +204,43 @@ impl Bytecode {
             let src = self.bytes.as_ptr().add(pos);
             let dst = bytes.as_mut_ptr();
             ptr::copy_nonoverlapping(src, dst, bytes.len());
+        }
+    }
+
+    bfn_write!(u8, push_u8, write_u8);
+    bfn_write!(i8, push_i8, write_i8);
+    bfn_write!(u16, push_u16, write_u16);
+    bfn_write!(i16, push_i16, write_i16);
+    bfn_write!(u32, push_u32, write_u32);
+    bfn_write!(i32, push_i32, write_i32);
+    bfn_write!(u64, push_u64, write_u64);
+    bfn_write!(i64, push_i64, write_i64);
+    bfn_write!(u128, push_u128, write_u128);
+    bfn_write!(i128, push_i128, write_i128);
+
+    pub fn push_bytes(&mut self, bytes: &[u8]) {
+        self.bytes.reserve(self.bytes.len() + bytes.len());
+        unsafe {
+            let ptr = self.bytes.as_mut_ptr();
+            let dst = ptr.add(self.bytes.len());
+            bytes.as_ptr().copy_to_nonoverlapping(dst, bytes.len());
+            self.bytes.set_len(self.bytes.len() + bytes.len());
+        }
+    }
+
+    pub fn reserve(&mut self, size_in_bytes: usize) {
+        for _ in 0..size_in_bytes {
+            self.bytes.push(0);
+        }
+    }
+
+    pub fn align(&mut self, n: usize) {
+        let new_len = utils::align(self.bytes.len(), n);
+        if self.bytes.len() != new_len {
+            // Write padding
+            for _ in 0..new_len - self.bytes.len() {
+                self.bytes.push(0);
+            }
         }
     }
 
@@ -335,168 +420,6 @@ impl Bytecode {
     }
 }
 
-// FIXME: Avoid unwrap()
-macro_rules! fn_write {
-    ($ty:ty, $write:ident, $push:ident) => {
-        #[allow(dead_code)]
-         pub fn $write(&mut self, pos: u64, value: $ty) {
-             self.code.seek(SeekFrom::Start(pos)).unwrap();
-             self.code.write_all(&value.to_le_bytes()).unwrap();
-         }
-
-        #[allow(dead_code)]
-         pub fn $push(&mut self, value: $ty) {
-             self.code.seek(SeekFrom::End(0)).unwrap();
-             self.code.write_all(&value.to_le_bytes()).unwrap();
-             self.len += mem::size_of::<$ty>() as u64;
-         }
-    };
-}
-
-// FIXME: Avoid unwrap()
-macro_rules! fn_read {
-    ($ty:ty, $read:ident) => {
-        #[allow(dead_code)]
-        pub fn $read(&mut self, pos: u64) -> $ty {
-            let mut buf = [0; mem::size_of::<$ty>()];
-            self.code.seek(SeekFrom::Start(pos)).unwrap();
-            self.code.read_exact(&mut buf).unwrap();
-            <$ty>::from_le_bytes(buf)
-        }
-    };
-}
-
-#[derive(Debug)]
-pub struct BytecodeStream<W> {
-    code: W,
-    len: u64,
-}
-
-impl<W: Seek> BytecodeStream<W> {
-    pub fn new(code: W) -> Self {
-        BytecodeStream {
-            code,
-            len: 0,
-        }
-    }
-    
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-}
-
-// FIXME: Avoid unwrap()
-impl<W: Write + Seek> BytecodeStream<W> {
-    pub fn push_header(&mut self) {
-        if self.len > 0 {
-            panic!("pushed the header already");
-        }
-
-        self.push_bytes(&HEADER);
-        self.push_bytes(&[
-            0, // the number of function
-            0, // the number of string
-            0, // funcmap_start (2byte)
-            0,
-            0, // string_map_start (2byte)
-            0,
-            0, // the number of module
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]);
-    }
-
-    fn_write!(i8, write_i8, push_i8);
-    fn_write!(u8, write_u8, push_u8);
-    fn_write!(i16, write_i16, push_i16);
-    fn_write!(u16, write_u16, push_u16);
-    fn_write!(i32, write_i32, push_i32);
-    fn_write!(u32, write_u32, push_u32);
-    fn_write!(i64, write_i64, push_i64);
-    fn_write!(u64, write_u64, push_u64);
-    fn_write!(i128, write_i128, push_i128);
-    fn_write!(u128, write_u128, push_u128);
-
-    pub fn push_bytes(&mut self, bytes: &[u8]) {
-        self.code.seek(SeekFrom::End(0)).unwrap();
-        self.code.write_all(bytes).unwrap();
-        self.len += bytes.len() as u64;
-    }
-
-    pub unsafe fn write_bytes_without_seek(&mut self, bytes: &[u8]) {
-        self.code.write_all(bytes).unwrap();
-    }
-
-    pub unsafe fn set_len(&mut self, new_len: u64) {
-        self.len = new_len;
-    }
-
-    pub fn seek_to_end(&mut self) {
-        self.code.seek(SeekFrom::End(0)).unwrap();
-    }
-
-    pub fn reserve(&mut self, size_in_bytes: u64) {
-        self.code.seek(SeekFrom::End(0)).unwrap();
-        for _ in 0..size_in_bytes {
-            self.code.write_all(&[0]).unwrap();
-        }
-
-        self.len += size_in_bytes;
-    }
-
-    pub fn align(&mut self, n: u64) {
-        let new_len = utils::align(self.len as usize, n as usize) as u64;
-        if self.len != new_len {
-            // Write padding
-            self.code.seek(SeekFrom::End(0)).unwrap();
-            for _ in 0..new_len - self.len {
-                self.code.write_all(&[0]).unwrap();
-            }
-
-            self.len = new_len;
-        }
-    }
-}
-
-impl<R: Read + Seek> BytecodeStream<R> {
-    // FIXME: Avoid panic!
-    #[allow(dead_code)]
-    pub fn from(mut code: R) -> Result<Self, io::Error> {
-        let mut header = [0u8; 4];
-        code.read_exact(&mut header)?;
-
-        if header != HEADER {
-            panic!("different header");
-        }
-
-        let len = code.seek(SeekFrom::End(0)).unwrap();
-
-        Ok(BytecodeStream {
-            code,
-            len,
-        })
-    }
-
-    fn_read!(i8, read_i8);
-    fn_read!(u8, read_u8);
-    fn_read!(i16, read_i16);
-    fn_read!(u16, read_u16);
-    fn_read!(i32, read_i32);
-    fn_read!(u32, read_u32);
-    fn_read!(i64, read_i64);
-    fn_read!(u64, read_u64);
-    fn_read!(i128, read_i128);
-    fn_read!(u128, read_u128);
-
-    pub fn read_to_end(&mut self, buf: &mut Vec<u8>) {
-        self.code.seek(SeekFrom::Start(0)).unwrap();
-        self.code.read_to_end(buf).unwrap();
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: Id,
@@ -616,9 +539,8 @@ impl_toref!(i64);
 impl_toref!(usize);
 impl_toref!(isize);
 
-#[derive(Debug)]
-pub struct BytecodeBuilder<W: Read + Write + Seek> {
-    pub code: BytecodeStream<W>,
+pub struct BytecodeBuilder {
+    pub code: Bytecode,
 
     functions: HashMap<Id, Function>,
     current_func_id: Option<Id>,
@@ -629,12 +551,9 @@ pub struct BytecodeBuilder<W: Read + Write + Seek> {
     module_map_start: u16,
 }
 
-impl<W: Read + Write + Seek> BytecodeBuilder<W> {
-    pub fn new(mut code: BytecodeStream<W>, strings: &[String], modules: &[&ModuleHeader]) -> Self {
-        if code.len() > 0 {
-            panic!("written bytecode already");
-        }
-
+impl BytecodeBuilder {
+    pub fn new(strings: &[String], modules: &[&ModuleHeader]) -> Self {
+        let mut code = Bytecode::new();
         code.push_header();
 
         let mut slf = BytecodeBuilder {
@@ -665,14 +584,14 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.code.write_u16(POS_STRING_MAP_START, self.code.len() as u16);
 
         // Reserve for string map
-        self.code.reserve(strings.len() as u64 * 2);
+        self.code.reserve(strings.len() * 2);
 
         // Write strings
         self.code.align(8);
 
         for (i, string) in strings.iter().enumerate() {
             // Write the string location to string map
-            self.code.write_u16(self.string_map_start as u64 + i as u64 * 2, self.code.len() as u16);
+            self.code.write_u16(self.string_map_start as usize + i * 2, self.code.len() as u16);
 
             // Write the string length and bytes
             self.code.push_u64(string.len() as u64);
@@ -694,11 +613,11 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.module_map_start = self.code.len() as u16;
         self.code.write_u16(POS_MODULE_MAP_START, self.code.len() as u16);
 
-        self.code.reserve(modules.len() as u64 * 2);
+        self.code.reserve(modules.len() * 2);
         self.code.align(8);
 
         for (id, module) in modules.iter().enumerate() {
-            self.code.write_u16(self.module_map_start as u64 + id as u64 * 2, self.code.len() as u16);
+            self.code.write_u16(self.module_map_start as usize + id * 2, self.code.len() as u16);
 
             let module_name = IdMap::name(module.id);
 
@@ -747,12 +666,9 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         insts.push_inst_noarg(opcode::END);
 
         // Write instruction bytes
-        unsafe {
-            self.code.seek_to_end();
-            for inst in &insts.insts {
-                self.code.write_bytes_without_seek(inst);
-            }
-            self.code.set_len(self.code.len() + insts.len() as u64 * 2);
+        for inst in &insts.insts {
+            self.code.push_u8(inst[0]);
+            self.code.push_u8(inst[1]);
         }
 
         self.code.align(8);
@@ -767,7 +683,7 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
 
         // Set function infomations
         let func = self.get_function(func_id).unwrap().clone();
-        let base = self.funcmap_start as u64 + func.code_id as u64 * 8;
+        let base = self.funcmap_start as usize + func.code_id as usize * 8;
         self.code.write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
         self.code.write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
         self.code.write_u16(base + FUNC_OFFSET_POS, func.pos);
@@ -789,21 +705,18 @@ impl<W: Read + Write + Seek> BytecodeBuilder<W> {
         self.functions.get_mut(self.current_func_id.as_ref().unwrap()).unwrap()
     }
 
-    pub fn build(self) -> BytecodeStream<W> {
+    pub fn build(self) -> Bytecode {
         self.code
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
     use super::*;
 
     #[test]
     fn bytecode_write() {
-        let bytecode: Vec<u8> = Vec::new();
-        let bytecode = Cursor::new(bytecode);
-        let mut bytecode = BytecodeStream::new(bytecode);
+        let mut bytecode = Bytecode::new();
         bytecode.push_header();
         let base = bytecode.len();
         bytecode.push_u64(123123123123);

@@ -20,7 +20,7 @@ mod translate;
 
 use std::process::exit;
 use std::fs::File;
-use std::io::{Read, Cursor};
+use std::io::Read;
 use std::borrow::Cow;
 
 use lexer::Lexer;
@@ -30,7 +30,6 @@ use parser::Parser;
 use ast::*;
 use sema::Analyzer;
 use id::{Id, IdMap};
-use bytecode::Bytecode;
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
@@ -103,13 +102,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     // let stdlib_funcs = stdlib::functions();
 
     // Analyze semantics and translate to a bytecode
-    let bytecode: Vec<u8> = Vec::new();
-    let bytecode = Cursor::new(bytecode);
 
     let analyzer = Analyzer::new(std_module_header);
-    let bytecode = analyzer.analyze(bytecode, program)?;
-
-    let bytecode = Bytecode::from_stream(bytecode);
+    let bytecode = analyzer.analyze(program)?;
 
     if matches.is_present("dump-insts") {
         bytecode.dump();

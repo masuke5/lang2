@@ -1,4 +1,3 @@
-use std::io::{Read, Write, Seek};
 use std::mem;
 
 use rustc_hash::FxHashMap;
@@ -8,7 +7,7 @@ use crate::ast::{*, Param as AstParam};
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap};
-use crate::bytecode::{Function, opcode, BytecodeBuilder, BytecodeStream, InstList};
+use crate::bytecode::{Bytecode, Function, opcode, BytecodeBuilder, InstList};
 use crate::module::{FunctionHeader, ModuleHeader};
 use crate::translate;
 use crate::utils::HashMapWithScope;
@@ -334,7 +333,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_expr<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, expr: Spanned<Expr>) -> Option<ExprInfo> {
+    fn walk_expr(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (insts, ty) = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
                 (translate::literal_int(n), Type::Int)
@@ -752,7 +751,7 @@ impl<'a> Analyzer<'a> {
         Some(ExprInfo::new(insts, ty, expr.span))
     }
 
-    fn walk_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, stmt: Spanned<Stmt>) -> Option<InstList> {
+    fn walk_stmt(&mut self, code: &mut BytecodeBuilder, stmt: Spanned<Stmt>) -> Option<InstList> {
         let insts = match stmt.kind {
             Stmt::Expr(expr) => {
                 let expr = self.walk_expr(code, expr)?;
@@ -940,7 +939,7 @@ impl<'a> Analyzer<'a> {
         self.type_sizes.insert(tydef.name, size);
     }
 
-    fn walk_function<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, func: AstFunction) {
+    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
         self.current_func = func.name;
 
         self.push_scope();
@@ -983,7 +982,7 @@ impl<'a> Analyzer<'a> {
         self.pop_scope();
     }
 
-    fn walk_main_stmt<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, stmt: Spanned<Stmt>) -> Option<InstList> {
+    fn walk_main_stmt(&mut self, code: &mut BytecodeBuilder, stmt: Spanned<Stmt>) -> Option<InstList> {
         self.walk_stmt(code, stmt)
     }
 
@@ -991,7 +990,7 @@ impl<'a> Analyzer<'a> {
     //  Header
     // =================================
 
-    fn insert_function_header<W: Read + Write + Seek>(&mut self, code: &mut BytecodeBuilder<W>, func: &AstFunction) {
+    fn insert_function_header(&mut self, code: &mut BytecodeBuilder, func: &AstFunction) {
         self.push_type_scope();
 
         let mut vars = Vec::new();
@@ -1044,8 +1043,8 @@ impl<'a> Analyzer<'a> {
         code.new_function(func);
     }
 
-    pub fn analyze<W: Read + Write + Seek>(mut self, code: W, program: Program) -> Result<BytecodeStream<W>, Vec<Error>> {
-        let mut code = BytecodeBuilder::new(BytecodeStream::new(code), &program.strings, &[&self.std_module]);
+    pub fn analyze(mut self, program: Program) -> Result<Bytecode, Vec<Error>> {
+        let mut code = BytecodeBuilder::new(&program.strings, &[&self.std_module]);
 
         // Insert main function header
         let header = FunctionHeader {
