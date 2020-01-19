@@ -133,20 +133,14 @@ macro_rules! bfn_write {
                 panic!("out of bounds");
             }
 
-            unsafe {
-                let ptr = self.bytes.as_mut_ptr() as *mut $ty;
-                *ptr.add(pos) = value;
-            }
+            let bytes = value.to_le_bytes();
+            self.write_bytes(pos, &bytes);
         }
 
         #[allow(dead_code)]
         pub fn $push(&mut self, value: $ty) {
-            self.bytes.reserve(self.bytes.len() + mem::size_of::<$ty>());
-            unsafe {
-                let ptr = self.bytes.as_mut_ptr() as *mut $ty;
-                *ptr.add(self.bytes.len()) = value;
-                self.bytes.set_len(self.bytes.len() + mem::size_of::<$ty>());
-            }
+            let bytes = value.to_le_bytes();
+            self.push_bytes(&bytes);
         }
     };
 }
@@ -221,10 +215,19 @@ impl Bytecode {
     pub fn push_bytes(&mut self, bytes: &[u8]) {
         self.bytes.reserve(self.bytes.len() + bytes.len());
         unsafe {
-            let ptr = self.bytes.as_mut_ptr();
-            let dst = ptr.add(self.bytes.len());
-            bytes.as_ptr().copy_to_nonoverlapping(dst, bytes.len());
+            let dst = self.bytes.as_mut_ptr().add(self.bytes.len());
+            let src = bytes.as_ptr();
+            ptr::copy_nonoverlapping(src, dst, bytes.len());
+
             self.bytes.set_len(self.bytes.len() + bytes.len());
+        }
+    }
+
+    pub fn write_bytes(&mut self, pos: usize, bytes: &[u8]) {
+        unsafe {
+            let dst = self.bytes.as_mut_ptr().add(pos);
+            let src = bytes.as_ptr();
+            ptr::copy_nonoverlapping(src, dst, bytes.len());
         }
     }
 
@@ -329,6 +332,12 @@ impl Bytecode {
     }
 
     pub fn dump(&self) {
+        // Check header
+        if self.bytes.len() < HEADER.len() || self.bytes[..HEADER.len()] != HEADER {
+            println!("Invalid header `{}`", str::from_utf8(&self.bytes[..HEADER.len()]).unwrap_or(""));
+            return;
+        }
+
         let index_len = format!("{}", self.bytes.len()).len();
 
         // String map
@@ -667,8 +676,7 @@ impl BytecodeBuilder {
 
         // Write instruction bytes
         for inst in &insts.insts {
-            self.code.push_u8(inst[0]);
-            self.code.push_u8(inst[1]);
+            self.code.push_bytes(inst);
         }
 
         self.code.align(8);
