@@ -333,6 +333,55 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn walk_expr_with_conversion(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>, ty: &Type) -> Option<ExprInfo> {
+        match ty {
+            Type::App(TypeCon::Wrapped, types) => {
+                let expr = self.walk_expr(code, expr)?;
+
+                if let Type::App(TypeCon::Wrapped, _) = &expr.ty {
+                    Some(expr)
+                } else {
+                    let mut expr = expr;
+                    expr.insts = translate::wrap(expr.insts, &expr.ty);
+                    expr.ty = Type::App(TypeCon::Wrapped, types.clone());
+
+                    Some(expr)
+                }
+            },
+            _ => {
+                let mut expr = self.walk_expr(code, expr)?;
+
+                // if `ty` is not wrapped and `expr.ty` is wrapped
+                if let Type::App(TypeCon::Wrapped, _) = ty {
+                } else {
+                    match &expr.ty {
+                        Type::App(TypeCon::Wrapped, types) => {
+                            expr.insts = translate::unwrap(expr.insts, &expr.ty);
+                            expr.ty = types[0].clone();
+                        },
+                        _ => {},
+                    };
+                }
+
+                Some(expr)
+            }
+        }
+    }
+
+    fn walk_expr_with_unwrap(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>) -> Option<ExprInfo> {
+        let mut expr = self.walk_expr(code, expr)?;
+
+        match &expr.ty {
+            Type::App(TypeCon::Wrapped, types) => {
+                expr.insts = translate::unwrap(expr.insts, &expr.ty);
+                expr.ty = types[0].clone();
+            },
+            _ => {},
+        };
+
+        Some(expr)
+    }
+
     fn walk_expr(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (insts, ty) = match expr.kind {
             Expr::Literal(Literal::Number(n)) => {
@@ -391,10 +440,9 @@ impl<'a> Analyzer<'a> {
                     let field_expr = field_exprs.iter().find(|(id, _)| id.kind == field_id);
                     match field_expr {
                         Some((_, expr)) => {
-                            // TODO: Avoid clone()
-                            if let Some(expr) = self.walk_expr(code, expr.clone()) {
-                                insts.append(expr.insts);
+                            if let Some(expr) = self.walk_expr_with_conversion(code, expr.clone(), &field_ty) {
                                 unify(&mut self.errors, &expr.span, &field_ty, &expr.ty);
+                                insts.append(translate::literal_struct_field(expr));
                             }
                         },
                         None => {
@@ -416,7 +464,7 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Field(comp_expr, field) => {
                 let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
-                let comp_expr = self.walk_expr(code, *comp_expr)?;
+                let comp_expr = self.walk_expr_with_unwrap(code, *comp_expr)?;
                 let mut is_mutable = comp_expr.is_mutable;
 
                 let loc = if should_store {
@@ -480,8 +528,8 @@ impl<'a> Analyzer<'a> {
             Expr::Subscript(expr, subscript_expr) => {
                 let should_store = Self::expr_push_multiple_values(&expr.kind);
 
-                let expr = self.walk_expr(code, *expr);
-                let subscript_expr = self.walk_expr(code, *subscript_expr);
+                let expr = self.walk_expr_with_unwrap(code, *expr);
+                let subscript_expr = self.walk_expr_with_conversion(code, *subscript_expr, &Type::Int);
                 try_some!(expr, subscript_expr);
 
                 let mut expr = expr;
@@ -545,8 +593,8 @@ impl<'a> Analyzer<'a> {
                 return Some(ExprInfo::new_lvalue(insts, var.ty.clone(), expr.span, var.is_mutable));
             },
             Expr::BinOp(BinOp::And, lhs, rhs) => {
-                let lhs = self.walk_expr(code, *lhs);
-                let rhs = self.walk_expr(code, *rhs);
+                let lhs = self.walk_expr_with_conversion(code, *lhs, &Type::Int);
+                let rhs = self.walk_expr_with_conversion(code, *rhs, &Type::Int);
                 try_some!(lhs, rhs);
 
                 // Type check
@@ -560,8 +608,8 @@ impl<'a> Analyzer<'a> {
                 (translate::binop_and(lhs, rhs), Type::Bool)
             },
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
-                let lhs = self.walk_expr(code, *lhs);
-                let rhs = self.walk_expr(code, *rhs);
+                let lhs = self.walk_expr_with_conversion(code, *lhs, &Type::Int);
+                let rhs = self.walk_expr_with_conversion(code, *rhs, &Type::Int);
                 try_some!(lhs, rhs);
 
                 // Type check
@@ -575,8 +623,8 @@ impl<'a> Analyzer<'a> {
                 (translate::binop_or(lhs, rhs), Type::Bool)
             },
             Expr::BinOp(binop, lhs, rhs) => {
-                let lhs = self.walk_expr(code, *lhs);
-                let rhs = self.walk_expr(code, *rhs);
+                let lhs = self.walk_expr_with_unwrap(code, *lhs);
+                let rhs = self.walk_expr_with_unwrap(code, *rhs);
                 try_some!(lhs, rhs);
 
                 let binop_symbol = binop.to_symbol();
@@ -647,11 +695,6 @@ impl<'a> Analyzer<'a> {
 
                 // Substitute type arguments for return types
                 let return_ty = subst(return_ty, &map);
-                let should_unwrap = if let Type::App(TypeCon::Wrapped, types) = &return_ty {
-                    if let Type::Var(_) = &types[0] { false } else { true }
-                } else {
-                    false
-                };
 
                 // Substitute type arguments for parameter types
                 let mut params = Vec::with_capacity(old_params.len());
@@ -672,27 +715,18 @@ impl<'a> Analyzer<'a> {
                 // Check argument types
                 let mut insts = Vec::new();
                 for (arg, param_ty) in args.into_iter().zip(params.iter()) {
-                    let arg = self.walk_expr(code, arg);
+                    let arg = self.walk_expr_with_conversion(code, arg, &param_ty);
                     if let Some(arg) = arg {
-                        // param_ty is a wrapped type and arg.ty is not a wrapped type
-                        let should_wrap = if let Type::App(TypeCon::Wrapped, _) = param_ty {
-                            if let Type::App(TypeCon::Wrapped, _) = &arg.ty { false } else { true }
-                        } else {
-                            false
-                        };
-
                         unify(&mut self.errors, &arg.span, &arg.ty, &param_ty);
-                        insts.push((arg, should_wrap));
+                        insts.push(arg);
                     }
                 }
 
-                let return_ty_wrapped = expand_wrap(return_ty.clone());
-
-                let insts = translate::call(code_id, module_id, insts, &return_ty, should_unwrap, &return_ty_wrapped);
-                (insts, return_ty_wrapped)
+                let insts = translate::call(code_id, module_id, insts, &return_ty);
+                (insts, return_ty)
             },
             Expr::Address(expr, is_mutable) => {
-                let expr = self.walk_expr(code, *expr)?;
+                let expr = self.walk_expr_with_unwrap(code, *expr)?;
 
                 if is_mutable && !expr.is_mutable {
                     error!(self, expr.span, "this expression is immutable");
@@ -713,7 +747,7 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Dereference(expr_) => {
-                let expr_ = self.walk_expr(code, *expr_)?;
+                let expr_ = self.walk_expr_with_unwrap(code, *expr_)?;
 
                 match expr_.ty.clone() {
                     Type::App(TypeCon::Pointer(is_mutable), tys) => {
@@ -727,7 +761,7 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Negative(expr) => {
-                let expr = self.walk_expr(code, *expr)?;
+                let expr = self.walk_expr_with_conversion(code, *expr, &Type::Int)?;
 
                 match expr.ty.clone() {
                     ty @ Type::Int /* | Type::Float */ => {
@@ -740,7 +774,7 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Expr::Alloc(expr, is_mutable) => {
-                let expr = self.walk_expr(code, *expr)?;
+                let expr = self.walk_expr_with_unwrap(code, *expr)?;
 
                 let ty = Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty.clone()]);
                 let insts = translate::alloc(expr);
@@ -759,7 +793,7 @@ impl<'a> Analyzer<'a> {
                 translate::expr_stmt(expr)
             },
             Stmt::If(cond, stmt, None) => {
-                let cond = self.walk_expr(code, cond);
+                let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
                 let then_insts = self.walk_stmt(code, *stmt);
                 try_some!(cond, then_insts);
 
@@ -768,7 +802,7 @@ impl<'a> Analyzer<'a> {
                 translate::if_stmt(cond, then_insts)
             },
             Stmt::If(cond, then_stmt, Some(else_stmt)) => {
-                let cond = self.walk_expr(code, cond);
+                let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
                 let then = self.walk_stmt(code, *then_stmt);
                 let els = self.walk_stmt(code, *else_stmt);
                 try_some!(cond, then, els);
@@ -778,7 +812,7 @@ impl<'a> Analyzer<'a> {
                 translate::if_else_stmt(cond, then, els)
             },
             Stmt::While(cond, stmt) => {
-                let cond = self.walk_expr(code, cond);
+                let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
                 let body = self.walk_stmt(code, *stmt);
                 try_some!(cond, body);
 
@@ -805,9 +839,8 @@ impl<'a> Analyzer<'a> {
                 translate::bind_stmt(loc, expr)
             },
             Stmt::Assign(lhs, rhs) => {
-                let lhs = self.walk_expr(code, lhs);
-                let rhs = self.walk_expr(code, rhs);
-                try_some!(lhs, rhs);
+                let lhs = self.walk_expr(code, lhs)?;
+                let rhs = self.walk_expr_with_conversion(code, rhs, &lhs.ty)?;
 
                 if !lhs.is_lvalue {
                     error!(self, lhs.span, "unassignable expression");
@@ -832,16 +865,16 @@ impl<'a> Analyzer<'a> {
                     return None;
                 }
 
-                let expr = match expr {
-                    Some(expr) => Some(self.walk_expr(code, expr)?),
-                    None => None,
-                };
-
-                // Check type
                 let return_var = self.find_var(self.return_value_id).unwrap();
                 let ty = return_var.ty.clone();
                 let loc = return_var.loc;
 
+                let expr = match expr {
+                    Some(expr) => Some(self.walk_expr_with_conversion(code, expr, &ty)?),
+                    None => None,
+                };
+
+                // Check type
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
                 unify(&mut self.errors, &stmt.span, &ty, return_ty);
 
@@ -922,10 +955,11 @@ impl<'a> Analyzer<'a> {
             self.types.insert(var.kind, Type::Var(*vars.last().unwrap()));
         }
 
-        let ty = match self.walk_type(tydef.ty.clone()) {
+        let mut ty = match self.walk_type(tydef.ty.clone()) {
             Some(ty) => ty,
             None => return,
         };
+        wrap_typevar(&mut ty);
 
         let size = self.type_size_err(tydef.ty.span, &ty);
 

@@ -3,7 +3,7 @@ use std::mem;
 
 use crate::bytecode::{opcode, InstList};
 use crate::ast::BinOp;
-use crate::ty::{Type, type_size_nocheck};
+use crate::ty::{Type, TypeCon, type_size_nocheck};
 use crate::sema::ExprInfo;
 
 struct Label(u8, Option<usize>);
@@ -84,6 +84,33 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     }
 }
 
+pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
+    // Don't wrap doubly
+    assert!(if let Type::App(TypeCon::Wrapped, _) = ty { false } else { true });
+
+    let size = type_size_nocheck(ty);
+    if size > 1 {
+        insts.push_inst(opcode::WRAP, size as u8);
+    }
+
+    insts
+}
+
+pub fn unwrap(mut insts: InstList, ty: &Type) -> InstList {
+    let inner_ty = if let Type::App(TypeCon::Wrapped, types) = ty {
+        &types[0]
+    } else {
+        panic!("not wrapped type: {}", ty);
+    };
+
+    let size = type_size_nocheck(inner_ty);
+    if size > 1 {
+        insts.push_inst(opcode::UNWRAP, size as u8);
+    }
+
+    insts
+}
+
 // Expression
 
 pub fn literal_int(n: i64) -> InstList {
@@ -140,6 +167,12 @@ pub fn literal_array(expr: ExprInfo, arr_len: usize) -> InstList {
         insts.push_inst_ref(opcode::DUPLICATE, arg);
     }
 
+    insts
+}
+
+pub fn literal_struct_field(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
     insts
 }
 
@@ -281,10 +314,8 @@ pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> InstList {
 pub fn call(
     code_id: u16,
     module_id: Option<u16>,
-    args: Vec<(ExprInfo, bool)>,
+    args: Vec<ExprInfo>,
     return_ty: &Type,
-    should_unwrap: bool,
-    return_ty_wrapped: &Type,
 ) -> InstList {
     let mut insts = InstList::new();
     
@@ -295,13 +326,9 @@ pub fn call(
     }
 
     // Push arguments
-    for (arg, should_wrap) in args {
+    for arg in args {
         insts.append(arg.insts);
         push_copy_inst(&mut insts, &arg.ty);
-
-        if should_wrap {
-            insts.push_inst(opcode::WRAP, type_size_nocheck(&arg.ty) as u8);
-        }
     }
 
     if let Some(module_id) = module_id {
@@ -311,10 +338,6 @@ pub fn call(
         insts.push_inst(opcode::CALL_EXTERN, arg);
     } else {
         insts.push_inst(opcode::CALL, code_id as u8);
-    }
-
-    if should_unwrap {
-        insts.push_inst(opcode::UNWRAP, type_size_nocheck(return_ty_wrapped) as u8);
     }
 
     insts

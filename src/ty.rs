@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
 
@@ -297,6 +298,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
             Some(size)
         }
         Type::Poly(_, _) | Type::Var(_) => None,
+        Type::Unit => Some(0),
         _ => Some(1),
     }
 }
@@ -355,5 +357,21 @@ pub fn resolve_type_sizes(type_sizes: &HashMapWithScope<Id, usize>, ty: Type) ->
             Type::App(tycon, types)
         },
         ty => ty,
+    }
+}
+
+pub fn wrap_typevar(ty: &mut Type) {
+    match ty {
+        Type::App(TypeCon::Fun(_, _), _) => panic!(),
+        Type::App(_, types) => {
+            for ty in types {
+                wrap_typevar(ty);
+            }
+        },
+        vty @ Type::Var(_) => {
+            let tyvar = mem::replace(vty, Type::Int);
+            *vty = Type::App(TypeCon::Wrapped, vec![tyvar]);
+        },
+        _ => {},
     }
 }
