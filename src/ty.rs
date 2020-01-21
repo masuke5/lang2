@@ -200,13 +200,6 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 }
 
 pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()> {
-    if let Type::App(TypeCon::Wrapped, types) = a {
-        return unify(errors, span, &types[0], b);
-    }
-    if let Type::App(TypeCon::Wrapped, types) = b {
-        return unify(errors, span, a, &types[0]);
-    }
-
     match (a, b) {
         (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) if a_tycon == b_tycon => {
             if a_tycon == b_tycon {
@@ -338,12 +331,14 @@ pub fn expand_wrap(ty: Type) -> Type {
 
 pub fn resolve_type_sizes_in_tycon(type_sizes: &HashMapWithScope<Id, usize>, tycon: TypeCon) -> TypeCon {
     match tycon {
-        TypeCon::Named(name, size) => {
-            assert_eq!(size, 0);
+        TypeCon::Named(name, _) => {
             TypeCon::Named(name, *type_sizes.find(&name).unwrap())
         },
         TypeCon::Fun(params, ty) => {
             TypeCon::Fun(params, Box::new(resolve_type_sizes(type_sizes, *ty)))
+        },
+        TypeCon::Unique(tycon, uniq) => {
+            TypeCon::Unique(Box::new(resolve_type_sizes_in_tycon(type_sizes, *tycon)), uniq)
         },
         tycon => tycon,
     }
@@ -363,10 +358,15 @@ pub fn resolve_type_sizes(type_sizes: &HashMapWithScope<Id, usize>, ty: Type) ->
 pub fn wrap_typevar(ty: &mut Type) {
     match ty {
         Type::App(TypeCon::Fun(_, _), _) => panic!(),
-        Type::App(_, types) => {
-            for ty in types {
-                wrap_typevar(ty);
-            }
+        Type::App(tycon, types) => {
+            match tycon {
+                TypeCon::Tuple | TypeCon::Array(_) | TypeCon::Struct(_) => {
+                    for ty in types {
+                        wrap_typevar(ty);
+                    }
+                },
+                _ => {},
+            };
         },
         vty @ Type::Var(_) => {
             let tyvar = mem::replace(vty, Type::Int);

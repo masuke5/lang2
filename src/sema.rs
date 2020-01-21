@@ -335,7 +335,7 @@ impl<'a> Analyzer<'a> {
 
     fn walk_expr_with_conversion(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>, ty: &Type) -> Option<ExprInfo> {
         match ty {
-            Type::App(TypeCon::Wrapped, types) => {
+            Type::App(TypeCon::Wrapped, _) => {
                 let expr = self.walk_expr(code, expr)?;
 
                 if let Type::App(TypeCon::Wrapped, _) = &expr.ty {
@@ -343,7 +343,7 @@ impl<'a> Analyzer<'a> {
                 } else {
                     let mut expr = expr;
                     expr.insts = translate::wrap(expr.insts, &expr.ty);
-                    expr.ty = Type::App(TypeCon::Wrapped, types.clone());
+                    expr.ty = Type::App(TypeCon::Wrapped, vec![expr.ty]);
 
                     Some(expr)
                 }
@@ -1041,10 +1041,7 @@ impl<'a> Analyzer<'a> {
                 Some(ty) => ty,
                 None => return,
             };
-
-            if let vty @ Type::Var(_) = ty {
-                ty = Type::App(TypeCon::Wrapped, vec![vty]);
-            }
+            wrap_typevar(&mut ty);
 
             param_size += self.type_size_err(ty_span, &ty);
             param_types.push(ty);
@@ -1056,9 +1053,7 @@ impl<'a> Analyzer<'a> {
             None => return,
         };
 
-        if let vty @ Type::Var(_) = return_ty {
-            return_ty = Type::App(TypeCon::Wrapped, vec![vty]);
-        }
+        wrap_typevar(&mut return_ty);
 
         self.pop_type_scope();
 
