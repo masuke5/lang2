@@ -464,7 +464,7 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Field(comp_expr, field) => {
                 let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
-                let comp_expr = self.walk_expr_with_unwrap(code, *comp_expr)?;
+                let comp_expr = self.walk_expr(code, *comp_expr)?;
                 let mut is_mutable = comp_expr.is_mutable;
 
                 let loc = if should_store {

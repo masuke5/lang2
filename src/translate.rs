@@ -88,6 +88,8 @@ pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
     // Don't wrap doubly
     assert!(if let Type::App(TypeCon::Wrapped, _) = ty { false } else { true });
 
+    push_copy_inst(&mut insts, ty);
+
     let size = type_size_nocheck(ty);
     if size > 1 {
         insts.push_inst(opcode::WRAP, size as u8);
@@ -102,6 +104,8 @@ pub fn unwrap(mut insts: InstList, ty: &Type) -> InstList {
     } else {
         panic!("not wrapped type: {}", ty);
     };
+
+    push_copy_inst(&mut insts, ty);
 
     let size = type_size_nocheck(inner_ty);
     if size > 1 {
@@ -188,6 +192,11 @@ pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset
     }
 
     if should_deref {
+        push_copy_inst(&mut insts, &comp_expr.ty);
+        insts.push_inst_noarg(opcode::DEREFERENCE);
+    }
+    
+    if let Type::App(TypeCon::Wrapped, _) = &comp_expr.ty {
         push_copy_inst(&mut insts, &comp_expr.ty);
         insts.push_inst_noarg(opcode::DEREFERENCE);
     }
