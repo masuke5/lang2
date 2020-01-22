@@ -288,10 +288,26 @@ fn f2<T>(x: T): T {
     return f.<T>(x);
 }
 
+fn f3<T>(x: (int, T, T)): (T, T, T) {
+    return (x.1, x.2, x.1);
+}
+
+type A<T> struct {
+    b: T,
+    c: int,
+};
+
 let value = f2.<int>(139857);
 test_eq("call with instantiation 1", 139857, value);
 let tuple = f2.<(int, int)>((31847, 138947));
 test_eq("call with instantiation 2", 170794, tuple.0 + tuple.1);
+
+let aaa = f3.<A<*string>>((
+    921303124,
+    A:<*string>{ b: "abc", c: 123 },
+    A:<*string>{ b: "def", c: 456 },
+));
+test_eq("call with instantiation 3", 702, aaa.0.c + aaa.1.c + aaa.2.c);
 
 ## other expressions ##
 

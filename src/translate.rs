@@ -180,6 +180,12 @@ pub fn literal_struct_field(expr: ExprInfo) -> InstList {
     insts
 }
 
+pub fn literal_tuple(expr: ExprInfo) -> InstList {
+    let mut insts = expr.insts;
+    push_copy_inst(&mut insts, &expr.ty);
+    insts
+}
+
 pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset: usize) -> InstList {
     let mut insts = comp_expr.insts;
 

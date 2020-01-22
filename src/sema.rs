@@ -348,23 +348,48 @@ impl<'a> Analyzer<'a> {
                     Some(expr)
                 }
             },
-            _ => {
-                let mut expr = self.walk_expr(code, expr)?;
-
-                // if `ty` is not wrapped and `expr.ty` is wrapped
-                if let Type::App(TypeCon::Wrapped, _) = ty {
-                } else {
-                    match &expr.ty {
-                        Type::App(TypeCon::Wrapped, types) => {
-                            expr.insts = translate::unwrap(expr.insts, &expr.ty);
-                            expr.ty = types[0].clone();
-                        },
-                        _ => {},
+            _ => match expr.kind {
+                Expr::Tuple(exprs) => {
+                    let types = match ty {
+                        Type::App(TypeCon::Tuple, types) => types,
+                        _ => return None,
                     };
-                }
 
-                Some(expr)
-            }
+                    if types.len() != exprs.len() {
+                        error!(self, expr.span, "error 1");
+                        return None;
+                    }
+
+                    let mut insts = InstList::new();
+                    let mut tys = Vec::new();
+                    for (expr, ty) in exprs.into_iter().zip(types.iter()) {
+                        let expr = self.walk_expr_with_conversion(code, expr, ty);
+                        if let Some(expr) = expr {
+                            tys.push(expr.ty.clone());
+                            insts.append(translate::literal_tuple(expr));
+                        }
+                    }
+
+                    Some(ExprInfo::new(insts, Type::App(TypeCon::Tuple, tys), expr.span))
+                },
+                _ => {
+                    let mut expr = self.walk_expr(code, expr)?;
+
+                    // if `ty` is not wrapped and `expr.ty` is wrapped
+                    if let Type::App(TypeCon::Wrapped, _) = ty {
+                    } else {
+                        match &expr.ty {
+                            Type::App(TypeCon::Wrapped, types) => {
+                                expr.insts = translate::unwrap(expr.insts, &expr.ty);
+                                expr.ty = types[0].clone();
+                            },
+                            _ => {},
+                        };
+                    }
+
+                    Some(expr)
+                }
+            },
         }
     }
 
@@ -409,8 +434,8 @@ impl<'a> Analyzer<'a> {
                 for expr in exprs {
                     let expr = self.walk_expr(code, expr);
                     if let Some(expr) = expr {
-                        types.push(expr.ty);
-                        insts.append(expr.insts);
+                        types.push(expr.ty.clone());
+                        insts.append(translate::literal_tuple(expr));
                     }
                 }
 
