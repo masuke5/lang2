@@ -693,17 +693,8 @@ impl<'a> Analyzer<'a> {
                 };
 
                 let ty_params = callee_func.ty_params.clone();
-                let return_ty = callee_func.return_ty.clone();
-                let old_params = callee_func.params.clone();
-
-                // Check type parameter length
-                if ty_params.len() != ty_args.len() {
-                    error!(self, expr.span.clone(),
-                        "the function takes {} type parameters. but got {} type arguments",
-                        ty_params.len(),
-                        ty_args.len());
-                    return None;
-                }
+                let mut return_ty = callee_func.return_ty.clone();
+                let mut params = callee_func.params.clone();
 
                 // map <- { ty_params_i -> ty_args_i }
                 let iter = ty_params
@@ -718,15 +709,17 @@ impl<'a> Analyzer<'a> {
                     map.insert(var, ty);
                 }
 
-                // Substitute type arguments for return types
-                let return_ty = subst(return_ty, &map);
+                fn subst_param(params: &mut Vec<Type>, return_ty: &mut Type, map: &FxHashMap<TypeVar, Type>) {
+                    // Substitute type arguments for return types
+                    *return_ty = subst(return_ty.clone(), &map);
 
-                // Substitute type arguments for parameter types
-                let mut params = Vec::with_capacity(old_params.len());
-                for param in old_params {
-                    let ty = subst(param, &map);
-                    params.push(ty);
+                    // Substitute type arguments for parameter types
+                    for param in params {
+                        *param = subst(param.clone(), &map);
+                    }
                 }
+
+                subst_param(&mut params, &mut return_ty, &map);
 
                 // Check parameter length
                 if args.len() != params.len() {
@@ -739,10 +732,34 @@ impl<'a> Analyzer<'a> {
 
                 // Check argument types
                 let mut insts = Vec::new();
-                for (arg, param_ty) in args.into_iter().zip(params.iter()) {
-                    let arg = self.walk_expr_with_conversion(code, arg, &param_ty);
+                for (i, arg) in args.into_iter().enumerate() {
+                    let arg = self.walk_expr_with_conversion(code, arg, &params[i]);
                     if let Some(arg) = arg {
-                        unify(&mut self.errors, &arg.span, &arg.ty, &param_ty);
+                        let needs_to_unify = match &params[i] {
+                            Type::App(TypeCon::Wrapped, types) => {
+                                if let Type::Var(var) = &types[0] {
+                                    if !map.contains_key(var) {
+                                        let ty = match &arg.ty {
+                                            Type::App(TypeCon::Wrapped, types) => &types[0],
+                                            _ => panic!("not wrapped"),
+                                        };
+                                        map.insert(*var, ty.clone());
+                                        subst_param(&mut params, &mut return_ty, &map);
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                } else { true }
+                            },
+                            _ => {
+                                true
+                            },
+                        };
+
+                        if needs_to_unify {
+                            unify(&mut self.errors, &arg.span, &arg.ty, &params[i]);
+                        }
+
                         insts.push(arg);
                     }
                 }

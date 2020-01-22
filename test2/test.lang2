@@ -297,9 +297,9 @@ type A<T> struct {
     c: int,
 };
 
-let value = f2.<int>(139857);
+let value = f2(139857);
 test_eq("call with instantiation 1", 139857, value);
-let tuple = f2.<(int, int)>((31847, 138947));
+let tuple = f2((31847, 138947));
 test_eq("call with instantiation 2", 170794, tuple.0 + tuple.1);
 
 let aaa = f3.<A<*string>>((
