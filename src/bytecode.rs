@@ -344,8 +344,8 @@ impl Bytecode {
         let index_len = format!("{}", self.bytes.len()).len();
 
         // String map
-        let string_map_start = self.read_u16(POS_STRING_MAP_START as usize) as usize;
-        let string_count = self.read_u8(POS_STRING_COUNT as usize) as usize;
+        let string_map_start = self.read_u16(POS_STRING_MAP_START) as usize;
+        let string_count = self.read_u8(POS_STRING_COUNT) as usize;
 
         let count_len = format!("{}", string_count).len();
         for i in 0..string_count {
@@ -366,8 +366,8 @@ impl Bytecode {
         }
 
         // Module map
-        let module_map_start = self.read_u16(POS_MODULE_MAP_START as usize) as usize;
-        let module_count = self.read_u8(POS_MODULE_COUNT as usize) as usize;
+        let module_map_start = self.read_u16(POS_MODULE_MAP_START) as usize;
+        let module_count = self.read_u8(POS_MODULE_COUNT) as usize;
 
         for i in 0..module_count {
             let loc = self.read_u16(module_map_start + i * 2) as usize;
@@ -387,8 +387,8 @@ impl Bytecode {
         }
 
         // Function map
-        let func_map_start = self.read_u16(POS_FUNC_MAP_START as usize) as usize;
-        let func_count = self.read_u8(POS_FUNC_COUNT as usize) as usize;
+        let func_map_start = self.read_u16(POS_FUNC_MAP_START) as usize;
+        let func_count = self.read_u8(POS_FUNC_COUNT) as usize;
 
         type Func = (u16, u8, u8, usize, usize); // id, stack_size, param_size, pos, ref_start
         let mut functions: Vec<Func> = Vec::new();
@@ -396,10 +396,10 @@ impl Bytecode {
         for j in 0..func_count {
             let loc = func_map_start + j * 8;
             let func_id = self.read_u16(loc);
-            let stack_size = self.read_u8(loc + FUNC_OFFSET_STACK_SIZE as usize);
-            let param_size = self.read_u8(loc + FUNC_OFFSET_PARAM_SIZE as usize);
-            let pos = self.read_u16(loc + FUNC_OFFSET_POS as usize) as usize;
-            let ref_start = self.read_u16(loc + FUNC_OFFSET_REF_START as usize) as usize;
+            let stack_size = self.read_u8(loc + FUNC_OFFSET_STACK_SIZE);
+            let param_size = self.read_u8(loc + FUNC_OFFSET_PARAM_SIZE);
+            let pos = self.read_u16(loc + FUNC_OFFSET_POS) as usize;
+            let ref_start = self.read_u16(loc + FUNC_OFFSET_REF_START) as usize;
 
             println!("{:<width$}", loc, width = index_len);
             println!("  id: {}", func_id);

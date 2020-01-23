@@ -195,15 +195,15 @@ impl VM {
     }
 
     fn read_functions(&mut self, bytecode: &Bytecode) {
-        let func_map_start = bytecode.read_u16(bytecode::POS_FUNC_MAP_START as usize) as usize;
-        let func_count = bytecode.read_u8(bytecode::POS_FUNC_COUNT as usize) as usize;
+        let func_map_start = bytecode.read_u16(bytecode::POS_FUNC_MAP_START) as usize;
+        let func_count = bytecode.read_u8(bytecode::POS_FUNC_COUNT) as usize;
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
-            let stack_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE as usize) as usize;
-            let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE as usize) as usize;
-            let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS as usize) as usize;
-            let ref_start = bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START as usize) as usize;
+            let stack_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE) as usize;
+            let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE ) as usize;
+            let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as usize;
+            let ref_start = bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START) as usize;
 
             self.functions.push(Function {
                 stack_size,
@@ -215,8 +215,8 @@ impl VM {
     }
 
     fn read_modules(&mut self, bytecode: &Bytecode, all_module_id: &FxHashMap<String, usize>) -> Vec<usize> {
-        let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START as usize) as usize;
-        let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT as usize) as usize;
+        let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START) as usize;
+        let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT) as usize;
 
         let mut modules = Vec::with_capacity(module_count);
 
@@ -279,7 +279,7 @@ impl VM {
             panic!("the bytecode need an entrypoint");
         }
 
-        let string_map_start = bytecode.read_u16(bytecode::POS_STRING_MAP_START as usize) as usize;
+        let string_map_start = bytecode.read_u16(bytecode::POS_STRING_MAP_START) as usize;
 
         self.current_func = 0;
 
