@@ -227,7 +227,7 @@ impl VM {
             let mut buf = Vec::with_capacity(len);
             buf.resize(len, 0);
             bytecode.read_bytes(loc + 2, &mut buf[..]);
-            let name = str::from_utf8(&buf[..]).unwrap(); // TODO: Avoid unwrap
+            let name = str::from_utf8(&buf[..]).expect("invalid module name");
 
             let module_id = all_module_id[name];
             modules.push(module_id);

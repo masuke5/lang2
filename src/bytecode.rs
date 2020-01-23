@@ -459,7 +459,10 @@ macro_rules! impl_toref {
     ($ty:ty) => {
         impl ToRef for $ty {
             fn convert(self) -> u64 {
-                // TODO: Add check
+                if mem::size_of::<$ty>() > 8 {
+                    panic!("too big value");
+                }
+
                 unsafe { mem::transmute(self.to_le()) }
             }
         }
