@@ -77,7 +77,10 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
             let arg = (loc << 3) | size as i8;
             insts.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
         },
-        opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET | opcode::CONST_OFFSET => {
+        opcode::DEREFERENCE => {
+            insts.replace_last_inst_with(opcode::COPY, size as u8);
+        },
+        opcode::LOAD_REF | opcode::OFFSET | opcode::CONST_OFFSET => {
             insts.push_inst(opcode::COPY, size as u8);
         },
         _ => {},
