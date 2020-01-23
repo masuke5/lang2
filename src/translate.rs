@@ -87,6 +87,12 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     }
 }
 
+fn push_store_insts(insts: &mut InstList, loc: isize, ty: &Type) {
+    let size = type_size_nocheck(ty);
+    insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
+    insts.push_inst(opcode::STORE, size as u8);
+}
+
 pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
     // Don't wrap doubly
     assert!(if let Type::App(TypeCon::Wrapped, _) = ty { false } else { true });
@@ -193,11 +199,8 @@ pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset
     let mut insts = comp_expr.insts;
 
     if let Some(loc) = loc {
-        let loc = i8::to_le_bytes(loc as i8)[0];
-        let size = type_size_nocheck(&comp_expr.ty);
-        insts.push_inst(opcode::LOAD_REF, loc);
-        insts.push_inst(opcode::STORE, size as u8);
-        insts.push_inst(opcode::LOAD_REF, loc);
+        push_store_insts(&mut insts, loc, &comp_expr.ty);
+        insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
     }
 
     if should_deref {
@@ -221,10 +224,8 @@ pub fn subscript(loc: Option<isize>, should_deref: bool, expr: ExprInfo, subscri
     let mut insts = expr.insts;
 
     if let Some(loc) = loc {
-        let loc = i8::to_le_bytes(loc as i8)[0];
-        insts.push_inst(opcode::LOAD_REF, loc);
-        insts.push_inst(opcode::STORE, type_size_nocheck(&expr.ty) as u8);
-        insts.push_inst(opcode::LOAD_REF, loc);
+        push_store_insts(&mut insts, loc, &expr.ty);
+        insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
     }
 
     if should_deref {
@@ -363,8 +364,7 @@ pub fn address(expr: ExprInfo) -> InstList {
 
 pub fn address_no_lvalue(expr: ExprInfo, loc: isize) -> InstList {
     let mut insts = expr.insts;
-    insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
-    insts.push_inst(opcode::STORE, type_size_nocheck(&expr.ty) as u8);
+    push_store_insts(&mut insts, loc, &expr.ty);
     insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
     insts.push_inst_noarg(opcode::POINTER);
     insts
@@ -444,8 +444,7 @@ pub fn while_stmt(cond: ExprInfo, body: InstList) -> InstList {
 pub fn bind_stmt(loc: isize, expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
-    insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
-    insts.push_inst(opcode::STORE, type_size_nocheck(&expr.ty) as u8);
+    push_store_insts(&mut insts, loc, &expr.ty);
     insts
 }
 
@@ -463,8 +462,7 @@ pub fn return_stmt(loc: isize, expr: Option<ExprInfo>, return_ty: &Type) -> Inst
     if let Some(expr) = expr {
         insts.append(expr.insts);
         push_copy_inst(&mut insts, return_ty);
-        insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
-        insts.push_inst(opcode::STORE, type_size_nocheck(return_ty) as u8);
+        push_store_insts(&mut insts, loc, return_ty);
     }
 
     insts.push_inst_noarg(opcode::RETURN);
