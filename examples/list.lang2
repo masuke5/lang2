@@ -1,55 +1,47 @@
-type Node struct {
-    value: int,
-    next: *Node,
+type Node<T> struct {
+    value: T,
+    next: *Node<T>,
 };
 
-type List struct {
-    head: *Node,
+type List<T> struct {
+    front: *mut Node<T>,
+    back: *mut Node<T>,
+    len: int,
 };
 
-fn list_new(): List {
-    return List:{
-        head: __null__,
+fn list_new<T>(): List<T> {
+    return List:<T>{
+        front: __null__,
+        back: __null__,
+        len: 0,
     };
 }
 
-fn list_push_front(list: *mut List, n: int) {
-    let new_node = new Node:{
-        value: n,
-        next: list.head,
+fn list_push_front<T>(l: *mut List<T>, value: T) {
+    l.front := new Node:<T>{
+        value: value,
+        next: l.front,
     };
-
-    list.head := new_node;
+    l.len := l.len + 1;
 }
 
-fn list_pop_front(list: *mut List) {
-    list.head := list.head.next;
+fn list_pop_front<T>(l: *mut List<T>) {
+    l.front := l.front.next;
+    l.len := l.len - 1;
 }
 
-fn _list_print(node: *Node) {
-    if node.next <> __null__ {
-        _list_print(node.next);
-    }
+let mut list = list_new.<int>();
+list_push_front(&mut list, 9031);
+list_push_front(&mut list, 931);
+list_push_front(&mut list, 9);
+list_push_front(&mut list, 91);
+list_pop_front(&mut list);
 
+let mut node = list.front;
+while node <> __null__ {
     printnln(node.value);
+    node := node.next;
 }
 
-fn list_print(list: *List) {
-    if list.head <> __null__ {
-        _list_print(list.head);
-    }
-}
-
-let mut list = list_new();
-
-list_push_front(&mut list, 1);
-list_push_front(&mut list, 2);
-list_push_front(&mut list, 3);
-list_push_front(&mut list, 4);
-list_push_front(&mut list, 5);
-list_push_front(&mut list, 6);
-
-list_pop_front(&mut list);
-list_pop_front(&mut list);
-
-list_print(&list);
+print("len: ");
+printnln(list.len);
