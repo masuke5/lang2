@@ -719,6 +719,20 @@ impl<'a> Analyzer<'a> {
                     }
                 }
 
+                fn insert_type(param_ty: &Type, ty: &Type, map: &mut FxHashMap<TypeVar, Type>) {
+                    match (param_ty, ty) {
+                        (Type::App(ptycon, ptypes), Type::App(atycon, atypes)) if ptycon == atycon => {
+                            for (pty, aty) in ptypes.iter().zip(atypes.iter()) {
+                                insert_type(pty, aty, map);
+                            }
+                        },
+                        (Type::Var(var), ty) if !map.contains_key(var) => {
+                            map.insert(*var, ty.clone());
+                        },
+                        _ => {},
+                    }
+                }
+
                 subst_param(&mut params, &mut return_ty, &map);
 
                 // Check parameter length
@@ -735,30 +749,9 @@ impl<'a> Analyzer<'a> {
                 for (i, arg) in args.into_iter().enumerate() {
                     let arg = self.walk_expr_with_conversion(code, arg, &params[i]);
                     if let Some(arg) = arg {
-                        let needs_to_unify = match &params[i] {
-                            Type::App(TypeCon::Wrapped, types) => {
-                                if let Type::Var(var) = &types[0] {
-                                    if !map.contains_key(var) {
-                                        let ty = match &arg.ty {
-                                            Type::App(TypeCon::Wrapped, types) => &types[0],
-                                            _ => panic!("not wrapped"),
-                                        };
-                                        map.insert(*var, ty.clone());
-                                        subst_param(&mut params, &mut return_ty, &map);
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                } else { true }
-                            },
-                            _ => {
-                                true
-                            },
-                        };
-
-                        if needs_to_unify {
-                            unify(&mut self.errors, &arg.span, &arg.ty, &params[i]);
-                        }
+                        insert_type(&params[i], &arg.ty, &mut map);
+                        subst_param(&mut params, &mut return_ty, &map);
+                        unify(&mut self.errors, &arg.span, &arg.ty, &params[i]);
 
                         insts.push(arg);
                     }

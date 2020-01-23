@@ -302,7 +302,7 @@ test_eq("call with instantiation 1", 139857, value);
 let tuple = f2((31847, 138947));
 test_eq("call with instantiation 2", 170794, tuple.0 + tuple.1);
 
-let aaa = f3.<A<*string>>((
+let aaa = f3((
     921303124,
     A:<*string>{ b: "abc", c: 123 },
     A:<*string>{ b: "def", c: 456 },
