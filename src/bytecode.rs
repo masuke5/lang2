@@ -48,6 +48,7 @@ pub mod opcode {
     pub const TINY_INT: u8 = 0x24;
     pub const WRAP: u8 = 0x25;
     pub const UNWRAP: u8 = 0x26;
+    pub const CONST_OFFSET: u8 = 0x27;
 
     pub const END: u8 = 0x50;
 }
@@ -67,6 +68,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::NEGATIVE => "NEGATIVE",
         opcode::COPY => "COPY",
         opcode::OFFSET => "OFFSET",
+        opcode::CONST_OFFSET => "CONST_OFFSET",
         opcode::DUPLICATE => "DUPLICATE",
         opcode::LOAD_REF => "LOAD_REF",
         opcode::LOAD_COPY => "LOAD_COPY",
@@ -285,6 +287,7 @@ impl Bytecode {
             opcode::NEGATIVE => println!(),
             opcode::COPY => println!("size={}", arg),
             opcode::OFFSET => println!(),
+            opcode::CONST_OFFSET => println!("{}", arg),
             opcode::DUPLICATE => {
                 let value = self.read_u64(ref_start + arg as usize * 8);
                 let size = (value >> 32) as usize; // upper 32 bits

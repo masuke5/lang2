@@ -400,6 +400,13 @@ impl VM {
                     let new_ptr = unsafe { ptr.add(offset as usize) };
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
                 },
+                opcode::CONST_OFFSET => {
+                    let offset = arg as usize;
+
+                    let ptr = self.stack[self.sp].as_ptr::<Value>();
+                    let new_ptr = unsafe { ptr.add(offset as usize) };
+                    self.stack[self.sp] = Value::new_ptr(new_ptr);
+                },
                 opcode::DUPLICATE => {
                     let value = self.get_ref_value_u64(&bytecode, arg);
                     let size = (value >> 32) as usize; // upper 32 bits

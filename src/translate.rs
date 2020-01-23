@@ -77,7 +77,7 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
             let arg = (loc << 3) | size as i8;
             insts.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
         },
-        opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET => {
+        opcode::LOAD_REF | opcode::DEREFERENCE | opcode::OFFSET | opcode::CONST_OFFSET => {
             insts.push_inst(opcode::COPY, size as u8);
         },
         _ => {},
@@ -208,13 +208,7 @@ pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset
     }
 
     if offset > 0 {
-        if let Ok(offset) = offset.try_into() {
-            insts.push_inst(opcode::TINY_INT, offset);
-        } else {
-            insts.push_inst_ref(opcode::INT, offset as i64);
-        }
-
-        insts.push_inst_noarg(opcode::OFFSET);
+        insts.push_inst(opcode::CONST_OFFSET, offset as u8);
     }
 
     insts
