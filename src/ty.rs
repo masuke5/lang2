@@ -201,14 +201,23 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 
 pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()> {
     match (a, b) {
-        (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) if a_tycon == b_tycon => {
-            if a_tycon == b_tycon {
+        (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) => {
+            let ok = match (a_tycon, b_tycon) {
+                (TypeCon::Pointer(false), TypeCon::Pointer(false)) => true,
+                (TypeCon::Pointer(true), TypeCon::Pointer(false)) => false,
+                (TypeCon::Pointer(false), TypeCon::Pointer(true)) => true,
+                (TypeCon::Pointer(true), TypeCon::Pointer(true)) => true,
+                (a, b) if a == b => true,
+                _ => false,
+            };
+
+            if ok {
                 for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
                     unify(errors, span, a_ty, b_ty)?;
                 }
-
-                return Some(());
             }
+
+            return Some(());
         },
         _ => {},
     };
