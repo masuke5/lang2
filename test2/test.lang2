@@ -273,7 +273,7 @@ type Node<T> struct {
 };
 
 let node = Node:<int> {
-    value: Value:<int> {
+    value: Value: {
         v: 12410943,
         next: __null__,
     },
@@ -304,7 +304,7 @@ test_eq("call with instantiation 2", 170794, tuple.0 + tuple.1);
 
 let aaa = f3((
     921303124,
-    A:<*string>{ b: "abc", c: 123 },
+    A:{ b: "abc", c: 123 },
     A:<*string>{ b: "def", c: 456 },
 ));
 test_eq("call with instantiation 3", 702, aaa.0.c + aaa.1.c + aaa.2.c);

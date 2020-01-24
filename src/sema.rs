@@ -333,6 +333,20 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn insert_type_param(param_ty: &Type, ty: &Type, map: &mut FxHashMap<TypeVar, Type>) {
+        match (param_ty, ty) {
+            (Type::App(ptycon, ptypes), Type::App(atycon, atypes)) if ptycon == atycon => {
+                for (pty, aty) in ptypes.iter().zip(atypes.iter()) {
+                    Self::insert_type_param(pty, aty, map);
+                }
+            },
+            (Type::Var(var), ty) if !map.contains_key(var) => {
+                map.insert(*var, ty.clone());
+            },
+            _ => {},
+        }
+    }
+
     fn walk_expr_with_conversion(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>, ty: &Type) -> Option<ExprInfo> {
         match ty {
             Type::App(TypeCon::Wrapped, _) => {
@@ -443,37 +457,62 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Struct(ty, field_exprs) => {
                 let ty = self.walk_type(ty)?;
-                let expr_ty = ty.clone();
+                let mut expr_ty = ty.clone();
 
                 let ty = self.expand_name(ty)?;
+
+                let ty_params = match ty.clone() {
+                    Type::App(TypeCon::Unique(box TypeCon::Fun(params, _), _), _) => params,
+                    _ => panic!(),
+                };
+
                 let ty = expand_unique(ty);
                 let ty = expand_wrap(ty);
                 let ty = subst(ty, &FxHashMap::default());
 
-                let fields = match ty {
-                    Type::App(TypeCon::Struct(fields), tys) => fields.into_iter().zip(tys.into_iter()),
+                let mut fields: Vec<(Id, Type)> = match ty {
+                    Type::App(TypeCon::Struct(fields), tys) => fields.into_iter().zip(tys.into_iter()).collect(),
                     ty => {
-                        error!(self, expr.span.clone(), "expected struct but got type `{}`", ty);
+                        error!(self, expr.span.clone(), "type `{}` is not struct", ty);
                         return None;
                     },
                 };
 
                 let mut insts = InstList::new();
+                let mut map = FxHashMap::default();
 
                 // Push instructions to `insts` in order
-                for (field_id, field_ty) in fields {
-                    let field_expr = field_exprs.iter().find(|(id, _)| id.kind == field_id);
-                    match field_expr {
-                        Some((_, expr)) => {
-                            if let Some(expr) = self.walk_expr_with_conversion(code, expr.clone(), &field_ty) {
-                                unify(&mut self.errors, &expr.span, &field_ty, &expr.ty);
-                                insts.append(translate::literal_struct_field(expr));
+                for i in 0..fields.len() {
+                    let field_expr = field_exprs.iter().find(|(id, _)| id.kind == fields[i].0).map(|(_, expr)| expr);
+                    if let Some(expr) = field_expr {
+                        if let Some(expr) = self.walk_expr_with_conversion(code, expr.clone(), &fields[i].1) {
+                            Self::insert_type_param(&fields[i].1, &expr.ty, &mut map);
+                            for (_, ty) in &mut fields {
+                                *ty = subst(ty.clone(), &map);
                             }
-                        },
-                        None => {
-                            error!(self, expr.span.clone(), "missing field `{}`", IdMap::name(field_id));
-                        },
+
+                            unify(&mut self.errors, &expr.span, &fields[i].1, &expr.ty);
+                            insts.append(translate::literal_struct_field(expr));
+                        }
+                    } else {
+                        error!(self, expr.span.clone(), "missing field `{}`", IdMap::name(fields[i].0));
                     }
+                }
+
+                let args: Vec<Type> = ty_params.into_iter()
+                    .map(|var| map.get(&var).cloned().unwrap_or(Type::Var(var)))
+                    .collect();
+                match &mut expr_ty {
+                    Type::App(_, types) => {
+                        if types.len() < args.len() {
+                            for arg in args.into_iter().skip(types.len()) {
+                                types.push(arg);
+                            }
+                        } else if types.len() > args.len() {
+                            panic!();
+                        }
+                    },
+                    _ => panic!(),
                 }
 
                 (insts, expr_ty)
@@ -719,20 +758,6 @@ impl<'a> Analyzer<'a> {
                     }
                 }
 
-                fn insert_type(param_ty: &Type, ty: &Type, map: &mut FxHashMap<TypeVar, Type>) {
-                    match (param_ty, ty) {
-                        (Type::App(ptycon, ptypes), Type::App(atycon, atypes)) if ptycon == atycon => {
-                            for (pty, aty) in ptypes.iter().zip(atypes.iter()) {
-                                insert_type(pty, aty, map);
-                            }
-                        },
-                        (Type::Var(var), ty) if !map.contains_key(var) => {
-                            map.insert(*var, ty.clone());
-                        },
-                        _ => {},
-                    }
-                }
-
                 subst_param(&mut params, &mut return_ty, &map);
 
                 // Check parameter length
@@ -749,7 +774,7 @@ impl<'a> Analyzer<'a> {
                 for (i, arg) in args.into_iter().enumerate() {
                     let arg = self.walk_expr_with_conversion(code, arg, &params[i]);
                     if let Some(arg) = arg {
-                        insert_type(&params[i], &arg.ty, &mut map);
+                        Self::insert_type_param(&params[i], &arg.ty, &mut map);
                         subst_param(&mut params, &mut return_ty, &map);
                         unify(&mut self.errors, &arg.span, &arg.ty, &params[i]);
 
