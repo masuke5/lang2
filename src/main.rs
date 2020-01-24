@@ -75,6 +75,14 @@ fn print_errors(input: &str, errors: Vec<Error>) {
 }
 
 fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>> {
+    fn ok_if_empty(errors: Vec<Error>) -> Result<(), Vec<Error>> {
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
     let enable_trace = matches.is_present("trace");
     let enable_measure = matches.is_present("measure");
     if !cfg!(debug_assertions) && (enable_measure || enable_trace) {
@@ -85,18 +93,29 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // Lex
     let lexer = Lexer::new(input, file);
-    let tokens = lexer.lex()?;
+    let (tokens, mut errors) = lexer.lex();
     if matches.is_present("dump-token") {
         dump_token(tokens);
-        exit(0);
+        return ok_if_empty(errors);
     }
 
     // Parse
     let parser = Parser::new(tokens);
-    let program = parser.parse()?;
+    let program = match parser.parse() {
+        Ok(p) => p,
+        Err(mut perrors) => {
+            errors.append(&mut perrors);
+            return Err(errors);
+        },
+    };
+
     if matches.is_present("dump-ast") {
         dump_ast(&program);
-        exit(0);
+        return ok_if_empty(errors);
+    }
+
+    if !errors.is_empty() {
+        return Err(errors);
     }
 
     // let stdlib_funcs = stdlib::functions();
@@ -108,7 +127,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     if matches.is_present("dump-insts") {
         bytecode.dump();
-        exit(0);
+        return Ok(());
     }
 
     // Execute the bytecode

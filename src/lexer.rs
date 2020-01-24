@@ -269,7 +269,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn lex(mut self) -> Result<Vec<Spanned<Token>>, Vec<Error>> {
+    pub fn lex(mut self) -> (Vec<Spanned<Token>>, Vec<Error>) {
         let mut tokens = Vec::new();
 
         self.skip_whitespace();
@@ -299,11 +299,7 @@ impl<'a> Lexer<'a> {
             end_col: 0,
         }));
 
-        if !self.errors.is_empty() {
-            Err(self.errors)
-        } else {
-            Ok(tokens)
-        }
+        (tokens, self.errors)
     }
 }
 
@@ -316,7 +312,7 @@ mod tests {
     fn invalid_character() {
         let file = IdMap::new_id("test.lang2");
         let lexer = Lexer::new("あ あ", file);
-        let errors = lexer.lex().unwrap_err();
+        let (_, errors) = lexer.lex();
         let expected = vec![
             Error::new("Invalid character `あ`", Span {
                 file,
@@ -354,7 +350,9 @@ mod tests {
         let lexer = Lexer::new(r#"let b = 1 + 2
 678 * (345 - 10005) /123 + abc
 "abcあいうえお\n\t""#, IdMap::new_id("test.lang2"));
-        let tokens = lexer.lex().unwrap();
+        let (tokens, errors) = lexer.lex();
+        assert!(errors.is_empty());
+
         let expected = vec![
             new(Token::Let,                 0,  0, 0,  3),
             new(Token::Identifier(IdMap::new_id("b")), 0,  4, 0,  5),
