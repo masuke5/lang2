@@ -1,6 +1,6 @@
 use std::fmt;
-use crate::id::Id;
-use crate::span::{Spanned};
+use crate::id::{Id, IdMap};
+use crate::span::Spanned;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -101,9 +101,20 @@ impl fmt::Display for Token {
     }
 }
 
+impl Token {
+    fn detail(&self) -> String {
+        match self {
+            Token::Number(n) => format!("{}", n),
+            Token::Identifier(id) => format!("`{}`", IdMap::name(*id)),
+            Token::String(s) => format!("\"{}\"", s),
+            token => format!("{}", token),
+        }
+    }
+}
+
 pub fn dump_token(tokens: Vec<Spanned<Token>>) {
     for token in tokens {
-        println!("{} {}:{}-{}:{}", token.kind, token.span.start_line, token.span.start_col, token.span.end_line, token.span.end_col);
+        println!("{} {}:{}-{}:{}", token.kind.detail(), token.span.start_line, token.span.start_col, token.span.end_line, token.span.end_col);
     }
 }
 
