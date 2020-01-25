@@ -1033,7 +1033,7 @@ impl<'a> Analyzer<'a> {
         self.type_sizes.insert(tydef.name, size);
     }
 
-    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
+    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction, param_sizes: &FxHashMap<Id, usize>) {
         self.current_func = func.name;
 
         self.push_scope();
@@ -1060,7 +1060,10 @@ impl<'a> Analyzer<'a> {
             return;
         }
 
-        code.begin_function(func.name);
+        // Create Function for the bytecode
+        let bc_func = Function::new(func.name, param_sizes[&func.name]);
+        code.begin_function(bc_func);
+
         // `None` is not returned because `func.body` is always a block statement
         let mut insts = self.walk_stmt(code, func.body).unwrap();
 
@@ -1084,7 +1087,7 @@ impl<'a> Analyzer<'a> {
     //  Header
     // =================================
 
-    fn insert_function_header(&mut self, code: &mut BytecodeBuilder, func: &AstFunction) {
+    fn insert_function_header(&mut self, func: &AstFunction, param_sizes: &mut FxHashMap<Id, usize>) {
         self.push_type_scope();
 
         let mut vars = Vec::new();
@@ -1107,6 +1110,8 @@ impl<'a> Analyzer<'a> {
             param_types.push(ty);
         }
 
+        param_sizes.insert(func.name, param_size);
+
         let return_ty_span = func.return_ty.span.clone();
         let mut return_ty = match self.walk_type(func.return_ty.clone()) {
             Some(ty) => ty,
@@ -1126,14 +1131,10 @@ impl<'a> Analyzer<'a> {
             ty_params: vars,
         };
         self.function_headers.insert(func.name, header);
-
-        // Insert function
-        let func = Function::new(func.name, param_size);
-        code.new_function(func);
     }
 
     pub fn analyze(mut self, program: Program) -> Result<Bytecode, Vec<Error>> {
-        let mut code = BytecodeBuilder::new(&program.strings, &[&self.std_module]);
+        let mut code = BytecodeBuilder::new();
 
         // Insert main function header
         let header = FunctionHeader {
@@ -1142,10 +1143,6 @@ impl<'a> Analyzer<'a> {
             ty_params: Vec::new(),
         };
         self.function_headers.insert(self.main_func_id, header);
-
-        // Insert main function
-        let func = Function::new(self.main_func_id, 0);
-        code.new_function(func);
 
         self.push_scope();
         self.push_type_scope();
@@ -1176,18 +1173,19 @@ impl<'a> Analyzer<'a> {
         }
 
         // Insert function headers
+        let mut param_sizes = FxHashMap::default();
         for func in &program.functions {
-            self.insert_function_header(&mut code, func);
+            self.insert_function_header(func, &mut param_sizes);
         }
-        code.end_new_function();
 
         // Function body
         for func in program.functions {
-            self.walk_function(&mut code, func);
+            self.walk_function(&mut code, func, &param_sizes);
         }
 
         // Main statements
-        code.begin_function(self.main_func_id);
+        let func = Function::new(self.main_func_id, 0);
+        code.begin_main_function(func);
         let mut insts = InstList::new();
         for stmt in program.main_stmts {
             if let Some(stmt_insts) = self.walk_main_stmt(&mut code, stmt) {
@@ -1202,7 +1200,7 @@ impl<'a> Analyzer<'a> {
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(code.build())
+            Ok(code.build(&program.strings, &[&self.std_module]))
         }
     }
 }

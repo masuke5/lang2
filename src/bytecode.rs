@@ -559,35 +559,20 @@ pub struct BytecodeBuilder {
 
     functions: HashMap<Id, Function>,
     current_func_id: Option<Id>,
-    next_func_id: u16,
-
-    funcmap_start: u16,
-    string_map_start: u16,
-    module_map_start: u16,
+    func_count: usize,
 }
 
 impl BytecodeBuilder {
-    pub fn new(strings: &[String], modules: &[&ModuleHeader]) -> Self {
+    pub fn new() -> Self {
         let mut code = Bytecode::new();
         code.push_header();
 
-        let mut slf = BytecodeBuilder {
+        BytecodeBuilder {
             code,
             functions: HashMap::new(),
             current_func_id: None,
-            next_func_id: 0,
-            funcmap_start: 0,
-            string_map_start: 16,
-            module_map_start: 0,
-        };
-        slf.write_strings(strings);
-        slf.write_modules(modules);
-
-        // Write function map start
-        slf.funcmap_start = slf.code.len() as u16;
-        slf.code.write_u16(POS_FUNC_MAP_START, slf.funcmap_start as u16);
-
-        slf
+            func_count: 0,
+        }
     }
 
     fn write_strings(&mut self, strings: &[String]) {
@@ -596,17 +581,21 @@ impl BytecodeBuilder {
         }
 
         self.code.write_u8(POS_STRING_COUNT, strings.len() as u8);
-        self.code.write_u16(POS_STRING_MAP_START, self.code.len() as u16);
+
+        let string_map_start = self.code.len();
+        self.code.write_u16(POS_STRING_MAP_START, string_map_start as u16);
+
+        type StringId = u16;
 
         // Reserve for string map
-        self.code.reserve(strings.len() * 2);
+        self.code.reserve(strings.len() * mem::size_of::<StringId>());
 
         // Write strings
         self.code.align(8);
 
         for (i, string) in strings.iter().enumerate() {
             // Write the string location to string map
-            self.code.write_u16(self.string_map_start as usize + i * 2, self.code.len() as u16);
+            self.code.write_u16(string_map_start + i * mem::size_of::<StringId>(), self.code.len() as u16);
 
             // Write the string length and bytes
             self.code.push_u64(string.len() as u64);
@@ -625,14 +614,16 @@ impl BytecodeBuilder {
 
         self.code.align(8);
 
-        self.module_map_start = self.code.len() as u16;
-        self.code.write_u16(POS_MODULE_MAP_START, self.code.len() as u16);
+        let module_map_start = self.code.len();
+        self.code.write_u16(POS_MODULE_MAP_START, module_map_start as u16);
 
-        self.code.reserve(modules.len() * 2);
+        type ModuleId = u16;
+
+        self.code.reserve(modules.len() * mem::size_of::<ModuleId>());
         self.code.align(8);
 
         for (id, module) in modules.iter().enumerate() {
-            self.code.write_u16(self.module_map_start as usize + id * 2, self.code.len() as u16);
+            self.code.write_u16(module_map_start + id * mem::size_of::<ModuleId>(), self.code.len() as u16);
 
             let module_name = IdMap::name(module.id);
 
@@ -643,38 +634,51 @@ impl BytecodeBuilder {
         }
     }
 
+    fn write_funcs(&mut self) {
+        self.code.align(8);
+
+        // Write function map start
+        self.code.write_u16(POS_FUNC_MAP_START, self.code.len() as u16);
+        // Write the number of functions
+        self.code.write_u8(POS_FUNC_COUNT, self.func_count as u8);
+
+        let mut functions: Vec<Function> = self.functions.values().cloned().collect();
+        functions.sort_by_key(|f| f.code_id);
+
+        for func in &functions {
+            self.code.push_u16(func.code_id);
+            self.code.push_u8(func.stack_size);
+            self.code.push_u8(func.param_size);
+            self.code.push_u16(func.pos);
+            self.code.push_u16(func.ref_start);
+        }
+    }
+
     // Function
 
-    pub fn new_function(&mut self, mut func: Function) {
-        if self.next_func_id > std::u16::MAX {
+    pub fn begin_function(&mut self, func: Function) {
+        self.begin_function_inner(self.func_count as u16 + 1, func);
+    }
+
+    pub fn begin_main_function(&mut self, func: Function) {
+        self.begin_function_inner(0, func);
+    }
+
+    fn begin_function_inner(&mut self, id: u16, mut func: Function) {
+        if self.func_count > std::u16::MAX as usize {
             panic!("too many functions");
         }
 
-        // Generate ID and set it
-        let id = self.next_func_id;
-        func.code_id = id;
-        self.next_func_id += 1;
+        self.func_count += 1;
 
-        self.functions.insert(func.name, func);
+        self.current_func_id = Some(func.name);
 
-        // Reserve for function infomations
-        self.code.push_u16(id);
-        self.code.reserve(6);
-    }
-
-    pub fn end_new_function(&mut self) {
-        self.code.align(8);
-
-        // Set function count
-        self.code.write_u8(POS_FUNC_COUNT, self.functions.len() as u8);
-    }
-
-    pub fn begin_function(&mut self, id: Id) {
-        let func = self.functions.get_mut(&id).unwrap();
-        // Set function position in bytecode
+        // Set the function position in the bytecode
         func.pos = self.code.len() as u16;
 
-        self.current_func_id = Some(id);
+        // Set ID
+        func.code_id = id;
+        self.functions.insert(func.name, func);
     }
 
     pub fn end_function(&mut self, func_id: Id, mut insts: InstList) {
@@ -695,15 +699,7 @@ impl BytecodeBuilder {
             self.code.push_u64(int_ref);
         }
 
-        // Set function infomations
-        let func = self.get_function(func_id).unwrap().clone();
-        let base = self.funcmap_start as usize + func.code_id as usize * 8;
-        self.code.write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
-        self.code.write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
-        self.code.write_u16(base + FUNC_OFFSET_POS, func.pos);
-        self.code.write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
-
-        // Clear some fields for a next function
+        // Clear a field for a next function
         self.current_func_id = None;
     }
 
@@ -719,7 +715,11 @@ impl BytecodeBuilder {
         self.functions.get_mut(self.current_func_id.as_ref().unwrap()).unwrap()
     }
 
-    pub fn build(self) -> Bytecode {
+    pub fn build(mut self, strings: &[String], modules: &[&ModuleHeader]) -> Bytecode {
+        self.write_strings(strings);
+        self.write_modules(modules);
+        self.write_funcs();
+
         self.code
     }
 }
