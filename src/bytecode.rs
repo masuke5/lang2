@@ -558,7 +558,6 @@ pub struct BytecodeBuilder {
     pub code: Bytecode,
 
     functions: HashMap<Id, Function>,
-    current_func_id: Option<Id>,
     func_count: usize,
 }
 
@@ -570,7 +569,6 @@ impl BytecodeBuilder {
         BytecodeBuilder {
             code,
             functions: HashMap::new(),
-            current_func_id: None,
             func_count: 0,
         }
     }
@@ -656,33 +654,23 @@ impl BytecodeBuilder {
 
     // Function
 
-    pub fn begin_function(&mut self, func: Function) {
-        self.begin_function_inner(self.func_count as u16 + 1, func);
-    }
-
-    pub fn begin_main_function(&mut self, func: Function) {
-        self.begin_function_inner(0, func);
-    }
-
-    fn begin_function_inner(&mut self, id: u16, mut func: Function) {
+    pub fn push_function_header(&mut self, mut func: Function) {
         if self.func_count > std::u16::MAX as usize {
             panic!("too many functions");
         }
 
-        self.func_count += 1;
-
-        self.current_func_id = Some(func.name);
-
-        // Set the function position in the bytecode
-        func.pos = self.code.len() as u16;
-
         // Set ID
-        func.code_id = id;
+        func.code_id = self.func_count as u16;
         self.functions.insert(func.name, func);
+
+        self.func_count += 1;
     }
 
-    pub fn end_function(&mut self, func_id: Id, mut insts: InstList) {
+    pub fn push_function_body(&mut self, func_id: Id, mut insts: InstList) {
         insts.push_inst_noarg(opcode::END);
+
+        let func = self.functions.get_mut(&func_id).expect("the function header must be added");
+        func.pos = self.code.len() as u16;
 
         // Write instruction bytes
         for inst in &insts.insts {
@@ -691,28 +679,20 @@ impl BytecodeBuilder {
 
         self.code.align(8);
 
-        let func = self.functions.get_mut(&func_id).unwrap();
         func.ref_start = self.code.len() as u16;
 
         // Push refs
         for int_ref in insts.refs.drain(..) {
             self.code.push_u64(int_ref);
         }
-
-        // Clear a field for a next function
-        self.current_func_id = None;
     }
 
     pub fn get_function(&self, id: Id) -> Option<&Function> {
         self.functions.get(&id)
     }
 
-    pub fn current_func(&self) -> &Function {
-        self.functions.get(self.current_func_id.as_ref().unwrap()).unwrap()
-    }
-
-    pub fn current_func_mut(&mut self) -> &mut Function {
-        self.functions.get_mut(self.current_func_id.as_ref().unwrap()).unwrap()
+    pub fn get_function_mut(&mut self, id: Id) -> Option<&mut Function> {
+        self.functions.get_mut(&id)
     }
 
     pub fn build(mut self, strings: &[String], modules: &[&ModuleHeader]) -> Bytecode {

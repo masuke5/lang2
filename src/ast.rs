@@ -81,6 +81,7 @@ pub enum Stmt {
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Spanned<Expr>),
+    FnDef(Box<AstFunction>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -109,7 +110,6 @@ pub struct AstTypeDef {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
     pub main_stmts: Vec<Spanned<Stmt>>,
-    pub functions: Vec<AstFunction>,
     pub types: Vec<AstTypeDef>,
     pub strings: Vec<String>,
 }
@@ -314,6 +314,32 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             dump_expr(&cond, strings, depth + 1);
             dump_stmt(&body, strings, depth + 1);
         },
+        Stmt::FnDef(func) => {
+            print!("fn {}", IdMap::name(func.name));
+
+            if !func.ty_params.is_empty() {
+                print!("<");
+
+                let mut iter = func.ty_params.iter();
+                let first = iter.next().unwrap();
+                print!("{}", IdMap::name(first.kind));
+                for var in iter {
+                    print!(", {}", IdMap::name(var.kind));
+                }
+
+                print!(">");
+            }
+
+            println!("({}): {}",
+                func.params
+                .iter()
+                .map(|p| format!("{}{}: {}", if p.is_mutable { "mut " } else { "" }, IdMap::name(p.name), p.ty.kind))
+                .collect::<Vec<String>>()
+                .join(", "),
+                func.return_ty.kind,
+            );
+            dump_stmt(&func.body, strings, 1);
+        },
     }
 }
 
@@ -332,32 +358,5 @@ pub fn dump_ast(program: &Program) {
 
     for stmt in &program.main_stmts {
         dump_stmt(&stmt, &program.strings, 0);
-    }
-
-    for func in &program.functions {
-        print!("fn {}", IdMap::name(func.name));
-
-        if !func.ty_params.is_empty() {
-            print!("<");
-
-            let mut iter = func.ty_params.iter();
-            let first = iter.next().unwrap();
-            print!("{}", IdMap::name(first.kind));
-            for var in iter {
-                print!(", {}", IdMap::name(var.kind));
-            }
-
-            print!(">");
-        }
-
-        println!("({}): {}",
-            func.params
-                .iter()
-                .map(|p| format!("{}{}: {}", if p.is_mutable { "mut " } else { "" }, IdMap::name(p.name), p.ty.kind))
-                .collect::<Vec<String>>()
-                .join(", "),
-            func.return_ty.kind,
-        );
-        dump_stmt(&func.body, &program.strings, 1);
     }
 }

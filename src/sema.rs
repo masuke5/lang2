@@ -1,3 +1,4 @@
+use std::collections::LinkedList;
 use std::mem;
 
 use rustc_hash::FxHashMap;
@@ -114,6 +115,7 @@ pub struct Analyzer<'a> {
     next_temp_num: u32,
     next_unique: u32,
     std_module: ModuleHeader,
+    function_insts: LinkedList<(Id, InstList)>,
     _phantom: &'a std::marker::PhantomData<Self>,
 }
 
@@ -135,6 +137,7 @@ impl<'a> Analyzer<'a> {
             next_temp_num: 0,
             next_unique: 0,
             std_module,
+            function_insts: LinkedList::new(),
             _phantom: &std::marker::PhantomData,
         }
     }
@@ -250,6 +253,11 @@ impl<'a> Analyzer<'a> {
         last_map.insert(id, Variable::new(ty.clone(), is_mutable, loc));
 
         loc
+    }
+
+    #[inline]
+    fn new_var_in_current_func(&mut self, code: &mut BytecodeBuilder, id: Id, ty: Type, is_mutable: bool) -> isize {
+        self.new_var(code.get_function_mut(self.current_func).unwrap(), id, ty, is_mutable)
     }
 
     fn gen_temp_id(&mut self) -> Id {
@@ -533,7 +541,7 @@ impl<'a> Analyzer<'a> {
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
-                    Some(self.new_var(code.current_func_mut(), id, comp_expr.ty.clone(), false))
+                    Some(self.new_var_in_current_func(code, id, comp_expr.ty.clone(), false))
                 } else {
                     None
                 };
@@ -600,7 +608,7 @@ impl<'a> Analyzer<'a> {
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
-                    Some(self.new_var(code.current_func_mut(), id, expr.ty.clone(), false))
+                    Some(self.new_var_in_current_func(code, id, expr.ty.clone(), false))
                 } else {
                     None
                 };
@@ -797,7 +805,7 @@ impl<'a> Analyzer<'a> {
 
                 if !expr.is_lvalue {
                     let temp = self.gen_temp_id();
-                    let loc = self.new_var(code.current_func_mut(), temp, expr.ty.clone(), is_mutable);
+                    let loc = self.new_var_in_current_func(code, temp, expr.ty.clone(), is_mutable);
 
                     let insts = translate::address_no_lvalue(expr, loc);
                     (insts, ty)
@@ -882,19 +890,14 @@ impl<'a> Analyzer<'a> {
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
-                let mut insts = InstList::new();
-                for stmt in stmts {
-                    if let Some(t) = self.walk_stmt(code, stmt) {
-                        insts.append(t);
-                    }
-                }
+                let insts = self.walk_stmts_including_func(code, stmts);
                 self.pop_scope();
 
                 insts
             },
             Stmt::Bind(name, expr, is_mutable) => {
                 let expr = self.walk_expr(code, expr)?;
-                let loc = self.new_var(code.current_func_mut(), name, expr.ty.clone(), is_mutable);
+                let loc = self.new_var_in_current_func(code, name, expr.ty.clone(), is_mutable);
 
                 translate::bind_stmt(loc, expr)
             },
@@ -917,7 +920,7 @@ impl<'a> Analyzer<'a> {
                 translate::assign_stmt(lhs, rhs)
             },
             Stmt::Return(expr) => {
-                let func_name = code.current_func().name;
+                let func_name = code.get_function(self.current_func).unwrap().name;
 
                 // Check if is outside function
                 if func_name == self.main_func_id {
@@ -940,9 +943,37 @@ impl<'a> Analyzer<'a> {
 
                 translate::return_stmt(loc, expr, &ty)
             },
+            Stmt::FnDef(_) => InstList::new(),
         };
 
         Some(insts)
+    }
+
+    fn walk_stmts_including_func(&mut self, code: &mut BytecodeBuilder, stmts: Vec<Spanned<Stmt>>) -> InstList {
+        // Insert function headers
+        for stmt in &stmts {
+            if let Stmt::FnDef(func) = &stmt.kind {
+                self.insert_function_header(code, &func);
+            }
+        }
+
+        // Walk the statements
+        let mut insts = InstList::new();
+        for stmt in &stmts {
+            let stmt_insts = self.walk_stmt(code, stmt.clone()); // TODO: Avoid clone()
+            if let Some(stmt_insts) = stmt_insts {
+                insts.append(stmt_insts);
+            }
+        }
+
+        // Walk the function bodies in the statements
+        for stmt in stmts {
+            if let Stmt::FnDef(func) = stmt.kind {
+                self.walk_function(code, *func);
+            }
+        }
+
+        insts
     }
 
     fn walk_type(&mut self, ty: Spanned<AstType>) -> Option<Type> {
@@ -1033,7 +1064,7 @@ impl<'a> Analyzer<'a> {
         self.type_sizes.insert(tydef.name, size);
     }
 
-    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction, param_sizes: &FxHashMap<Id, usize>) {
+    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
         self.current_func = func.name;
 
         self.push_scope();
@@ -1060,10 +1091,6 @@ impl<'a> Analyzer<'a> {
             return;
         }
 
-        // Create Function for the bytecode
-        let bc_func = Function::new(func.name, param_sizes[&func.name]);
-        code.begin_function(bc_func);
-
         // `None` is not returned because `func.body` is always a block statement
         let mut insts = self.walk_stmt(code, func.body).unwrap();
 
@@ -1073,21 +1100,17 @@ impl<'a> Analyzer<'a> {
             insts.push_inst_noarg(opcode::RETURN);
         }
 
-        code.end_function(func.name, insts);
+        self.function_insts.push_back((func.name, insts));
 
         self.pop_type_scope();
         self.pop_scope();
-    }
-
-    fn walk_main_stmt(&mut self, code: &mut BytecodeBuilder, stmt: Spanned<Stmt>) -> Option<InstList> {
-        self.walk_stmt(code, stmt)
     }
 
     // =================================
     //  Header
     // =================================
 
-    fn insert_function_header(&mut self, func: &AstFunction, param_sizes: &mut FxHashMap<Id, usize>) {
+    fn insert_function_header(&mut self, code: &mut BytecodeBuilder, func: &AstFunction) {
         self.push_type_scope();
 
         let mut vars = Vec::new();
@@ -1110,8 +1133,6 @@ impl<'a> Analyzer<'a> {
             param_types.push(ty);
         }
 
-        param_sizes.insert(func.name, param_size);
-
         let return_ty_span = func.return_ty.span.clone();
         let mut return_ty = match self.walk_type(func.return_ty.clone()) {
             Some(ty) => ty,
@@ -1131,6 +1152,10 @@ impl<'a> Analyzer<'a> {
             ty_params: vars,
         };
         self.function_headers.insert(func.name, header);
+
+        // Create a function for the bytecode
+        let bc_func = Function::new(func.name, param_size);
+        code.push_function_header(bc_func);
     }
 
     pub fn analyze(mut self, program: Program) -> Result<Bytecode, Vec<Error>> {
@@ -1143,6 +1168,9 @@ impl<'a> Analyzer<'a> {
             ty_params: Vec::new(),
         };
         self.function_headers.insert(self.main_func_id, header);
+
+        let func = Function::new(self.main_func_id, 0);
+        code.push_function_header(func);
 
         self.push_scope();
         self.push_type_scope();
@@ -1172,30 +1200,16 @@ impl<'a> Analyzer<'a> {
             }
         }
 
-        // Insert function headers
-        let mut param_sizes = FxHashMap::default();
-        for func in &program.functions {
-            self.insert_function_header(func, &mut param_sizes);
-        }
-
-        // Function body
-        for func in program.functions {
-            self.walk_function(&mut code, func, &param_sizes);
-        }
-
         // Main statements
-        let func = Function::new(self.main_func_id, 0);
-        code.begin_main_function(func);
-        let mut insts = InstList::new();
-        for stmt in program.main_stmts {
-            if let Some(stmt_insts) = self.walk_main_stmt(&mut code, stmt) {
-                insts.append(stmt_insts);
-            }
-        }
-        code.end_function(self.main_func_id, insts);
+        let insts = self.walk_stmts_including_func(&mut code, program.main_stmts);
+        self.function_insts.push_front((self.main_func_id, insts));
 
         self.pop_scope();
         self.pop_type_scope();
+
+        for (name, insts) in self.function_insts {
+            code.push_function_body(name, insts);
+        }
 
         if !self.errors.is_empty() {
             Err(self.errors)

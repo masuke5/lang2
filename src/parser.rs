@@ -23,7 +23,6 @@ pub struct Parser {
     errors: Vec<Error>,
 
     main_stmts: Vec<Spanned<Stmt>>,
-    functions: Vec<AstFunction>,
     types: Vec<AstTypeDef>,
     strings: Vec<String>,
 }
@@ -35,7 +34,6 @@ impl Parser {
             pos: 0,
             errors: Vec::new(),
             main_stmts: Vec::new(),
-            functions: Vec::new(),
             types: Vec::new(),
             strings: Vec::new(),
         }
@@ -686,6 +684,12 @@ impl Parser {
             Token::Return => self.parse_return(),
             Token::If => self.parse_if_stmt(),
             Token::While => self.parse_while_stmt(),
+            Token::Fn => {
+                let fn_span = token.span.clone();
+                let func = self.parse_fn_decl()?;
+                let span = Span::merge(&fn_span, &self.prev().span);
+                Some(spanned(Stmt::FnDef(Box::new(func)), span))
+            },
             _ => self.parse_expr_stmt(),
         }
     }
@@ -1009,10 +1013,6 @@ impl Parser {
 
     fn parse_toplevel(&mut self) -> Option<()> {
         match self.peek().kind {
-            Token::Fn => {
-                let func = self.parse_fn_decl()?;
-                self.functions.push(func);
-            },
             Token::Type => {
                 let tydef = self.parse_def_type()?;
                 self.types.push(tydef);
@@ -1039,7 +1039,6 @@ impl Parser {
             Err(self.errors)
         } else {
             Ok(Program {
-                functions: self.functions,
                 types: self.types,
                 main_stmts: self.main_stmts,
                 strings: self.strings,
