@@ -24,23 +24,17 @@ pub enum Module {
     Native(Vec<(usize, NativeFunctionBody)>), // parameter size, function pointer
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionHeader {
     pub params: Vec<Type>,
     pub return_ty: Type,
     pub ty_params: Vec<(Id, TypeVar)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModuleHeader {
     pub id: Id,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
-}
-
-impl ModuleHeader {
-    pub fn find_func(&self, id: Id) -> Option<&(u16, FunctionHeader)> {
-        self.functions.get(&id)
-    }
 }
 
 pub fn find_module_file(current_module: &Path, module_name: &str) -> Option<PathBuf> {

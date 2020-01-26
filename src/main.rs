@@ -128,7 +128,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     // Analyze semantics and translate to a bytecode
 
     let analyzer = Analyzer::new();
-    let bytecode = analyzer.analyze(program, std_module_header)?;
+    let (bytecode, _) = analyzer.analyze(program, std_module_header)?;
 
     if matches.is_present("dump-insts") {
         bytecode.dump();

@@ -1172,34 +1172,32 @@ impl<'a> Analyzer<'a> {
         Some((header, bc_func))
     }
 
-    pub fn load_modules(&mut self, code: &mut BytecodeBuilder, modules: &FxHashMap<Id, Program>) -> FxHashMap<Id, (u16, ModuleHeader)> {
+    pub fn load_modules(&mut self, code: &mut BytecodeBuilder, modules: FxHashMap<Id, Program>, std_module: ModuleHeader) -> FxHashMap<Id, (u16, ModuleHeader)> {
         let mut headers = FxHashMap::default();
         for (name, program) in modules {
             // Get function headers in the module
-            let mut func_headers: FxHashMap<Id, (u16, FunctionHeader)> = FxHashMap::default();
-            for stmt in &program.main_stmts {
-                if let Stmt::FnDef(func) = &stmt.kind {
-                    if let Some((header, _)) = self.generate_function_header(&func) {
-                        func_headers.insert(func.name, (func_headers.len() as u16, header));
-                    }
-                } else {
-                    unimplemented!();
-                }
-            }
+            let analyzer = Analyzer::new();
+            let (_, func_headers) = match analyzer.analyze(program, std_module.clone()) {
+                Ok(t) => t,
+                Err(mut errors) => {
+                    self.errors.append(&mut errors);
+                    continue;
+                },
+            };
 
             let module_header = ModuleHeader {
-                id: *name,
+                id: name,
                 functions: func_headers,
             };
 
-            let module_id = code.push_module(&IdMap::name(*name));
-            headers.insert(*name, (module_id, module_header));
+            let module_id = code.push_module(&IdMap::name(name));
+            headers.insert(name, (module_id, module_header));
         }
 
         headers
     }
 
-    pub fn analyze(mut self, program: Program, std_module: ModuleHeader) -> Result<Bytecode, Vec<Error>> {
+    pub fn analyze(mut self, program: Program, std_module: ModuleHeader) -> Result<(Bytecode, FxHashMap<Id, (u16, FunctionHeader)>), Vec<Error>> {
         assert!(self.module_headers.is_empty());
         assert!(self.function_headers.is_empty());
 
@@ -1220,7 +1218,7 @@ impl<'a> Analyzer<'a> {
         self.push_type_scope();
 
         let std_module_id = code.push_module(&IdMap::name(std_module.id));
-        self.module_headers = self.load_modules(&mut code, &program.modules_to_import);
+        self.module_headers = self.load_modules(&mut code, program.modules_to_import, std_module.clone());
         self.module_headers.insert(std_module.id, (std_module_id, std_module));
 
         // Type definition
@@ -1259,10 +1257,18 @@ impl<'a> Analyzer<'a> {
             code.push_function_body(name, insts);
         }
 
+        let func_headers: FxHashMap<Id, (u16, FunctionHeader)> = self.function_headers
+            .into_iter()
+            .map(|(name, header)| (
+                name,
+                (code.get_function(name).unwrap().code_id, header),
+            ))
+            .collect();
+
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(code.build(&program.strings))
+            Ok((code.build(&program.strings), func_headers))
         }
     }
 }
