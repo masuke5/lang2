@@ -1,10 +1,16 @@
 use std::convert::TryFrom;
+use std::path::{Path, PathBuf};
+use std::io;
+use std::fs;
+
+use rustc_hash::FxHashMap;
 
 use crate::span::{Span, Spanned};
 use crate::error::Error;
 use crate::token::*;
 use crate::ast::*;
-use crate::id::Id;
+use crate::id::{Id, IdMap};
+use crate::module;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
@@ -16,8 +22,29 @@ macro_rules! error {
     };
 }
 
+fn parse_module<P: AsRef<Path>>(module_file: P) -> Result<Result<Program, Vec<Error>>, io::Error> {
+    use crate::lexer::Lexer;
+
+    let module_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
+
+    let raw = fs::read_to_string(&module_file)?;
+
+    let lexer = Lexer::new(&raw, module_id);
+    let (tokens, mut errors_when_lex) = lexer.lex();
+
+    let parser = Parser::new(module_file.as_ref(), tokens);
+    match parser.parse() {
+        Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
+        Ok(_) => Ok(Err(errors_when_lex)),
+        Err(mut errors) => {
+            errors_when_lex.append(&mut errors);
+            Ok(Err(errors_when_lex))
+        },
+    }
+}
 
 pub struct Parser {
+    file_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
     errors: Vec<Error>,
@@ -25,17 +52,20 @@ pub struct Parser {
     main_stmts: Vec<Spanned<Stmt>>,
     types: Vec<AstTypeDef>,
     strings: Vec<String>,
+    modules_to_import: FxHashMap<Id, Program>,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Spanned<Token>>) -> Parser {
+    pub fn new(file_path: &Path, tokens: Vec<Spanned<Token>>) -> Parser {
         Self {
+            file_path: file_path.into(),
             tokens,
             pos: 0,
             errors: Vec::new(),
             main_stmts: Vec::new(),
             types: Vec::new(),
             strings: Vec::new(),
+            modules_to_import: FxHashMap::default(),
         }
     }
 
@@ -675,6 +705,27 @@ impl Parser {
         Some(spanned(Stmt::While(cond?, Box::new(stmt)), span))
     }
 
+    fn parse_import_stmt(&mut self) -> Option<Spanned<Stmt>> {
+        let import_token_span = self.peek().span.clone();
+        self.next();
+
+        let module_name = self.expect_identifier(&[Token::Semicolon])?;
+        let module_name = spanned(module_name, self.prev().span.clone());
+
+        // Parse the module file if the module is not native
+        if let Some(module_file) = module::find_module_file(&self.file_path, &IdMap::name(module_name.kind)) {
+            match parse_module(&module_file).unwrap() { // TODO: Avoid unwrap()
+                Ok(program) => { self.modules_to_import.insert(module_name.kind, program); },
+                Err(mut errors) => self.errors.append(&mut errors),
+            }
+        }
+
+        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+
+        let span = Span::merge(&import_token_span, &self.prev().span);
+        Some(spanned(Stmt::Import(module_name), span))
+    }
+
     fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let token = self.peek();
 
@@ -684,6 +735,7 @@ impl Parser {
             Token::Return => self.parse_return(),
             Token::If => self.parse_if_stmt(),
             Token::While => self.parse_while_stmt(),
+            Token::Import => self.parse_import_stmt(),
             Token::Fn => {
                 let fn_span = token.span.clone();
                 let func = self.parse_fn_decl()?;
@@ -1042,6 +1094,7 @@ impl Parser {
                 types: self.types,
                 main_stmts: self.main_stmts,
                 strings: self.strings,
+                modules_to_import: self.modules_to_import,
             })
         }
     }

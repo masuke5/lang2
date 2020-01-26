@@ -22,6 +22,8 @@ use std::process::exit;
 use std::fs::File;
 use std::io::Read;
 use std::borrow::Cow;
+use std::path::PathBuf;
+use std::env;
 
 use lexer::Lexer;
 use token::dump_token;
@@ -74,7 +76,7 @@ fn print_errors(input: &str, errors: Vec<Error>) {
     }
 }
 
-fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>> {
+fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBuf>) -> Result<(), Vec<Error>> {
     fn ok_if_empty(errors: Vec<Error>) -> Result<(), Vec<Error>> {
         if errors.is_empty() {
             Ok(())
@@ -91,6 +93,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     let (std_module, std_module_header) = stdlib::module();
 
+    let pwd = env::current_dir().expect("Unable to get current directory");
+    let file_path = file_path.unwrap_or(PathBuf::from(pwd).join("cmd"));
+
     // Lex
     let lexer = Lexer::new(input, file);
     let (tokens, mut errors) = lexer.lex();
@@ -100,7 +105,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     }
 
     // Parse
-    let parser = Parser::new(tokens);
+    let parser = Parser::new(&file_path, tokens);
     let program = match parser.parse() {
         Ok(p) => p,
         Err(mut perrors) => {
@@ -122,8 +127,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
 
     // Analyze semantics and translate to a bytecode
 
-    let analyzer = Analyzer::new(std_module_header);
-    let bytecode = analyzer.analyze(program)?;
+    let analyzer = Analyzer::new();
+    let bytecode = analyzer.analyze(program, std_module_header)?;
 
     if matches.is_present("dump-insts") {
         bytecode.dump();
@@ -137,17 +142,17 @@ fn execute(matches: &ArgMatches, input: &str, file: Id) -> Result<(), Vec<Error>
     Ok(())
 }
 
-fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>), String> {
-    if let Some(filepath) = matches.value_of("file") {
-        let mut file = File::open(filepath).map_err(|err| format!("{}", err))?;
+fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>, Option<PathBuf>), String> {
+    if let Some(filepath_str) = matches.value_of("file") {
+        let mut file = File::open(filepath_str).map_err(|err| format!("{}", err))?;
         let mut input = String::new();
         file.read_to_string(&mut input).map_err(|err| format!("{}", err))?;
 
-        let filepath = IdMap::new_id(&filepath);
+        let filepath = IdMap::new_id(&filepath_str);
 
-        Ok((filepath, input.into()))
+        Ok((filepath, input.into(), Some(PathBuf::from(filepath_str))))
     } else if let Some(input) = matches.value_of("cmd") {
-        Ok((IdMap::new_id("cmd"), input.into()))
+        Ok((IdMap::new_id("$cmd"), input.into(), None))
     } else {
         Err(String::from("Not specified file or cmd"))
     }
@@ -185,7 +190,7 @@ fn main() {
              .help("Measures the performance"))
         .get_matches();
 
-    let (file, input) = match get_input(&matches) {
+    let (file, input, file_path) = match get_input(&matches) {
         Ok(t) => t,
         Err(err) => {
             eprintln!("Unable to load input: {}", err);
@@ -193,7 +198,7 @@ fn main() {
         },
     };
 
-    if let Err(errors) = execute(&matches, &input, file) {
+    if let Err(errors) = execute(&matches, &input, file, file_path) {
         print_errors(&input, errors);
         exit(1);
     }

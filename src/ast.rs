@@ -1,5 +1,7 @@
 use std::fmt;
 
+use rustc_hash::FxHashMap;
+
 use crate::span::Spanned;
 use crate::id::{Id, IdMap};
 use crate::utils::{escape_string, span_to_string};
@@ -81,6 +83,7 @@ pub enum Stmt {
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Spanned<Expr>),
+    Import(Spanned<Id>),
     FnDef(Box<AstFunction>),
 }
 
@@ -112,6 +115,7 @@ pub struct Program {
     pub main_stmts: Vec<Spanned<Stmt>>,
     pub types: Vec<AstTypeDef>,
     pub strings: Vec<String>,
+    pub modules_to_import: FxHashMap<Id, Program>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -231,7 +235,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             dump_expr(&rhs, strings, depth + 1);
         },
         Expr::Call(name, args, tyargs) => {
-            print!("{}", IdMap::name(*name));
+            print!("call {}", IdMap::name(*name));
 
             if !args.is_empty() {
                 print!(".<");
@@ -287,6 +291,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             dump_expr(&rhs, strings, depth + 1);
         },
         Stmt::Expr(expr) => {
+            print!("\r");
             dump_expr(&expr, strings, depth);
         },
         Stmt::Block(stmts) => {
@@ -340,10 +345,21 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             );
             dump_stmt(&func.body, strings, 1);
         },
+        Stmt::Import(name) => {
+            println!("import {} {}", IdMap::name(name.kind), span_to_string(&stmt.span));
+        },
     }
 }
 
-pub fn dump_ast(program: &Program) {
+pub fn dump_program(program: &Program, depth: usize) {
+    // Print indent
+    print!("{}", "  ".repeat(depth));
+
+    for (module_name, program) in &program.modules_to_import {
+        println!("module {}", IdMap::name(*module_name));
+        dump_program(program, depth + 1);
+    }
+
     for ty in &program.types {
         println!("type {}<{}> {}",
             IdMap::name(ty.name), 
@@ -359,4 +375,8 @@ pub fn dump_ast(program: &Program) {
     for stmt in &program.main_stmts {
         dump_stmt(&stmt, &program.strings, 0);
     }
+}
+
+pub fn dump_ast(program: &Program) {
+    dump_program(program, 0);
 }

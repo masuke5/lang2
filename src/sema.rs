@@ -104,6 +104,7 @@ impl Variable {
 #[derive(Debug)]
 pub struct Analyzer<'a> {
     function_headers: FxHashMap<Id, FunctionHeader>,
+    module_headers: FxHashMap<Id, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
     type_sizes: HashMapWithScope<Id, usize>,
@@ -114,18 +115,18 @@ pub struct Analyzer<'a> {
     current_func: Id,
     next_temp_num: u32,
     next_unique: u32,
-    std_module: ModuleHeader,
     function_insts: LinkedList<(Id, InstList)>,
     _phantom: &'a std::marker::PhantomData<Self>,
 }
 
 impl<'a> Analyzer<'a> {
-    pub fn new(std_module: ModuleHeader) -> Self {
+    pub fn new() -> Self {
         let main_func_id = IdMap::new_id("$main");
         let return_value_id = IdMap::new_id("$rv");
 
         Self {
             function_headers: FxHashMap::default(),
+            module_headers: FxHashMap::default(),
             variables: Vec::with_capacity(5),
             types: HashMapWithScope::new(),
             tycons: HashMapWithScope::new(),
@@ -136,7 +137,6 @@ impl<'a> Analyzer<'a> {
             current_func: main_func_id, 
             next_temp_num: 0,
             next_unique: 0,
-            std_module,
             function_insts: LinkedList::new(),
             _phantom: &std::marker::PhantomData,
         }
@@ -290,6 +290,20 @@ impl<'a> Analyzer<'a> {
         for variables in self.variables.iter().rev() {
             if let Some(var) = variables.get(&id) {
                 return Some(var);
+            }
+        }
+
+        None
+    }
+
+    fn find_func(&self, code: &BytecodeBuilder, id: Id) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
+        if let Some(fh) = self.function_headers.get(&id) {
+            return Some((fh, code.get_function(id).unwrap().code_id, None));
+        }
+
+        for (module_id, module) in self.module_headers.values() {
+            if let Some((func_id, fh)) = module.functions.get(&id) {
+                return Some((fh, *func_id, Some(*module_id)));
             }
         }
 
@@ -727,15 +741,11 @@ impl<'a> Analyzer<'a> {
                 (translate::binop(binop, lhs, rhs), ty)
             },
             Expr::Call(name, args, ty_args) => {
-                let (callee_func, code_id, module_id) = match self.function_headers.get(&name) {
-                    Some(func) => (func, code.get_function(name).unwrap().code_id, None),
+                let (callee_func, code_id, module_id) = match self.find_func(code, name) {
+                    Some(func) => func,
                     None => {
-                        if let Some((id, func)) = self.std_module.find_func(name) {
-                            (func, *id, Some(0))
-                        } else {
-                            error!(self, expr.span.clone(), "undefined function");
-                            return None;
-                        }
+                        error!(self, expr.span.clone(), "undefined function");
+                        return None;
                     },
                 };
 
@@ -943,6 +953,7 @@ impl<'a> Analyzer<'a> {
 
                 translate::return_stmt(loc, expr, &ty)
             },
+            Stmt::Import(_) => InstList::new(),
             Stmt::FnDef(_) => InstList::new(),
         };
 
@@ -953,7 +964,10 @@ impl<'a> Analyzer<'a> {
         // Insert function headers
         for stmt in &stmts {
             if let Stmt::FnDef(func) = &stmt.kind {
-                self.insert_function_header(code, &func);
+                if let Some((header, func)) = self.generate_function_header(&func) {
+                    self.function_headers.insert(func.name, header);
+                    code.push_function_header(func);
+                }
             }
         }
 
@@ -1110,7 +1124,7 @@ impl<'a> Analyzer<'a> {
     //  Header
     // =================================
 
-    fn insert_function_header(&mut self, code: &mut BytecodeBuilder, func: &AstFunction) {
+    fn generate_function_header(&mut self, func: &AstFunction) -> Option<(FunctionHeader, Function)> {
         self.push_type_scope();
 
         let mut vars = Vec::new();
@@ -1125,7 +1139,7 @@ impl<'a> Analyzer<'a> {
             let ty_span = ty.span.clone();
             let mut ty = match self.walk_type(ty.clone()) {
                 Some(ty) => ty,
-                None => return,
+                None => return None,
             };
             wrap_typevar(&mut ty);
 
@@ -1136,7 +1150,7 @@ impl<'a> Analyzer<'a> {
         let return_ty_span = func.return_ty.span.clone();
         let mut return_ty = match self.walk_type(func.return_ty.clone()) {
             Some(ty) => ty,
-            None => return,
+            None => return None,
         };
 
         wrap_typevar(&mut return_ty);
@@ -1151,14 +1165,39 @@ impl<'a> Analyzer<'a> {
             return_ty,
             ty_params: vars,
         };
-        self.function_headers.insert(func.name, header);
 
         // Create a function for the bytecode
         let bc_func = Function::new(func.name, param_size);
-        code.push_function_header(bc_func);
+
+        Some((header, bc_func))
     }
 
-    pub fn analyze(mut self, program: Program) -> Result<Bytecode, Vec<Error>> {
+    pub fn load_modules(&mut self, modules: &FxHashMap<Id, Program>) -> FxHashMap<Id, (u16, ModuleHeader)> {
+        let mut headers = FxHashMap::default();
+        for (name, program) in modules {
+            // Get function headers in the module
+            let mut func_headers: FxHashMap<Id, (u16, FunctionHeader)> = FxHashMap::default();
+            for stmt in &program.main_stmts {
+                if let Stmt::FnDef(func) = &stmt.kind {
+                    if let Some((header, _)) = self.generate_function_header(&func) {
+                        func_headers.insert(func.name, (func_headers.len() as u16, header));
+                    }
+                } else {
+                    unimplemented!();
+                }
+            }
+
+            let module_header = ModuleHeader {
+                id: *name,
+                functions: func_headers,
+            };
+            headers.insert(*name, (headers.len() as u16, module_header));
+        }
+
+        headers
+    }
+
+    pub fn analyze(mut self, program: Program, std_module: ModuleHeader) -> Result<Bytecode, Vec<Error>> {
         let mut code = BytecodeBuilder::new();
 
         // Insert main function header
@@ -1174,6 +1213,9 @@ impl<'a> Analyzer<'a> {
 
         self.push_scope();
         self.push_type_scope();
+
+        self.module_headers = self.load_modules(&program.modules_to_import);
+        self.module_headers.insert(std_module.id, (0, std_module));
 
         // Type definition
         for tydef in &program.types {
@@ -1214,7 +1256,11 @@ impl<'a> Analyzer<'a> {
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(code.build(&program.strings, &[&self.std_module]))
+            let mut modules: Vec<&(u16, ModuleHeader)> = self.module_headers.values().collect();
+            modules.sort_by_key(|(id, _)| id);
+            let modules: Vec<&ModuleHeader> = modules.iter().rev().map(|(_, m)| m).collect();
+
+            Ok(code.build(&program.strings, &modules[..]))
         }
     }
 }
