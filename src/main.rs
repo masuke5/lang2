@@ -35,6 +35,7 @@ use id::{Id, IdMap};
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
+use rustc_hash::FxHashMap;
 
 fn print_errors(input: &str, errors: Vec<Error>) {
     let input: Vec<&str> = input.lines().collect();
@@ -128,7 +129,11 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     // Analyze semantics and translate to a bytecode
 
     let analyzer = Analyzer::new();
-    let (bytecode, _) = analyzer.analyze(program, std_module_header)?;
+    let mut module_bytecodes: FxHashMap<String, sema::AnalyzerResult> = FxHashMap::default();
+    let (bytecode, _) = analyzer.analyze(program, std_module_header, &mut module_bytecodes)?;
+    for name in module_bytecodes.keys() {
+        println!("{}", name);
+    }
 
     if matches.is_present("dump-insts") {
         bytecode.dump();
