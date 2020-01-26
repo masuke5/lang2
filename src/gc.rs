@@ -6,11 +6,8 @@ use std::ffi::c_void;
 use libc;
 use crate::value::Value;
 
-#[derive(Debug)]
 #[repr(C)]
 pub struct GcRegion {
-    // first bit: this region is marked or not
-    // second bit: this region consists of Value
     bits: u8,
     pub size: usize,
     data: [c_void; 0],
@@ -33,12 +30,15 @@ impl Drop for GcRegion {
 }
 
 impl GcRegion {
+    const IS_MARKED: u8 = 1;
+    const CONSISTS_OF_VALUE: u8 = 1 << 1;
+
     fn new(size: usize, consists_of_value: bool) -> NonNull<Self> {
         let ptr = unsafe {
             let ptr = libc::malloc(mem::size_of::<Self>() + size) as *mut Self;
             (*ptr).size = size;
             (*ptr).bits = if consists_of_value {
-                0b01000000
+                Self::CONSISTS_OF_VALUE
             } else {
                 0
             };
@@ -50,19 +50,19 @@ impl GcRegion {
     }
 
     fn mark(&mut self) {
-        self.bits |= 0b10000000;
+        self.bits |= Self::IS_MARKED;
     }
 
     fn unmark(&mut self) {
-        self.bits &= !0b10000000;
+        self.bits &= !Self::IS_MARKED;
     }
 
     fn is_marked(&self) -> bool {
-        (self.bits & 0b10000000) != 0
+        (self.bits & Self::IS_MARKED) != 0
     }
 
     fn consists_of_value(&self) -> bool {
-        (self.bits & 0b01000000) != 0
+        (self.bits & Self::CONSISTS_OF_VALUE) != 0
     }
 
     #[allow(dead_code)]
