@@ -3,9 +3,8 @@ use std::ptr;
 use std::str;
 use std::collections::{LinkedList, HashMap};
 
-use crate::id::{Id, IdMap};
+use crate::id::Id;
 use crate::utils;
-use crate::module::ModuleHeader;
 
 #[allow(dead_code)]
 pub mod opcode {
@@ -559,6 +558,7 @@ pub struct BytecodeBuilder {
 
     functions: HashMap<Id, Function>,
     func_count: usize,
+    modules: Vec<String>,
 }
 
 impl BytecodeBuilder {
@@ -570,6 +570,7 @@ impl BytecodeBuilder {
             code,
             functions: HashMap::new(),
             func_count: 0,
+            modules: Vec::new(),
         }
     }
 
@@ -603,12 +604,13 @@ impl BytecodeBuilder {
         }
     }
 
-    fn write_modules(&mut self, modules: &[&ModuleHeader]) {
-        if modules.len() > 0b1111 {
+    fn write_modules(&mut self) {
+        // Limit to 4 bits for CALL_EXTERN
+        if self.modules.len() > 0b1111 {
             panic!("too many modules");
         }
 
-        self.code.write_u8(POS_MODULE_COUNT, modules.len() as u8);
+        self.code.write_u8(POS_MODULE_COUNT, self.modules.len() as u8);
 
         self.code.align(8);
 
@@ -617,16 +619,14 @@ impl BytecodeBuilder {
 
         type ModuleId = u16;
 
-        self.code.reserve(modules.len() * mem::size_of::<ModuleId>());
+        self.code.reserve(self.modules.len() * mem::size_of::<ModuleId>());
         self.code.align(8);
 
-        for (id, module) in modules.iter().enumerate() {
+        for (id, name) in self.modules.iter().enumerate() {
             self.code.write_u16(module_map_start + id * mem::size_of::<ModuleId>(), self.code.len() as u16);
 
-            let module_name = IdMap::name(module.id);
-
-            self.code.push_u16(module_name.len() as u16);
-            self.code.push_bytes(module_name.as_bytes());
+            self.code.push_u16(name.len() as u16);
+            self.code.push_bytes(name.as_bytes());
 
             self.code.align(8);
         }
@@ -695,9 +695,14 @@ impl BytecodeBuilder {
         self.functions.get_mut(&id)
     }
 
-    pub fn build(mut self, strings: &[String], modules: &[&ModuleHeader]) -> Bytecode {
+    pub fn push_module(&mut self, name: &str) -> u16 {
+        self.modules.push(name.to_string());
+        self.modules.len() as u16 - 1
+    }
+
+    pub fn build(mut self, strings: &[String]) -> Bytecode {
         self.write_strings(strings);
-        self.write_modules(modules);
+        self.write_modules();
         self.write_funcs();
 
         self.code

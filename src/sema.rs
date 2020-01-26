@@ -1172,7 +1172,7 @@ impl<'a> Analyzer<'a> {
         Some((header, bc_func))
     }
 
-    pub fn load_modules(&mut self, modules: &FxHashMap<Id, Program>) -> FxHashMap<Id, (u16, ModuleHeader)> {
+    pub fn load_modules(&mut self, code: &mut BytecodeBuilder, modules: &FxHashMap<Id, Program>) -> FxHashMap<Id, (u16, ModuleHeader)> {
         let mut headers = FxHashMap::default();
         for (name, program) in modules {
             // Get function headers in the module
@@ -1191,13 +1191,18 @@ impl<'a> Analyzer<'a> {
                 id: *name,
                 functions: func_headers,
             };
-            headers.insert(*name, (headers.len() as u16, module_header));
+
+            let module_id = code.push_module(&IdMap::name(*name));
+            headers.insert(*name, (module_id, module_header));
         }
 
         headers
     }
 
     pub fn analyze(mut self, program: Program, std_module: ModuleHeader) -> Result<Bytecode, Vec<Error>> {
+        assert!(self.module_headers.is_empty());
+        assert!(self.function_headers.is_empty());
+
         let mut code = BytecodeBuilder::new();
 
         // Insert main function header
@@ -1214,8 +1219,9 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
         self.push_type_scope();
 
-        self.module_headers = self.load_modules(&program.modules_to_import);
-        self.module_headers.insert(std_module.id, (0, std_module));
+        let std_module_id = code.push_module(&IdMap::name(std_module.id));
+        self.module_headers = self.load_modules(&mut code, &program.modules_to_import);
+        self.module_headers.insert(std_module.id, (std_module_id, std_module));
 
         // Type definition
         for tydef in &program.types {
@@ -1256,11 +1262,7 @@ impl<'a> Analyzer<'a> {
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            let mut modules: Vec<&(u16, ModuleHeader)> = self.module_headers.values().collect();
-            modules.sort_by_key(|(id, _)| id);
-            let modules: Vec<&ModuleHeader> = modules.iter().rev().map(|(_, m)| m).collect();
-
-            Ok(code.build(&program.strings, &modules[..]))
+            Ok(code.build(&program.strings))
         }
     }
 }
