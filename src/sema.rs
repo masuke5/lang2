@@ -174,7 +174,7 @@ impl<'a> Analyzer<'a> {
 
     // Insert parameters and return value as variables to `self.variables`
     fn insert_params(&mut self, params: Vec<Param>, return_ty: &Type) -> Option<()> {
-        let mut loc = -3isize; // fp, ip
+        let mut loc = -4isize; // fp, ip
         for Param { name, ty, is_mutable } in params.into_iter().rev() {
             loc -= type_size_nocheck(&ty) as isize;
 

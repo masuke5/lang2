@@ -32,7 +32,7 @@ macro_rules! push {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Function {
     stack_size: usize,
     param_size: usize,
@@ -111,8 +111,10 @@ pub struct VM {
 
     stack: [Value; STACK_SIZE],
 
-    functions: Vec<Function>,
+    // global id -> all functions in the module
+    functions: Vec<Vec<Function>>,
     current_func: usize,
+    current_module: usize,
 }
 
 impl VM {
@@ -126,6 +128,7 @@ impl VM {
             stack: unsafe { mem::zeroed() },
             functions: Vec::new(),
             current_func: 0,
+            current_module: 0,
         }
     }
 
@@ -157,6 +160,7 @@ impl VM {
 
     fn dump_stack(&self, stop: usize) {
         let current_is_main = self.current_func == 0;
+        let saved_module_id = if !current_is_main { Some(self.fp - 4) } else { None };
         let saved_func_id = if !current_is_main { Some(self.fp - 3) } else { None };
         let saved_ip = if !current_is_main { Some(self.fp - 2) } else { None };
         let saved_fp = if !current_is_main { Some(self.fp - 1) } else { None };
@@ -173,6 +177,10 @@ impl VM {
 
             if Some(i) == saved_func_id {
                 print!("[fid] ");
+            }
+
+            if Some(i) == saved_module_id {
+                print!("[mid] ");
             }
 
             if Some(i) == saved_ip {
@@ -194,7 +202,9 @@ impl VM {
         println!("-------- END DUMP ----------");
     }
 
-    fn read_functions(&mut self, bytecode: &Bytecode) {
+    fn read_functions(&mut self, bytecode: &Bytecode, module_id: usize) {
+        assert!(module_id < self.functions.len());
+
         let func_map_start = bytecode.read_u16(bytecode::POS_FUNC_MAP_START) as usize;
         let func_count = bytecode.read_u8(bytecode::POS_FUNC_COUNT) as usize;
 
@@ -205,7 +215,7 @@ impl VM {
             let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as usize;
             let ref_start = bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START) as usize;
 
-            self.functions.push(Function {
+            self.functions[module_id].push(Function {
                 stack_size,
                 param_size,
                 pos,
@@ -214,7 +224,7 @@ impl VM {
         }
     }
 
-    fn read_modules(&mut self, bytecode: &Bytecode, all_module_id: &FxHashMap<String, usize>) -> Vec<usize> {
+    fn read_modules(&mut self, bytecode: &Bytecode, all_global_ids: &FxHashMap<String, usize>) -> Vec<usize> {
         let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START) as usize;
         let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT) as usize;
 
@@ -229,11 +239,37 @@ impl VM {
             bytecode.read_bytes(loc + 2, &mut buf[..]);
             let name = str::from_utf8(&buf[..]).expect("invalid module name");
 
-            let module_id = all_module_id[name];
-            modules.push(module_id);
+            let global_id = all_global_ids[name];
+            modules.push(global_id);
         }
 
         modules
+    }
+
+    fn current_func(&self) -> &Function {
+        &self.functions[self.current_module][self.current_func]
+    }
+
+    fn main_func(&self) -> &Function {
+        &self.functions[0][0]
+    }
+
+    fn call(&mut self, global_module_id: usize, func_id: usize) {
+        let func = &self.functions[global_module_id][func_id];
+
+        push!(self, Value::new_u64(self.current_module as u64));
+        push!(self, Value::new_u64(self.current_func as u64));
+        self.current_func = func_id;
+        self.current_module = global_module_id;
+
+        push!(self, Value::new_u64(self.ip as u64));
+        push!(self, Value::new_u64(self.fp as u64));
+
+        self.ip = func.pos;
+
+        // Allocate stack frame
+        self.fp = self.sp + 1;
+        self.sp += func.stack_size as usize;
     }
 
     #[inline]
@@ -248,57 +284,100 @@ impl VM {
 
     #[inline]
     fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8) -> i64 {
-        let ref_start = self.functions[self.current_func].ref_start;
+        let ref_start = self.current_func().ref_start;
         bytecode.read_i64(ref_start + ref_id as usize * 8)
     }
 
     #[inline]
     fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8) -> u64 {
-        let ref_start = self.functions[self.current_func].ref_start;
+        let ref_start = self.current_func().ref_start;
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
     
-    pub fn run(&mut self, bytecode: Bytecode, std_module: Module, enable_trace: bool, enable_measure: bool) {
+    pub fn run(&mut self, bytecode: Bytecode, std_module: Module, module_bytecodes: Vec<(String, Bytecode)>, enable_trace: bool, enable_measure: bool) {
         #[inline]
         fn ip_after_jump_to(ip: usize, loc: u8) -> usize {
             let loc = i8::from_le_bytes([loc]) as isize;
             (ip as isize - 2 + loc * 2) as usize
         }
 
-        // Module
-        let mut all_modules = vec![std_module];
+        // global id -> module
+        let mut all_modules = vec![Module::Normal, std_module];
+        for _ in &module_bytecodes {
+            all_modules.push(Module::Normal);
+        }
 
-        let mut all_module_id = FxHashMap::default();
-        all_module_id.insert(String::from("$std"), 0);
+        // module name -> global id
+        let mut module_global_ids = FxHashMap::default();
+        module_global_ids.insert(String::from("$main"), 0);
+        module_global_ids.insert(String::from("$std"), 1);
 
-        let modules = self.read_modules(&bytecode, &all_module_id);
+        let mut next_id = 2;
+        for (name, _) in &module_bytecodes {
+            module_global_ids.insert(name.clone(), next_id);
+            next_id += 1;
+        }
+
+        // global id -> bytecode
+        let mut bytecodes: Vec<Option<Bytecode>> = module_bytecodes.into_iter().map(|(_, bc)| Some(bc)).collect();
+        bytecodes.insert(0, None); // $std
+        bytecodes.insert(0, Some(bytecode)); // bytecode
+
+        // string map start per module
+        let mut string_map_start = Vec::with_capacity(all_modules.len());
+        for bytecode in &bytecodes {
+            if let Some(bytecode) = bytecode {
+                let sms = bytecode.read_u16(bytecode::POS_STRING_MAP_START) as usize;
+                string_map_start.push(Some(sms));
+            } else {
+                string_map_start.push(None);
+            }
+        }
+
+        self.functions.resize(all_modules.len(), Vec::new());
+
+        assert_eq!(all_modules.len(), module_global_ids.len());
+        assert_eq!(all_modules.len(), bytecodes.len());
+
+        let modules = self.read_modules(bytecodes[0].as_ref().unwrap(), &module_global_ids);
 
         // Function
-        self.read_functions(&bytecode);
+        for (global_module_id, bytecode) in bytecodes.iter().enumerate() {
+            if let Some(bytecode) = bytecode {
+                self.read_functions(bytecode, global_module_id);
+            }
+        }
+
         if self.functions.is_empty() {
             panic!("the bytecode need an entrypoint");
         }
 
-        let string_map_start = bytecode.read_u16(bytecode::POS_STRING_MAP_START) as usize;
-
         self.current_func = 0;
 
-        let func = &self.functions[0];
+        let func = self.main_func().clone();
         self.ip = func.pos;
         self.fp = 0;
         if func.stack_size > 0 {
             self.sp = func.stack_size as usize - 1;
         }
 
+        let mut current_bytecode = bytecodes[0].as_ref().unwrap();
+
         loop {
-            let [opcode, arg] = self.next_inst(&bytecode);
+            let [opcode, arg] = self.next_inst(current_bytecode);
             if opcode == opcode::END {
                 break;
             }
 
             if cfg!(debug_assertions) && enable_trace {
-                let func = &self.functions[self.current_func];
-                bytecode.dump_inst(opcode, arg, self.ip - 2, func.ref_start, string_map_start);
+                let func = self.current_func();
+                current_bytecode.dump_inst(
+                    opcode,
+                    arg,
+                    self.ip - 2,
+                    func.ref_start,
+                    string_map_start[self.current_module].unwrap()
+                );
             }
 
             if cfg!(debug_assertions) && enable_measure {
@@ -318,7 +397,7 @@ impl VM {
                     self.sp += count;
                 },
                 opcode::INT => {
-                    let value = self.get_ref_value_i64(&bytecode, arg);
+                    let value = self.get_ref_value_i64(current_bytecode, arg);
                     push!(self, Value::new_i64(value));
                 },
                 opcode::TINY_INT => {
@@ -326,10 +405,11 @@ impl VM {
                     push!(self, Value::new_i64(n as i64));
                 },
                 opcode::STRING => {
-                    let loc = bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
+                    let string_map_start = string_map_start[self.current_module].unwrap();
+                    let loc = current_bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 
                     // Read the string length
-                    let len = bytecode.read_u64(loc) as usize;
+                    let len = current_bytecode.read_u64(loc) as usize;
 
                     let size = len + size_of::<u64>();
                     let mut region = self.gc.alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
@@ -345,7 +425,7 @@ impl VM {
                         // Write the string bytes
                         let bytes_ptr = region.as_mut_ptr::<u8>().add(size_of::<u64>());
                         let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
-                        bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
+                        current_bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
                     }
 
                     unsafe {
@@ -408,7 +488,7 @@ impl VM {
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
                 },
                 opcode::DUPLICATE => {
-                    let value = self.get_ref_value_u64(&bytecode, arg);
+                    let value = self.get_ref_value_u64(current_bytecode, arg);
                     let size = (value >> 32) as usize; // upper 32 bits
                     let count = (value as u32) as usize; // lower 32 bits
 
@@ -538,29 +618,20 @@ impl VM {
                     push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
                 },
                 opcode::CALL => {
-                    let func = &self.functions[arg as usize];
-
-                    push!(self, Value::new_u64(self.current_func as u64));
-                    self.current_func = arg as usize;
-
-                    push!(self, Value::new_u64(self.ip as u64));
-                    push!(self, Value::new_u64(self.fp as u64));
-
-                    self.ip = func.pos;
-
-                    // Allocate stack frame
-                    self.fp = self.sp + 1;
-                    self.sp += func.stack_size as usize;
+                    self.call(self.current_module, arg as usize);
                 },
                 opcode::CALL_EXTERN => {
-                    let module_id = ((arg & 0b11110000) >> 4) as usize;
+                    let module_local_id = ((arg & 0b11110000) >> 4) as usize;
                     let func_id = (arg & 0b00001111) as usize;
 
-                    let actual_module_id = modules[module_id];
-                    let module = &mut all_modules[actual_module_id];
+                    let module_global_id = modules[module_local_id];
+                    let module = &mut all_modules[module_global_id];
 
                     match module {
-                        Module::Normal => unimplemented!(),
+                        Module::Normal => {
+                            current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
+                            self.call(module_global_id, func_id);
+                        },
                         Module::Native(funcs) => {
                             let (param_size, func) = &funcs[func_id];
 
@@ -581,11 +652,14 @@ impl VM {
 
                     self.ip = pop!(self).as_u64() as usize;
                     let prev_func = pop!(self).as_u64() as usize;
+                    let prev_module =  pop!(self).as_u64() as usize;
 
                     // Pop arguments
-                    self.sp -= self.functions[self.current_func].param_size as usize;
+                    self.sp -= self.current_func().param_size as usize;
 
                     self.current_func = prev_func;
+                    self.current_module = prev_module;
+                    current_bytecode = &bytecodes[self.current_module].as_ref().unwrap();
                 },
                 opcode::CALL_NATIVE => {
                     unimplemented!();
@@ -616,7 +690,7 @@ impl VM {
         }
 
         if cfg!(debug_assertions) {
-            let main_func_stack_size = self.functions[0].stack_size as usize;
+            let main_func_stack_size = self.main_func().stack_size as usize;
             if (main_func_stack_size != 0 || self.sp != 0) && self.sp != main_func_stack_size - 1 {
                 self.dump_stack(self.sp);
                 eprintln!("warning: expected sp {}, but sp is {}.", main_func_stack_size - 1, self.sp);

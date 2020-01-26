@@ -131,18 +131,24 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     let analyzer = Analyzer::new();
     let mut module_bytecodes: FxHashMap<String, sema::AnalyzerResult> = FxHashMap::default();
     let (bytecode, _) = analyzer.analyze(program, std_module_header, &mut module_bytecodes)?;
-    for name in module_bytecodes.keys() {
-        println!("{}", name);
-    }
 
     if matches.is_present("dump-insts") {
+        println!("--- MAIN");
         bytecode.dump();
+
+        for (name, (bytecode, _)) in module_bytecodes {
+            println!("--- {}", name);
+            bytecode.dump();
+        }
+
         return Ok(());
     }
 
+    let module_bytecodes: Vec<(String, bytecode::Bytecode)> = module_bytecodes.into_iter().map(|(n, (b, _))| (n, b)).collect();
+
     // Execute the bytecode
     let mut vm = VM::new();
-    vm.run(bytecode, std_module, enable_trace, enable_measure);
+    vm.run(bytecode, std_module, module_bytecodes, enable_trace, enable_measure);
 
     Ok(())
 }
