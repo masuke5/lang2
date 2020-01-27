@@ -1,9 +1,16 @@
+use std::fmt;
 use std::sync::RwLock;
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct Id(u32);
+
+impl fmt::Debug for Id {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", IdMap::name(*self))
+    }
+}
 
 #[derive(Debug)]
 pub struct IdMap {}
