@@ -336,10 +336,19 @@ impl VM {
 
         self.functions.resize(all_modules.len(), Vec::new());
 
+        // module id -> local id -> global id
+        let mut modules = Vec::with_capacity(all_modules.len());
+        for bytecode in &bytecodes {
+            if let Some(bytecode) = bytecode {
+                let module_map = self.read_modules(bytecode, &module_global_ids);
+                modules.push(Some(module_map));
+            } else {
+                modules.push(None);
+            }
+        }
+
         assert_eq!(all_modules.len(), module_global_ids.len());
         assert_eq!(all_modules.len(), bytecodes.len());
-
-        let modules = self.read_modules(bytecodes[0].as_ref().unwrap(), &module_global_ids);
 
         // Function
         for (global_module_id, bytecode) in bytecodes.iter().enumerate() {
@@ -624,7 +633,7 @@ impl VM {
                     let module_local_id = ((arg & 0b11110000) >> 4) as usize;
                     let func_id = (arg & 0b00001111) as usize;
 
-                    let module_global_id = modules[module_local_id];
+                    let module_global_id = modules[self.current_module].as_ref().unwrap()[module_local_id];
                     let module = &mut all_modules[module_global_id];
 
                     match module {

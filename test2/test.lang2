@@ -1,4 +1,5 @@
 import assert;
+import module1;
 
 ## literals ##
 
@@ -283,6 +284,9 @@ let aaa = f3((
     A:<*string>{ b: "def", c: 456 },
 ));
 test_eq("call with instantiation 3", 702, aaa.0.c + aaa.1.c + aaa.2.c);
+
+## import ##
+test_eq("mutually importing", 243, pow(3, 5)); 
 
 ## other expressions ##
 

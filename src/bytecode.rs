@@ -431,7 +431,7 @@ impl Bytecode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: Id,
     pub code_id: u16,
@@ -654,16 +654,18 @@ impl BytecodeBuilder {
 
     // Function
 
-    pub fn push_function_header(&mut self, mut func: Function) {
+    pub fn insert_function_header(&mut self, mut func: Function) {
         if self.func_count > std::u16::MAX as usize {
             panic!("too many functions");
         }
 
-        // Set ID
-        func.code_id = self.func_count as u16;
-        self.functions.insert(func.name, func);
+        if !self.functions.contains_key(&func.name) {
+            // Set ID
+            func.code_id = self.func_count as u16;
+            self.functions.insert(func.name, func);
 
-        self.func_count += 1;
+            self.func_count += 1;
+        }
     }
 
     pub fn push_function_body(&mut self, func_id: Id, mut insts: InstList) {

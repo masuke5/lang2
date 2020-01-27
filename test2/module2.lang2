@@ -1,0 +1,5 @@
+import module1;
+
+fn pow_inner(n: int, a: int): int {
+    return pow(n, a - 1) * n;
+}

@@ -1,7 +1,5 @@
 use std::fmt;
 
-use rustc_hash::FxHashMap;
-
 use crate::span::Spanned;
 use crate::id::{Id, IdMap};
 use crate::utils::{escape_string, span_to_string};
@@ -115,7 +113,7 @@ pub struct Program {
     pub main_stmts: Vec<Spanned<Stmt>>,
     pub types: Vec<AstTypeDef>,
     pub strings: Vec<String>,
-    pub modules_to_import: FxHashMap<Id, Program>,
+    pub imported_modules: Vec<Id>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -355,9 +353,8 @@ pub fn dump_program(program: &Program, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
-    for (module_name, program) in &program.modules_to_import {
+    for module_name in &program.imported_modules {
         println!("module {}", IdMap::name(*module_name));
-        dump_program(program, depth + 1);
     }
 
     for ty in &program.types {

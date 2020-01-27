@@ -30,12 +30,10 @@ use token::dump_token;
 use error::Error;
 use parser::Parser;
 use ast::*;
-use sema::Analyzer;
 use id::{Id, IdMap};
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
-use rustc_hash::FxHashMap;
 
 fn print_errors(input: &str, errors: Vec<Error>) {
     let input: Vec<&str> = input.lines().collect();
@@ -106,8 +104,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     }
 
     // Parse
-    let parser = Parser::new(&file_path, tokens);
-    let program = match parser.parse() {
+    let parser = Parser::new(&file_path, tokens, rustc_hash::FxHashSet::default());
+    let (program, module_buffers) = match parser.parse() {
         Ok(p) => p,
         Err(mut perrors) => {
             errors.append(&mut perrors);
@@ -128,15 +126,13 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
 
     // Analyze semantics and translate to a bytecode
 
-    let analyzer = Analyzer::new();
-    let mut module_bytecodes: FxHashMap<String, sema::AnalyzerResult> = FxHashMap::default();
-    let (bytecode, _) = analyzer.analyze(program, std_module_header, &mut module_bytecodes)?;
+    let (main_bytecode, module_bytecodes) = sema::analyze_semantics(program, module_buffers, std_module_header)?;
 
     if matches.is_present("dump-insts") {
         println!("--- MAIN");
-        bytecode.dump();
+        main_bytecode.dump();
 
-        for (name, (bytecode, _)) in module_bytecodes {
+        for (name, bytecode) in module_bytecodes {
             println!("--- {}", name);
             bytecode.dump();
         }
@@ -144,11 +140,11 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
         return Ok(());
     }
 
-    let module_bytecodes: Vec<(String, bytecode::Bytecode)> = module_bytecodes.into_iter().map(|(n, (b, _))| (n, b)).collect();
+    let module_bytecodes: Vec<(String, bytecode::Bytecode)> = module_bytecodes.into_iter().map(|(n, b)| (n, b)).collect();
 
     // Execute the bytecode
     let mut vm = VM::new();
-    vm.run(bytecode, std_module, module_bytecodes, enable_trace, enable_measure);
+    vm.run(main_bytecode, std_module, module_bytecodes, enable_trace, enable_measure);
 
     Ok(())
 }

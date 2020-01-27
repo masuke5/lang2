@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::io;
 use std::fs;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::span::{Span, Spanned};
 use crate::error::Error;
@@ -22,7 +22,7 @@ macro_rules! error {
     };
 }
 
-fn parse_module<P: AsRef<Path>>(module_file: P) -> Result<Result<Program, Vec<Error>>, io::Error> {
+fn parse_module<P: AsRef<Path>>(module_file: P, imported_modules: FxHashSet<Id>) -> Result<Result<(Program, FxHashMap<Id, Program>), Vec<Error>>, io::Error> {
     use crate::lexer::Lexer;
 
     let module_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
@@ -32,7 +32,7 @@ fn parse_module<P: AsRef<Path>>(module_file: P) -> Result<Result<Program, Vec<Er
     let lexer = Lexer::new(&raw, module_id);
     let (tokens, mut errors_when_lex) = lexer.lex();
 
-    let parser = Parser::new(module_file.as_ref(), tokens);
+    let parser = Parser::new(module_file.as_ref(), tokens, imported_modules);
     match parser.parse() {
         Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
         Ok(_) => Ok(Err(errors_when_lex)),
@@ -52,11 +52,13 @@ pub struct Parser {
     main_stmts: Vec<Spanned<Stmt>>,
     types: Vec<AstTypeDef>,
     strings: Vec<String>,
-    modules_to_import: FxHashMap<Id, Program>,
+    module_buffers: FxHashMap<Id, Program>,
+    imported_modules: Vec<Id>,
+    loaded_modules: FxHashSet<Id>,
 }
 
 impl Parser {
-    pub fn new(file_path: &Path, tokens: Vec<Spanned<Token>>) -> Parser {
+    pub fn new(file_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<Id>) -> Parser {
         Self {
             file_path: file_path.into(),
             tokens,
@@ -65,7 +67,9 @@ impl Parser {
             main_stmts: Vec::new(),
             types: Vec::new(),
             strings: Vec::new(),
-            modules_to_import: FxHashMap::default(),
+            module_buffers: FxHashMap::default(),
+            imported_modules: Vec::new(),
+            loaded_modules,
         }
     }
 
@@ -712,13 +716,26 @@ impl Parser {
         let module_name = self.expect_identifier(&[Token::Semicolon])?;
         let module_name = spanned(module_name, self.prev().span.clone());
 
-        // Parse the module file if the module is not native
+        // Parse the module file if the module is not native and the module is not loaded already
         if let Some(module_file) = module::find_module_file(&self.file_path, &IdMap::name(module_name.kind)) {
-            match parse_module(&module_file).unwrap() { // TODO: Avoid unwrap()
-                Ok(program) => { self.modules_to_import.insert(module_name.kind, program); },
-                Err(mut errors) => self.errors.append(&mut errors),
+            if !self.loaded_modules.contains(&module_name.kind) {
+                self.loaded_modules.insert(module_name.kind);
+                match parse_module(&module_file, self.loaded_modules.clone()).unwrap() { // TODO: Avoid unwrap()
+                    Ok((program, module_buffers)) => {
+                        // Merge module buffers
+                        for (module_name, program) in module_buffers {
+                            self.module_buffers.insert(module_name, program);
+                            self.loaded_modules.insert(module_name);
+                        }
+
+                        self.module_buffers.insert(module_name.kind, program);
+                    },
+                    Err(mut errors) => self.errors.append(&mut errors),
+                }
             }
         }
+
+        self.imported_modules.push(module_name.kind);
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
@@ -1078,7 +1095,7 @@ impl Parser {
         Some(())
     }
 
-    pub fn parse(mut self) -> Result<Program, Vec<Error>> {
+    pub fn parse(mut self) -> Result<(Program, FxHashMap<Id, Program>), Vec<Error>> {
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
                 continue;
@@ -1090,12 +1107,15 @@ impl Parser {
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok(Program {
-                types: self.types,
-                main_stmts: self.main_stmts,
-                strings: self.strings,
-                modules_to_import: self.modules_to_import,
-            })
+            Ok((
+                Program {
+                    types: self.types,
+                    main_stmts: self.main_stmts,
+                    strings: self.strings,
+                    imported_modules: self.imported_modules,
+                },
+                self.module_buffers,
+            ))
         }
     }
 }

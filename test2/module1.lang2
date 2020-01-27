@@ -1,0 +1,9 @@
+import module2;
+
+fn pow(n: int, a: int): int {
+    if a <= 1 {
+        return n;
+    } else {
+        return pow_inner(n, a);
+    }
+}
