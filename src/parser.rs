@@ -50,7 +50,6 @@ pub struct Parser {
     errors: Vec<Error>,
 
     main_stmts: Vec<Spanned<Stmt>>,
-    types: Vec<AstTypeDef>,
     strings: Vec<String>,
     module_buffers: FxHashMap<Id, Program>,
     imported_modules: Vec<Id>,
@@ -65,7 +64,6 @@ impl Parser {
             pos: 0,
             errors: Vec::new(),
             main_stmts: Vec::new(),
-            types: Vec::new(),
             strings: Vec::new(),
             module_buffers: FxHashMap::default(),
             imported_modules: Vec::new(),
@@ -759,6 +757,12 @@ impl Parser {
                 let span = Span::merge(&fn_span, &self.prev().span);
                 Some(spanned(Stmt::FnDef(Box::new(func)), span))
             },
+            Token::Type => {
+                let type_span = token.span.clone();
+                let tydef = self.parse_def_type()?;
+                let span = Span::merge(&type_span, &self.prev().span);
+                Some(spanned(Stmt::TypeDef(tydef), span))
+            },
             _ => self.parse_expr_stmt(),
         }
     }
@@ -1080,28 +1084,15 @@ impl Parser {
         })
     }
 
-    fn parse_toplevel(&mut self) -> Option<()> {
-        match self.peek().kind {
-            Token::Type => {
-                let tydef = self.parse_def_type()?;
-                self.types.push(tydef);
-            },
-            _ => {
-                let stmt = self.parse_stmt()?;
-                self.main_stmts.push(stmt);
-            },
-        };
-
-        Some(())
-    }
-
     pub fn parse(mut self) -> Result<(Program, FxHashMap<Id, Program>), Vec<Error>> {
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
                 continue;
             }
 
-            self.parse_toplevel();
+            if let Some(stmt) = self.parse_stmt() {
+                self.main_stmts.push(stmt);
+            }
         }
 
         if !self.errors.is_empty() {
@@ -1109,7 +1100,6 @@ impl Parser {
         } else {
             Ok((
                 Program {
-                    types: self.types,
                     main_stmts: self.main_stmts,
                     strings: self.strings,
                     imported_modules: self.imported_modules,

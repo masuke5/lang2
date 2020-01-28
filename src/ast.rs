@@ -83,6 +83,7 @@ pub enum Stmt {
     Assign(Spanned<Expr>, Spanned<Expr>),
     Import(Spanned<Id>),
     FnDef(Box<AstFunction>),
+    TypeDef(AstTypeDef),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -111,7 +112,6 @@ pub struct AstTypeDef {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
     pub main_stmts: Vec<Spanned<Stmt>>,
-    pub types: Vec<AstTypeDef>,
     pub strings: Vec<String>,
     pub imported_modules: Vec<Id>,
 }
@@ -343,6 +343,17 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             );
             dump_stmt(&func.body, strings, 1);
         },
+        Stmt::TypeDef(ty) => {
+            println!("type {}<{}> {}",
+                IdMap::name(ty.name), 
+                ty.var_ids
+                .iter()
+                .map(|id| IdMap::name(id.kind))
+                .collect::<Vec<String>>()
+                .join(", "),
+                ty.ty.kind,
+            );
+        },
         Stmt::Import(name) => {
             println!("import {} {}", IdMap::name(name.kind), span_to_string(&stmt.span));
         },
@@ -355,18 +366,6 @@ pub fn dump_program(program: &Program, depth: usize) {
 
     for module_name in &program.imported_modules {
         println!("module {}", IdMap::name(*module_name));
-    }
-
-    for ty in &program.types {
-        println!("type {}<{}> {}",
-            IdMap::name(ty.name), 
-            ty.var_ids
-                .iter()
-                .map(|id| IdMap::name(id.kind))
-                .collect::<Vec<String>>()
-                .join(", "),
-            ty.ty.kind,
-        );
     }
 
     for stmt in &program.main_stmts {

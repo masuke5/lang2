@@ -129,15 +129,18 @@ impl Gc {
             if value.is_heap_ptr() {
                 let ptr = value.as_ptr::<GcRegion>();
                 let region = unsafe { &mut *ptr.sub(1) };
-                region.mark();
 
-                // Regions can consist of string and more
-                if region.consists_of_value() {
-                    unsafe {
-                        let base = region.as_mut_ptr::<Value>();
-                        let field_count = region.size / mem::size_of::<Value>();
-                        for i in 0..field_count {
-                            mark(&mut *base.add(i));
+                if !region.is_marked() {
+                    region.mark();
+
+                    // Regions can consist of string and more
+                    if region.consists_of_value() {
+                        unsafe {
+                            let base = region.as_mut_ptr::<Value>();
+                            let field_count = region.size / mem::size_of::<Value>();
+                            for i in 0..field_count {
+                                mark(&mut *base.add(i));
+                            }
                         }
                     }
                 }

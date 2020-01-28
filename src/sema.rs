@@ -900,7 +900,7 @@ impl<'a> Analyzer<'a> {
             },
             Stmt::Block(stmts) => {
                 self.push_scope();
-                let insts = self.walk_stmts_including_func(code, stmts);
+                let insts = self.walk_stmts_including_def(code, stmts);
                 self.pop_scope();
 
                 insts
@@ -955,12 +955,29 @@ impl<'a> Analyzer<'a> {
             },
             Stmt::Import(_) => InstList::new(),
             Stmt::FnDef(_) => InstList::new(),
+            Stmt::TypeDef(_) => InstList::new(),
         };
 
         Some(insts)
     }
 
-    fn walk_stmts_including_func(&mut self, code: &mut BytecodeBuilder, stmts: Vec<Spanned<Stmt>>) -> InstList {
+    fn walk_stmts_including_def(&mut self, code: &mut BytecodeBuilder, stmts: Vec<Spanned<Stmt>>) -> InstList {
+        // Insert type headers
+        for stmt in &stmts {
+            if let Stmt::TypeDef(tydef) = &stmt.kind {
+                self.insert_type_header(tydef);
+            }
+        }
+
+        // Walk the type definitions
+        for stmt in &stmts {
+            if let Stmt::TypeDef(tydef) = &stmt.kind {
+                self.walk_type_def(tydef.clone()); // TODO: Avoid clone()
+            }
+        }
+
+        self.resolve_type_sizes();
+
         // Insert function headers
         for stmt in &stmts {
             if let Stmt::FnDef(func) = &stmt.kind {
@@ -990,6 +1007,24 @@ impl<'a> Analyzer<'a> {
         insts
     }
 
+    fn resolve_type_sizes(&mut self) {
+        for map in self.types.maps.iter_mut() {
+            for ty in map.values_mut() {
+                let oty = mem::replace(ty, Type::Int);
+                *ty = resolve_type_sizes(&self.type_sizes, oty);
+            }
+        }
+
+        for map in self.tycons.maps.iter_mut() {
+            for tycon in map.values_mut() {
+                if let Some(tycon) = tycon {
+                    let otc = mem::replace(tycon, TypeCon::Tuple);
+                    *tycon = resolve_type_sizes_in_tycon(&self.type_sizes, otc);
+                }
+            }
+        }
+    }
+
     fn walk_type(&mut self, ty: Spanned<AstType>) -> Option<Type> {
         match ty.kind {
             AstType::Int => Some(Type::Int),
@@ -1000,7 +1035,7 @@ impl<'a> Analyzer<'a> {
                 if let Some(ty) = self.types.find(&name) {
                     Some(ty.clone())
                 } else if self.tycons.contains_key(&name) {
-                    Some(Type::App(TypeCon::Named(name, *self.type_sizes.find(&name).unwrap_or(&0)), Vec::new()))
+                    Some(Type::App(TypeCon::Named(name, *self.type_sizes.find(&name).unwrap_or(&246)), Vec::new()))
                 } else {
                     error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
                     None
@@ -1042,7 +1077,7 @@ impl<'a> Analyzer<'a> {
 
                 self.pop_type_scope();
 
-                Some(Type::App(TypeCon::Named(name.kind, *self.type_sizes.find(&name.kind).unwrap_or(&0)), new_types))
+                Some(Type::App(TypeCon::Named(name.kind, *self.type_sizes.find(&name.kind).unwrap_or(&245)), new_types))
             },
         }
     }
@@ -1084,7 +1119,11 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
         self.push_type_scope();
 
-        let header = &self.function_headers[&func.name];
+        let header = match self.function_headers.get(&func.name) {
+            Some(fh) => fh,
+            None => return, // the function headers may be not inserted by errors
+        };
+
         let return_ty = header.return_ty.clone();
 
         for (id, var) in &header.ty_params {
@@ -1248,33 +1287,8 @@ impl<'a> Analyzer<'a> {
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
         self.module_headers.insert(std_module.id, (std_module_id, std_module));
 
-        // Type definition
-        for tydef in &program.types {
-            self.insert_type_header(tydef);
-        }
-
-        for tydef in program.types {
-            self.walk_type_def(tydef);
-        }
-
-        for map in self.types.maps.iter_mut() {
-            for ty in map.values_mut() {
-                let oty = mem::replace(ty, Type::Int);
-                *ty = resolve_type_sizes(&self.type_sizes, oty);
-            }
-        }
-
-        for map in self.tycons.maps.iter_mut() {
-            for tycon in map.values_mut() {
-                if let Some(tycon) = tycon {
-                    let otc = mem::replace(tycon, TypeCon::Tuple);
-                    *tycon = resolve_type_sizes_in_tycon(&self.type_sizes, otc);
-                }
-            }
-        }
-
         // Main statements
-        let insts = self.walk_stmts_including_func(&mut code, program.main_stmts);
+        let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);
         self.function_insts.push_front((self.main_func_id, insts));
 
         self.pop_scope();

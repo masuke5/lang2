@@ -380,6 +380,7 @@ impl VM {
 
             if cfg!(debug_assertions) && enable_trace {
                 let func = self.current_func();
+                print!("{}  ", self.ip);
                 current_bytecode.dump_inst(
                     opcode,
                     arg,
