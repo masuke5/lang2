@@ -906,6 +906,11 @@ impl<'a> Analyzer<'a> {
                 insts
             },
             Stmt::Bind(name, expr, is_mutable) => {
+                if self.function_headers.contains_key(&name) {
+                    error!(self, expr.span, "the same function as this variable name exists");
+                    return None;
+                }
+
                 let expr = self.walk_expr(code, expr)?;
                 let loc = self.new_var_in_current_func(code, name, expr.ty.clone(), is_mutable);
 
@@ -979,8 +984,13 @@ impl<'a> Analyzer<'a> {
         self.resolve_type_sizes();
 
         // Insert function headers
-        for stmt in &stmts {
+        'l: for stmt in &stmts {
             if let Stmt::FnDef(func) = &stmt.kind {
+                if self.function_headers.contains_key(&func.name) {
+                    error!(self, stmt.span.clone(), "this function name exists already");
+                    continue;
+                }
+
                 if let Some((header, func)) = self.generate_function_header(&func) {
                     self.function_headers.insert(func.name, header);
                     code.insert_function_header(func);
