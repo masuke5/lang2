@@ -108,7 +108,7 @@ pub struct Analyzer<'a> {
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
     type_sizes: HashMapWithScope<Id, usize>,
-    variables: Vec<FxHashMap<Id, Variable>>,
+    variables: HashMapWithScope<Id, Variable>,
     errors: Vec<Error>,
     main_func_id: Id,
     return_value_id: Id,
@@ -127,7 +127,7 @@ impl<'a> Analyzer<'a> {
         Self {
             function_headers: FxHashMap::default(),
             module_headers: FxHashMap::default(),
-            variables: Vec::with_capacity(5),
+            variables: HashMapWithScope::new(),
             types: HashMapWithScope::new(),
             tycons: HashMapWithScope::new(),
             type_sizes: HashMapWithScope::new(),
@@ -148,12 +148,12 @@ impl<'a> Analyzer<'a> {
 
     #[inline]
     fn push_scope(&mut self) {
-        self.variables.push(FxHashMap::default());
+        self.variables.push_scope();
     }
 
     #[inline]
     fn pop_scope(&mut self) {
-        self.variables.pop().unwrap();
+        self.variables.pop_scope();
     }
 
     #[inline]
@@ -177,14 +177,12 @@ impl<'a> Analyzer<'a> {
             loc -= type_size_nocheck(&ty) as isize;
 
             // Insert the parameter as a variable to the current scope
-            let last_map = self.variables.last_mut().unwrap();
-            last_map.insert(name, Variable::new(ty.clone(), is_mutable, loc));
+            self.variables.insert(name, Variable::new(ty.clone(), is_mutable, loc));
         }
 
         loc -= type_size_nocheck(return_ty) as isize;
 
-        let last_map = self.variables.last_mut().unwrap();
-        last_map.insert(self.return_value_id, Variable::new(return_ty.clone(), false, loc));
+        self.variables.insert(self.return_value_id, Variable::new(return_ty.clone(), false, loc));
 
         Some(())
     }
@@ -236,7 +234,7 @@ impl<'a> Analyzer<'a> {
     fn new_var(&mut self, current_func: &mut Function, id: Id, ty: Type, is_mutable: bool) -> isize {
         let new_var_size = type_size_nocheck(&ty);
 
-        let last_map = self.variables.last().unwrap();
+        let last_map = self.variables.last_scope().unwrap();
         let loc = match last_map.get(&id) {
             // If the same scope contains the same size variable, use the variable location
             Some(var) if new_var_size == type_size_nocheck(&var.ty) => {
@@ -249,8 +247,7 @@ impl<'a> Analyzer<'a> {
             },
         };
 
-        let last_map = self.variables.last_mut().unwrap();
-        last_map.insert(id, Variable::new(ty.clone(), is_mutable, loc));
+        self.variables.insert(id, Variable::new(ty.clone(), is_mutable, loc));
 
         loc
     }
@@ -266,34 +263,8 @@ impl<'a> Analyzer<'a> {
         id
     }
 
-    #[allow(dead_code)]
-    fn dump_variables(&self) {
-        let mut depth = 0;
-        for variables in self.variables.iter() {
-            if variables.is_empty() {
-                println!("{}EMPTY", "  ".repeat(depth));
-            }
-
-            for (id, var) in variables {
-                print!("{}", "  ".repeat(depth));
-                if var.is_mutable {
-                    print!("mut ");
-                }
-                println!("{}: {} ({})", IdMap::name(*id), var.ty, var.loc);
-            }
-
-            depth += 1;
-        }
-    }
-
     fn find_var(&self, id: Id) -> Option<&Variable> {
-        for variables in self.variables.iter().rev() {
-            if let Some(var) = variables.get(&id) {
-                return Some(var);
-            }
-        }
-
-        None
+        self.variables.find(&id)
     }
 
     fn find_func(&self, code: &BytecodeBuilder, id: Id) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id

@@ -49,6 +49,10 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
 
         false
     }
+
+    pub fn last_scope(&self) -> Option<&FxHashMap<K, V>> {
+        self.maps.front()
+    }
 }
 
 pub fn escape_string(raw: &str) -> String {
