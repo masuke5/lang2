@@ -19,6 +19,7 @@ mod module;
 mod translate;
 
 use std::process::exit;
+use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::borrow::Cow;
@@ -34,13 +35,24 @@ use id::{Id, IdMap};
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
+use rustc_hash::FxHashMap;
 
-fn print_errors(input: &str, errors: Vec<Error>) {
-    let input: Vec<&str> = input.lines().collect();
+fn print_errors(errors: Vec<Error>) {
+    let mut file_cache: FxHashMap<Id, Vec<String>> = FxHashMap::default();
 
     for error in errors {
-        // Print the error position and message
         let es = error.span;
+
+        let input = match file_cache.get(&es.file) {
+            Some(input) => input,
+            None => {
+                let contents = fs::read_to_string(&IdMap::name(es.file)).unwrap();
+                file_cache.insert(es.file, contents.split("\n").map(|c| c.to_string()).collect());
+                &file_cache[&es.file]
+            },
+        };
+
+        // Print the error position and message
         println!(
             "\x1b[91merror\x1b[0m: {}:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
             IdMap::name(es.file),
@@ -55,7 +67,7 @@ fn print_errors(input: &str, errors: Vec<Error>) {
         for i in 0..line_count {
             let line = (es.start_line + i) as usize;
             let line_len = if line >= input.len() as usize { 0 } else { input[line].len() as u32 };
-            println!("{}", if line >= input.len() as usize { "" } else { input[line] });
+            println!("{}", if line >= input.len() as usize { "" } else { &input[line] });
 
             // Print the error span
             let (start, length) = if line_count == 1 {
@@ -145,8 +157,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
 
     let mut new_module_bytecodes = Vec::with_capacity(module_bytecodes.len());
     let main_bytecode = module_bytecodes.remove(&IdMap::name(main_module_name)).unwrap();
-    new_module_bytecodes.push((IdMap::name(main_module_name), main_bytecode));
 
+    // After push the main bytecode, push the other bytecodes
+    new_module_bytecodes.push((IdMap::name(main_module_name), main_bytecode));
     for (name, bytecode) in module_bytecodes {
         new_module_bytecodes.push((name, bytecode));
     }
@@ -215,7 +228,7 @@ fn main() {
     };
 
     if let Err(errors) = execute(&matches, &input, file, file_path) {
-        print_errors(&input, errors);
+        print_errors(errors);
         exit(1);
     }
 }
