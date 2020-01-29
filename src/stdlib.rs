@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 
-use crate::id::{Id, IdMap};
+use crate::id::{Id, IdMap, reserved_id};
 use crate::ty::{Type, TypeCon, TypeVar};
 use crate::vm::VM;
 use crate::module::{Module, ModuleHeader, FunctionHeader, NativeFunctionBody as Body};
@@ -62,7 +62,7 @@ pub fn module() -> (Module, ModuleHeader) {
 
     let module = Module::Native(bodies);
     let header = ModuleHeader {
-        id: IdMap::new_id("$std"),
+        id: *reserved_id::STD_MODULE,
         functions: funcs,
     };
 

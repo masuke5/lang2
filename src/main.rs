@@ -31,7 +31,7 @@ use token::dump_token;
 use error::Error;
 use parser::Parser;
 use ast::*;
-use id::{Id, IdMap};
+use id::{Id, IdMap, reserved_id};
 use vm::VM;
 
 use clap::{Arg, App, ArgMatches};
@@ -180,7 +180,7 @@ fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>, Id, Optio
 
         Ok((filepath_id, input.into(), module_name, Some(filepath)))
     } else if let Some(input) = matches.value_of("cmd") {
-        let filepath_id = IdMap::new_id("$cmd");
+        let filepath_id = *reserved_id::CMD;
         let module_name = filepath_id;
         Ok((filepath_id, input.into(), module_name, None))
     } else {

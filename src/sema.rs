@@ -7,7 +7,7 @@ use crate::ty::*;
 use crate::ast::{*, Param as AstParam};
 use crate::error::Error;
 use crate::span::{Span, Spanned};
-use crate::id::{Id, IdMap};
+use crate::id::{Id, IdMap, reserved_id};
 use crate::bytecode::{Bytecode, Function, opcode, BytecodeBuilder, InstList};
 use crate::module::{FunctionHeader, ModuleHeader};
 use crate::translate;
@@ -110,8 +110,6 @@ pub struct Analyzer<'a> {
     type_sizes: HashMapWithScope<Id, usize>,
     variables: HashMapWithScope<Id, Variable>,
     errors: Vec<Error>,
-    main_func_id: Id,
-    return_value_id: Id,
     current_func: Id,
     next_temp_num: u32,
     next_unique: u32,
@@ -121,9 +119,6 @@ pub struct Analyzer<'a> {
 
 impl<'a> Analyzer<'a> {
     pub fn new() -> Self {
-        let main_func_id = IdMap::new_id("$main");
-        let return_value_id = IdMap::new_id("$rv");
-
         Self {
             function_headers: FxHashMap::default(),
             module_headers: FxHashMap::default(),
@@ -132,9 +127,7 @@ impl<'a> Analyzer<'a> {
             tycons: HashMapWithScope::new(),
             type_sizes: HashMapWithScope::new(),
             errors: Vec::new(),
-            main_func_id,
-            return_value_id,
-            current_func: main_func_id, 
+            current_func: *reserved_id::MAIN_FUNC, 
             next_temp_num: 0,
             next_unique: 0,
             function_insts: LinkedList::new(),
@@ -182,13 +175,13 @@ impl<'a> Analyzer<'a> {
 
         loc -= type_size_nocheck(return_ty) as isize;
 
-        self.variables.insert(self.return_value_id, Variable::new(return_ty.clone(), false, loc));
+        self.variables.insert(*reserved_id::RETURN_VALUE, Variable::new(return_ty.clone(), false, loc));
 
         Some(())
     }
 
     fn get_return_var(&self) -> &Variable {
-        self.find_var(self.return_value_id).unwrap()
+        self.find_var(*reserved_id::RETURN_VALUE).unwrap()
     }
 
     fn expand_name(&self, ty: Type) -> Option<Type> {
@@ -909,12 +902,12 @@ impl<'a> Analyzer<'a> {
                 let func_name = code.get_function(self.current_func).unwrap().name;
 
                 // Check if is outside function
-                if func_name == self.main_func_id {
+                if func_name == *reserved_id::MAIN_FUNC {
                     error!(self, stmt.span, "return statement outside function");
                     return None;
                 }
 
-                let return_var = self.find_var(self.return_value_id).unwrap();
+                let return_var = self.get_return_var();
                 let ty = return_var.ty.clone();
                 let loc = return_var.loc;
 
@@ -1241,8 +1234,8 @@ impl<'a> Analyzer<'a> {
             return_ty: Type::Unit,
             ty_params: Vec::new(),
         };
-        code.insert_function_header(Function::new(self.main_func_id, 0));
-        function_headers.insert(self.main_func_id, (code.get_function(self.main_func_id).unwrap().code_id, header));
+        code.insert_function_header(Function::new(*reserved_id::MAIN_FUNC, 0));
+        function_headers.insert(*reserved_id::MAIN_FUNC, (code.get_function(*reserved_id::MAIN_FUNC).unwrap().code_id, header));
 
         for stmt in &program.main_stmts {
             match &stmt.kind {
@@ -1279,7 +1272,7 @@ impl<'a> Analyzer<'a> {
             return_ty: Type::Unit,
             ty_params: Vec::new(),
         };
-        self.function_headers.insert(self.main_func_id, header);
+        self.function_headers.insert(*reserved_id::MAIN_FUNC, header);
 
         self.push_scope();
         self.push_type_scope();
@@ -1290,7 +1283,7 @@ impl<'a> Analyzer<'a> {
 
         // Main statements
         let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);
-        self.function_insts.push_front((self.main_func_id, insts));
+        self.function_insts.push_front((*reserved_id::MAIN_FUNC, insts));
 
         self.pop_scope();
         self.pop_type_scope();
