@@ -87,7 +87,7 @@ fn print_errors(errors: Vec<Error>) {
     }
 }
 
-fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBuf>) -> Result<(), Vec<Error>> {
+fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, file_path: Option<PathBuf>) -> Result<(), Vec<Error>> {
     fn ok_if_empty(errors: Vec<Error>) -> Result<(), Vec<Error>> {
         if errors.is_empty() {
             Ok(())
@@ -107,8 +107,6 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     let pwd = env::current_dir().expect("Unable to get current directory");
     let file_path = file_path.unwrap_or(PathBuf::from(pwd).join("cmd"));
 
-    let main_module_name = file;
-
     // Lex
     let lexer = Lexer::new(input, file);
     let (tokens, mut errors) = lexer.lex();
@@ -119,7 +117,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
 
     // Parse
     let parser = Parser::new(&file_path, tokens, rustc_hash::FxHashSet::default());
-    let module_buffers = match parser.parse(file) {
+    let module_buffers = match parser.parse(main_module_name) {
         Ok(p) => p,
         Err(mut perrors) => {
             errors.append(&mut perrors);
@@ -139,8 +137,6 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     if !errors.is_empty() {
         return Err(errors);
     }
-
-    // let stdlib_funcs = stdlib::functions();
 
     // Analyze semantics and translate to a bytecode
 
@@ -171,17 +167,22 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     Ok(())
 }
 
-fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>, Option<PathBuf>), String> {
+fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>, Id, Option<PathBuf>), String> {
     if let Some(filepath_str) = matches.value_of("file") {
         let mut file = File::open(filepath_str).map_err(|err| format!("{}", err))?;
         let mut input = String::new();
         file.read_to_string(&mut input).map_err(|err| format!("{}", err))?;
 
-        let filepath = IdMap::new_id(&filepath_str);
+        let filepath_id = IdMap::new_id(&filepath_str);
+        let filepath = PathBuf::from(filepath_str);
+        let module_name = filepath.file_stem().unwrap();
+        let module_name = IdMap::new_id(&module_name.to_string_lossy());
 
-        Ok((filepath, input.into(), Some(PathBuf::from(filepath_str))))
+        Ok((filepath_id, input.into(), module_name, Some(filepath)))
     } else if let Some(input) = matches.value_of("cmd") {
-        Ok((IdMap::new_id("$cmd"), input.into(), None))
+        let filepath_id = IdMap::new_id("$cmd");
+        let module_name = filepath_id;
+        Ok((filepath_id, input.into(), module_name, None))
     } else {
         Err(String::from("Not specified file or cmd"))
     }
@@ -219,7 +220,7 @@ fn main() {
              .help("Measures the performance"))
         .get_matches();
 
-    let (file, input, file_path) = match get_input(&matches) {
+    let (file, input, module_name, file_path) = match get_input(&matches) {
         Ok(t) => t,
         Err(err) => {
             eprintln!("Unable to load input: {}", err);
@@ -227,7 +228,7 @@ fn main() {
         },
     };
 
-    if let Err(errors) = execute(&matches, &input, file, file_path) {
+    if let Err(errors) = execute(&matches, &input, file, module_name, file_path) {
         print_errors(errors);
         exit(1);
     }
