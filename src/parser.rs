@@ -22,18 +22,18 @@ macro_rules! error {
     };
 }
 
-fn parse_module<P: AsRef<Path>>(module_file: P, imported_modules: FxHashSet<Id>) -> Result<Result<(Program, FxHashMap<Id, Program>), Vec<Error>>, io::Error> {
+fn parse_module<P: AsRef<Path>>(module_file: P, module_name: Id, imported_modules: FxHashSet<Id>) -> Result<Result<FxHashMap<Id, Program>, Vec<Error>>, io::Error> {
     use crate::lexer::Lexer;
 
-    let module_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
+    let module_file_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
 
     let raw = fs::read_to_string(&module_file)?;
 
-    let lexer = Lexer::new(&raw, module_id);
+    let lexer = Lexer::new(&raw, module_file_id);
     let (tokens, mut errors_when_lex) = lexer.lex();
 
     let parser = Parser::new(module_file.as_ref(), tokens, imported_modules);
-    match parser.parse() {
+    match parser.parse(module_name) {
         Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
         Ok(_) => Ok(Err(errors_when_lex)),
         Err(mut errors) => {
@@ -718,19 +718,24 @@ impl Parser {
         if let Some(module_file) = module::find_module_file(&self.file_path, &IdMap::name(module_name.kind)) {
             if !self.loaded_modules.contains(&module_name.kind) {
                 self.loaded_modules.insert(module_name.kind);
-                match parse_module(&module_file, self.loaded_modules.clone()).unwrap() { // TODO: Avoid unwrap()
-                    Ok((program, module_buffers)) => {
+                match parse_module(&module_file, module_name.kind, self.loaded_modules.clone()) {
+                    Ok(Ok(module_buffers)) => {
                         // Merge module buffers
                         for (module_name, program) in module_buffers {
                             self.module_buffers.insert(module_name, program);
                             self.loaded_modules.insert(module_name);
                         }
-
-                        self.module_buffers.insert(module_name.kind, program);
                     },
-                    Err(mut errors) => self.errors.append(&mut errors),
+                    Ok(Err(mut errors)) => self.errors.append(&mut errors),
+                    Err(err) => {
+                        error!(self, module_name.span, "Unable to load module {}: {}", IdMap::name(module_name.kind), err);
+                        return None;
+                    },
                 }
             }
+        } else {
+            error!(self, module_name.span, "Cannot find module {}", IdMap::name(module_name.kind));
+            return None;
         }
 
         self.imported_modules.push(module_name.kind);
@@ -1084,7 +1089,7 @@ impl Parser {
         })
     }
 
-    pub fn parse(mut self) -> Result<(Program, FxHashMap<Id, Program>), Vec<Error>> {
+    pub fn parse(mut self, module_name: Id) -> Result<FxHashMap<Id, Program>, Vec<Error>> {
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
                 continue;
@@ -1095,17 +1100,16 @@ impl Parser {
             }
         }
 
+        self.module_buffers.insert(module_name, Program {
+            main_stmts: self.main_stmts,
+            strings: self.strings,
+            imported_modules: self.imported_modules,
+        });
+
         if !self.errors.is_empty() {
             Err(self.errors)
         } else {
-            Ok((
-                Program {
-                    main_stmts: self.main_stmts,
-                    strings: self.strings,
-                    imported_modules: self.imported_modules,
-                },
-                self.module_buffers,
-            ))
+            Ok(self.module_buffers)
         }
     }
 }

@@ -95,6 +95,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     let pwd = env::current_dir().expect("Unable to get current directory");
     let file_path = file_path.unwrap_or(PathBuf::from(pwd).join("cmd"));
 
+    let main_module_name = file;
+
     // Lex
     let lexer = Lexer::new(input, file);
     let (tokens, mut errors) = lexer.lex();
@@ -105,7 +107,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
 
     // Parse
     let parser = Parser::new(&file_path, tokens, rustc_hash::FxHashSet::default());
-    let (program, module_buffers) = match parser.parse() {
+    let module_buffers = match parser.parse(file) {
         Ok(p) => p,
         Err(mut perrors) => {
             errors.append(&mut perrors);
@@ -114,7 +116,11 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
     };
 
     if matches.is_present("dump-ast") {
-        dump_ast(&program);
+        for (name, program) in module_buffers {
+            println!("--- {}", IdMap::name(name));
+            dump_ast(&program);
+        }
+
         return ok_if_empty(errors);
     }
 
@@ -126,12 +132,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
 
     // Analyze semantics and translate to a bytecode
 
-    let (main_bytecode, module_bytecodes) = sema::analyze_semantics(program, module_buffers, std_module_header)?;
+    let mut module_bytecodes = sema::analyze_semantics(module_buffers, std_module_header)?;
 
     if matches.is_present("dump-insts") {
-        println!("--- MAIN");
-        main_bytecode.dump();
-
         for (name, bytecode) in module_bytecodes {
             println!("--- {}", name);
             bytecode.dump();
@@ -140,11 +143,17 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, file_path: Option<PathBu
         return Ok(());
     }
 
-    let module_bytecodes: Vec<(String, bytecode::Bytecode)> = module_bytecodes.into_iter().map(|(n, b)| (n, b)).collect();
+    let mut new_module_bytecodes = Vec::with_capacity(module_bytecodes.len());
+    let main_bytecode = module_bytecodes.remove(&IdMap::name(main_module_name)).unwrap();
+    new_module_bytecodes.push((IdMap::name(main_module_name), main_bytecode));
+
+    for (name, bytecode) in module_bytecodes {
+        new_module_bytecodes.push((name, bytecode));
+    }
 
     // Execute the bytecode
     let mut vm = VM::new();
-    vm.run(main_bytecode, std_module, module_bytecodes, enable_trace, enable_measure);
+    vm.run(new_module_bytecodes, std_module, enable_trace, enable_measure);
 
     Ok(())
 }

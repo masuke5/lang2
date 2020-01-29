@@ -294,7 +294,7 @@ impl VM {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
     
-    pub fn run(&mut self, bytecode: Bytecode, std_module: Module, module_bytecodes: Vec<(String, Bytecode)>, enable_trace: bool, enable_measure: bool) {
+    pub fn run(&mut self, module_bytecodes: Vec<(String, Bytecode)>, std_module: Module, enable_trace: bool, enable_measure: bool) {
         #[inline]
         fn ip_after_jump_to(ip: usize, loc: u8) -> usize {
             let loc = i8::from_le_bytes([loc]) as isize;
@@ -302,26 +302,29 @@ impl VM {
         }
 
         // global id -> module
-        let mut all_modules = vec![Module::Normal, std_module];
+        let mut all_modules = Vec::new();
         for _ in &module_bytecodes {
             all_modules.push(Module::Normal);
         }
+        all_modules.push(std_module);
 
         // module name -> global id
         let mut module_global_ids = FxHashMap::default();
-        module_global_ids.insert(String::from("$main"), 0);
-        module_global_ids.insert(String::from("$std"), 1);
 
-        let mut next_id = 2;
-        for (name, _) in &module_bytecodes {
-            module_global_ids.insert(name.clone(), next_id);
-            next_id += 1;
+        {
+            let mut next_id = 0;
+            for (name, _) in &module_bytecodes {
+                module_global_ids.insert(name.clone(), next_id);
+                next_id += 1;
+            }
+
+            module_global_ids.insert(String::from("$std"), next_id);
         }
 
         // global id -> bytecode
         let mut bytecodes: Vec<Option<Bytecode>> = module_bytecodes.into_iter().map(|(_, bc)| Some(bc)).collect();
-        bytecodes.insert(0, None); // $std
-        bytecodes.insert(0, Some(bytecode)); // bytecode
+
+        bytecodes.push(None); // $std
 
         // string map start per module
         let mut string_map_start = Vec::with_capacity(all_modules.len());
@@ -349,6 +352,7 @@ impl VM {
 
         assert_eq!(all_modules.len(), module_global_ids.len());
         assert_eq!(all_modules.len(), bytecodes.len());
+        assert_eq!(all_modules.len(), modules.len());
 
         // Function
         for (global_module_id, bytecode) in bytecodes.iter().enumerate() {

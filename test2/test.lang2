@@ -123,10 +123,10 @@ test_eq("nested tuple indexing", 132, ((52, 93012, 341), (5, 132), 63).1.1);
 let tuple = ((52, 93012, 341), (5, 132, 9), 63);
 test_eq("variable tuple indexing", 9, tuple.1.2);
 
-test("function passed a tuple", tuple((5, 3, 8)));
+test("function passed a tuple", check_tuple((5, 3, 8)));
 test_eq("function returning a tuple", 12, double((3, 6)).1);
 
-fn tuple(t: (int, int, int,)): bool {
+fn check_tuple(t: (int, int, int,)): bool {
     return t.0 = 5 && t.1 = 3 && t.2 = 8;
 }
 
@@ -215,14 +215,14 @@ test_eq("function returning array", 4, one_to_ten()[3]);
 
 fn sum(arr: [int; 10]): int {
     let mut i = 0;
-    let mut sum = 0;
+    let mut result = 0;
 
     while i < 10 {
-        sum := sum + arr[i];
+        result := result + arr[i];
         i := i + 1;
     }
 
-    return sum;
+    return result;
 }
 
 fn one_to_ten(): [int; 10] {

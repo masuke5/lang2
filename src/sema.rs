@@ -907,7 +907,7 @@ impl<'a> Analyzer<'a> {
             },
             Stmt::Bind(name, expr, is_mutable) => {
                 if self.function_headers.contains_key(&name) {
-                    error!(self, expr.span, "the same function as this variable name exists");
+                    error!(self, stmt.span, "the same function as this variable name exists");
                     return None;
                 }
 
@@ -1246,6 +1246,24 @@ impl<'a> Analyzer<'a> {
     pub fn get_public_function_headers(&mut self, code: &mut BytecodeBuilder, program: &Program) -> FxHashMap<Id, (u16, FunctionHeader)> {
         let mut function_headers = FxHashMap::default();
 
+        self.push_type_scope();
+        
+        // Insert type headers
+        for stmt in &program.main_stmts {
+            if let Stmt::TypeDef(tydef) = &stmt.kind {
+                self.insert_type_header(tydef);
+            }
+        }
+
+        // Walk the type definitions
+        for stmt in &program.main_stmts {
+            if let Stmt::TypeDef(tydef) = &stmt.kind {
+                self.walk_type_def(tydef.clone()); // TODO: Avoid clone()
+            }
+        }
+
+        self.resolve_type_sizes();
+
         // Insert main function header
         let header = FunctionHeader {
             params: Vec::new(),
@@ -1265,9 +1283,11 @@ impl<'a> Analyzer<'a> {
                     }
                 },
                 Stmt::Import(_) => {},
-                _ => unimplemented!(),
+                _ => {}, // TODO: Implement it
             }
         }
+
+        self.pop_type_scope();
 
         function_headers
     }
@@ -1317,10 +1337,9 @@ impl<'a> Analyzer<'a> {
 }
 
 pub fn analyze_semantics(
-    program: Program,
     module_buffers: FxHashMap<Id, Program>,
     std_module: ModuleHeader
-) -> Result<(Bytecode, FxHashMap<String, Bytecode>), Vec<Error>> {
+) -> Result<FxHashMap<String, Bytecode>, Vec<Error>> {
     type FunctionHeaders = FxHashMap<Id, (u16, FunctionHeader)>;
     let mut func_headers: FxHashMap<Id, FunctionHeaders> = FxHashMap::default();
     let mut bytecode_builders: FxHashMap<Id, BytecodeBuilder> = FxHashMap::default();
@@ -1350,23 +1369,9 @@ pub fn analyze_semantics(
         bytecodes.insert(IdMap::name(name), bytecode);
     }
 
-    let main_bytecode = {
-        let mut builder = BytecodeBuilder::new();
-        builder.insert_function_header(Function::new(IdMap::new_id("$main"), 0));
-
-        let analyzer = Analyzer::new();
-        match analyzer.analyze(builder, program, std_module, &func_headers) {
-            Ok(b) => b,
-            Err(mut new_errors) => {
-                errors.append(&mut new_errors);
-                return Err(errors);
-            },
-        }
-    };
-
     if !errors.is_empty() {
         Err(errors)
     } else {
-        Ok((main_bytecode, bytecodes))
+        Ok(bytecodes)
     }
 }
