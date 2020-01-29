@@ -25,7 +25,7 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
         self.maps.pop_front().unwrap();
     }
 
-    pub fn find(&self, key: &K) -> Option<&V> {
+    pub fn get(&self, key: &K) -> Option<&V> {
         for map in self.maps.iter() {
             if let Some(value) = map.get(key) {
                 return Some(value);

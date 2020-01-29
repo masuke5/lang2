@@ -341,7 +341,7 @@ pub fn expand_wrap(ty: Type) -> Type {
 pub fn resolve_type_sizes_in_tycon(type_sizes: &HashMapWithScope<Id, usize>, tycon: TypeCon) -> TypeCon {
     match tycon {
         TypeCon::Named(name, _) => {
-            TypeCon::Named(name, *type_sizes.find(&name).unwrap())
+            TypeCon::Named(name, *type_sizes.get(&name).unwrap())
         },
         TypeCon::Fun(params, ty) => {
             TypeCon::Fun(params, Box::new(resolve_type_sizes(type_sizes, *ty)))

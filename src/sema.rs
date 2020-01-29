@@ -198,7 +198,7 @@ impl<'a> Analyzer<'a> {
                 self.expand_name(subst(*body, &map))
             },
             Type::App(TypeCon::Named(name, _), types) => {
-                match self.tycons.find(&name) {
+                match self.tycons.get(&name) {
                     Some(tycon) => Some(Type::App(tycon.clone().unwrap(), types)),
                     None => None,
                 }
@@ -264,7 +264,7 @@ impl<'a> Analyzer<'a> {
     }
 
     fn find_var(&self, id: Id) -> Option<&Variable> {
-        self.variables.find(&id)
+        self.variables.get(&id)
     }
 
     fn find_func(&self, code: &BytecodeBuilder, id: Id) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
@@ -1013,10 +1013,10 @@ impl<'a> Analyzer<'a> {
             AstType::Unit => Some(Type::Unit),
             AstType::String => Some(Type::String),
             AstType::Named(name) => {
-                if let Some(ty) = self.types.find(&name) {
+                if let Some(ty) = self.types.get(&name) {
                     Some(ty.clone())
                 } else if self.tycons.contains_key(&name) {
-                    Some(Type::App(TypeCon::Named(name, *self.type_sizes.find(&name).unwrap_or(&246)), Vec::new()))
+                    Some(Type::App(TypeCon::Named(name, *self.type_sizes.get(&name).unwrap_or(&246)), Vec::new()))
                 } else {
                     error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
                     None
@@ -1058,7 +1058,7 @@ impl<'a> Analyzer<'a> {
 
                 self.pop_type_scope();
 
-                Some(Type::App(TypeCon::Named(name.kind, *self.type_sizes.find(&name.kind).unwrap_or(&245)), new_types))
+                Some(Type::App(TypeCon::Named(name.kind, *self.type_sizes.get(&name.kind).unwrap_or(&245)), new_types))
             },
         }
     }
