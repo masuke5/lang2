@@ -1,6 +1,6 @@
-use std::collections::{HashMap, LinkedList};
-use std::collections::hash_map::Entry;
+use std::collections::{HashMap, LinkedList, hash_map::Entry};
 use std::mem;
+use std::fmt;
 use std::ptr::NonNull;
 use std::ffi::c_void;
 use libc;
@@ -11,6 +11,18 @@ pub struct GcRegion {
     bits: u8,
     pub size: usize,
     data: [c_void; 0],
+}
+
+impl fmt::Debug for GcRegion {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f,
+            "GcRegion {{ is_marked: {}, consists_of_value: {}, size: {}, data: {:p} }}",
+            self.is_marked(),
+            self.consists_of_value(),
+            self.size,
+            self.data.as_ptr(),
+        )
+    }
 }
 
 impl PartialEq for GcRegion {
