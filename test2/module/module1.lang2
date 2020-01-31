@@ -1,4 +1,4 @@
-import module2;
+import module::module2;
 
 fn pow(n: int, a: int): int {
     if a <= 1 {

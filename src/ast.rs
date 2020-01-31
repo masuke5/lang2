@@ -55,6 +55,97 @@ pub enum Field {
     Id(Id),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SymbolPath {
+    pub segments: Vec<SymbolPathSegment>,
+}
+
+impl fmt::Display for SymbolPath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.segments
+            .iter()
+            .fold(String::new(), |acc, seg| format!("{}::{}", acc, IdMap::name(seg.id)))
+        )
+    }
+}
+
+impl SymbolPath {
+    pub fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+        }
+    }
+
+    pub fn from_path(root: &std::path::Path, path: &std::path::Path) -> Self {
+        // TODO: better conversion
+        // TODO: Avoid unwrap()
+        // Convert paths for comparison
+        let root = root.canonicalize().unwrap();
+        let root = root.as_path();
+        let path = path.canonicalize().unwrap();
+        let mut path = path.as_path();
+
+        let mut spath = Self { segments: Vec::new() };
+        if root == path {
+            return spath;
+        }
+
+        let mut paths = vec![path.file_stem().unwrap().to_string_lossy()];
+        path = path.parent().unwrap();
+
+        while root != path {
+            paths.push(path.file_name().unwrap().to_string_lossy());
+            path = path.parent().unwrap();
+        }
+
+        spath.segments = paths
+            .into_iter()
+            .map(|s| SymbolPathSegment::new(IdMap::new_id(&s)))
+            .rev()
+            .collect();
+
+        spath
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    pub fn tail(&self) -> Option<&SymbolPathSegment> {
+        self.segments.get(self.segments.len() - 1)
+    }
+
+    pub fn parent(&self) -> Option<SymbolPath> {
+        let mut path = self.clone();
+        path.segments.pop()?;
+        Some(path)
+    }
+
+    #[allow(dead_code)]
+    pub fn append_str(mut self, s: &str) -> SymbolPath {
+        self.segments.push(SymbolPathSegment::new(IdMap::new_id(s)));
+        self
+    }
+
+    pub fn append(mut self, segment: SymbolPathSegment) -> SymbolPath {
+        self.segments.push(segment);
+        self
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+pub struct SymbolPathSegment {
+    pub id: Id,
+}
+
+impl SymbolPathSegment {
+    pub fn new(id: Id) -> Self {
+        Self {
+            id,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Literal(Literal),
@@ -65,7 +156,7 @@ pub enum Expr {
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
-    Call(Id, Vec<Spanned<Expr>>, Vec<Spanned<AstType>>),
+    Call(Spanned<SymbolPath>, Vec<Spanned<Expr>>, Vec<Spanned<AstType>>),
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
@@ -81,7 +172,7 @@ pub enum Stmt {
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Spanned<Expr>),
-    Import(Spanned<Id>),
+    Import(Spanned<SymbolPath>),
     FnDef(Box<AstFunction>),
     TypeDef(AstTypeDef),
 }
@@ -113,7 +204,7 @@ pub struct AstTypeDef {
 pub struct Program {
     pub main_stmts: Vec<Spanned<Stmt>>,
     pub strings: Vec<String>,
-    pub imported_modules: Vec<Id>,
+    pub imported_modules: Vec<SymbolPath>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -233,7 +324,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             dump_expr(&rhs, strings, depth + 1);
         },
         Expr::Call(name, args, tyargs) => {
-            print!("call {}", IdMap::name(*name));
+            print!("call {}", name.kind);
 
             if !args.is_empty() {
                 print!(".<");
@@ -355,7 +446,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             );
         },
         Stmt::Import(name) => {
-            println!("import {} {}", IdMap::name(name.kind), span_to_string(&stmt.span));
+            println!("import {} {}", name.kind, span_to_string(&stmt.span));
         },
     }
 }
@@ -364,8 +455,8 @@ pub fn dump_program(program: &Program, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
-    for module_name in &program.imported_modules {
-        println!("module {}", IdMap::name(*module_name));
+    for module_path in &program.imported_modules {
+        println!("module {}", module_path);
     }
 
     for stmt in &program.main_stmts {
@@ -375,4 +466,23 @@ pub fn dump_program(program: &Program, depth: usize) {
 
 pub fn dump_ast(program: &Program) {
     dump_program(program, 0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::env;
+
+    #[test]
+    fn test_symbol_path_from_path() {
+        let root = env::current_dir().unwrap();
+        let path = PathBuf::from("test2/test.lang2");
+        let actual = SymbolPath::from_path(&root, &path);
+
+        let expected = SymbolPath::new()
+            .append_str("test2")
+            .append_str("test");
+        assert_eq!(expected, actual);
+    }
 }

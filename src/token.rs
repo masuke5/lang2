@@ -49,6 +49,7 @@ pub enum Token {
     Dot,
     Assign,
     Ampersand,
+    Scope,
 }
 
 impl fmt::Display for Token {
@@ -99,6 +100,7 @@ impl fmt::Display for Token {
             Token::Dot => write!(f, "."),
             Token::Assign => write!(f, ":="),
             Token::Ampersand => write!(f, "&"),
+            Token::Scope => write!(f, "::"),
         }
     }
 }

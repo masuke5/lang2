@@ -22,7 +22,12 @@ macro_rules! error {
     };
 }
 
-fn parse_module<P: AsRef<Path>>(module_file: P, module_name: Id, imported_modules: FxHashSet<Id>) -> Result<Result<FxHashMap<Id, Program>, Vec<Error>>, io::Error> {
+fn parse_module<P1: AsRef<Path>, P2: AsRef<Path>>(
+    root_path: P1,
+    module_file: P2,
+    module_path: &SymbolPath,
+    imported_modules: FxHashSet<SymbolPath>
+) -> Result<Result<FxHashMap<SymbolPath, Program>, Vec<Error>>, io::Error> {
     use crate::lexer::Lexer;
 
     let module_file_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
@@ -32,8 +37,8 @@ fn parse_module<P: AsRef<Path>>(module_file: P, module_name: Id, imported_module
     let lexer = Lexer::new(&raw, module_file_id);
     let (tokens, mut errors_when_lex) = lexer.lex();
 
-    let parser = Parser::new(module_file.as_ref(), tokens, imported_modules);
-    match parser.parse(module_name) {
+    let parser = Parser::new(root_path.as_ref(), module_file.as_ref(), tokens, imported_modules);
+    match parser.parse(module_path) {
         Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
         Ok(_) => Ok(Err(errors_when_lex)),
         Err(mut errors) => {
@@ -44,6 +49,7 @@ fn parse_module<P: AsRef<Path>>(module_file: P, module_name: Id, imported_module
 }
 
 pub struct Parser {
+    root_path: PathBuf,
     file_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
@@ -51,15 +57,16 @@ pub struct Parser {
 
     main_stmts: Vec<Spanned<Stmt>>,
     strings: Vec<String>,
-    module_buffers: FxHashMap<Id, Program>,
-    imported_modules: Vec<Id>,
-    loaded_modules: FxHashSet<Id>,
+    module_buffers: FxHashMap<SymbolPath, Program>,
+    imported_modules: Vec<SymbolPath>,
+    loaded_modules: FxHashSet<SymbolPath>,
 }
 
 impl Parser {
-    pub fn new(file_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<Id>) -> Parser {
+    pub fn new(root_path: &Path, file_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<SymbolPath>) -> Parser {
         Self {
-            file_path: file_path.into(),
+            root_path: root_path.to_path_buf(),
+            file_path: file_path.to_path_buf(),
             tokens,
             pos: 0,
             errors: Vec::new(),
@@ -163,6 +170,30 @@ impl Parser {
         res
     }
 
+    fn parse_path_with_first_segment(&mut self, first: Option<SymbolPathSegment>, first_span: Span) -> Option<Spanned<SymbolPath>> {
+        let mut path = SymbolPath { segments: Vec::new() };
+
+        if let Some(first) = first {
+            path.segments.push(first);
+        }
+
+        while self.consume(&Token::Scope) {
+            let id = self.expect_identifier(&[Token::Scope]);
+            if let Some(id) = id {
+                path.segments.push(SymbolPathSegment::new(id));
+            }
+        }
+
+        let span = Span::merge(&first_span, &self.prev().span);
+        Some(spanned(path, span))
+    }
+
+    fn parse_path(&mut self) -> Option<Spanned<SymbolPath>> {
+        let first = self.expect_identifier(&[Token::Scope]);
+        let first = first.map(|id| SymbolPathSegment::new(id));
+        self.parse_path_with_first_segment(first, self.prev().span.clone())
+    }
+
     #[inline]
     fn parse_binop<F>(&mut self, allow_join: bool, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<Spanned<Expr>>
         where F: FnMut(&mut Self) -> Option<Spanned<Expr>>
@@ -228,10 +259,13 @@ impl Parser {
     }
 
     fn parse_call(&mut self, name: Id, name_span: Span, tyargs: Vec<Spanned<AstType>>) -> Option<Spanned<Expr>> {
-        let args = self.parse_args()?;
-        let rparen_span = &self.prev().span;
+        // let path = self.parse_path_with_first_segment(Some(SymbolPathSegment::new(name)), name_span.clone())?;
+        let path = spanned(SymbolPath::new().append(SymbolPathSegment::new(name)), name_span.clone());
 
-        Some(spanned(Expr::Call(name, args, tyargs), Span::merge(&name_span, &rparen_span)))
+        let args = self.parse_args()?;
+        let rparen_span = self.prev().span.clone();
+
+        Some(spanned(Expr::Call(path, args, tyargs), Span::merge(&name_span, &rparen_span)))
     }
 
     fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {
@@ -711,39 +745,38 @@ impl Parser {
         let import_token_span = self.peek().span.clone();
         self.next();
 
-        let module_name = self.expect_identifier(&[Token::Semicolon])?;
-        let module_name = spanned(module_name, self.prev().span.clone());
+        let module_path = self.parse_path()?;
 
-        // Parse the module file if the module is not native and the module is not loaded already
-        if let Some(module_file) = module::find_module_file(&self.file_path, &IdMap::name(module_name.kind)) {
-            if !self.loaded_modules.contains(&module_name.kind) {
-                self.loaded_modules.insert(module_name.kind);
-                match parse_module(&module_file, module_name.kind, self.loaded_modules.clone()) {
+        // Parse the module file if the module is not loaded already
+        if let Some(module_file) = module::find_module_file(&self.root_path, &module_path.kind) {
+            if !self.loaded_modules.contains(&module_path.kind) {
+                self.loaded_modules.insert(module_path.kind.clone());
+                match parse_module(&self.root_path, &module_file, &module_path.kind, self.loaded_modules.clone()) {
                     Ok(Ok(module_buffers)) => {
                         // Merge module buffers
-                        for (module_name, program) in module_buffers {
-                            self.module_buffers.insert(module_name, program);
-                            self.loaded_modules.insert(module_name);
+                        for (module_path, program) in module_buffers {
+                            self.module_buffers.insert(module_path.clone(), program);
+                            self.loaded_modules.insert(module_path.clone());
                         }
                     },
                     Ok(Err(mut errors)) => self.errors.append(&mut errors),
                     Err(err) => {
-                        error!(self, module_name.span, "Unable to load module {}: {}", IdMap::name(module_name.kind), err);
+                        error!(self, module_path.span, "Unable to load module {}: {}", module_path.kind, err);
                         return None;
                     },
                 }
             }
         } else {
-            error!(self, module_name.span, "Cannot find module {}", IdMap::name(module_name.kind));
+            error!(self, module_path.span, "Cannot find module {}", module_path.kind);
             return None;
         }
 
-        self.imported_modules.push(module_name.kind);
+        self.imported_modules.push(module_path.kind.clone());
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let span = Span::merge(&import_token_span, &self.prev().span);
-        Some(spanned(Stmt::Import(module_name), span))
+        Some(spanned(Stmt::Import(module_path), span))
     }
 
     fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {
@@ -1089,7 +1122,7 @@ impl Parser {
         })
     }
 
-    pub fn parse(mut self, module_name: Id) -> Result<FxHashMap<Id, Program>, Vec<Error>> {
+    pub fn parse(mut self, module_path: &SymbolPath) -> Result<FxHashMap<SymbolPath, Program>, Vec<Error>> {
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
                 continue;
@@ -1100,7 +1133,7 @@ impl Parser {
             }
         }
 
-        self.module_buffers.insert(module_name, Program {
+        self.module_buffers.insert(module_path.clone(), Program {
             main_stmts: self.main_stmts,
             strings: self.strings,
             imported_modules: self.imported_modules,

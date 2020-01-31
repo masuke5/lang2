@@ -4,6 +4,7 @@ use crate::id::{Id, IdMap, reserved_id};
 use crate::ty::{Type, TypeCon, TypeVar};
 use crate::vm::VM;
 use crate::module::{Module, ModuleHeader, FunctionHeader, NativeFunctionBody as Body};
+use crate::ast::{SymbolPath, SymbolPathSegment};
 
 fn printnln(vm: &mut VM) {
     let n = vm.get_value(vm.arg_loc(0, 1)).as_i64();
@@ -62,7 +63,7 @@ pub fn module() -> (Module, ModuleHeader) {
 
     let module = Module::Native(bodies);
     let header = ModuleHeader {
-        id: *reserved_id::STD_MODULE,
+        id: SymbolPath::new().append(SymbolPathSegment::new(*reserved_id::STD_MODULE)),
         functions: funcs,
     };
 

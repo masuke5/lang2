@@ -105,7 +105,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     let (std_module, std_module_header) = stdlib::module();
 
     let pwd = env::current_dir().expect("Unable to get current directory");
-    let file_path = file_path.unwrap_or(PathBuf::from(pwd).join("cmd"));
+    let file_path = file_path.unwrap_or(PathBuf::from(&pwd).join("cmd"));
+    let tmp = pwd.join(&file_path);
+    let root_path = tmp.parent().unwrap();
 
     // Lex
     let lexer = Lexer::new(input, file);
@@ -116,8 +118,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     }
 
     // Parse
-    let parser = Parser::new(&file_path, tokens, rustc_hash::FxHashSet::default());
-    let module_buffers = match parser.parse(main_module_name) {
+    let parser = Parser::new(&root_path, &file_path, tokens, rustc_hash::FxHashSet::default());
+    let main_module_path = SymbolPath::from_path(&root_path, &file_path);
+    let module_buffers = match parser.parse(&main_module_path) {
         Ok(p) => p,
         Err(mut perrors) => {
             errors.append(&mut perrors);
@@ -127,7 +130,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
 
     if matches.is_present("dump-ast") {
         for (name, program) in module_buffers {
-            println!("--- {}", IdMap::name(name));
+            println!("--- {}", name);
             dump_ast(&program);
         }
 
@@ -176,7 +179,7 @@ fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>, Id, Optio
         let filepath_id = IdMap::new_id(&filepath_str);
         let filepath = PathBuf::from(filepath_str);
         let module_name = filepath.file_stem().unwrap();
-        let module_name = IdMap::new_id(&module_name.to_string_lossy());
+        let module_name = IdMap::new_id(&format!("::{}", &module_name.to_string_lossy()));
 
         Ok((filepath_id, input.into(), module_name, Some(filepath)))
     } else if let Some(input) = matches.value_of("cmd") {

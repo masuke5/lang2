@@ -104,7 +104,7 @@ impl Variable {
 #[derive(Debug)]
 pub struct Analyzer<'a> {
     function_headers: FxHashMap<Id, FunctionHeader>,
-    module_headers: FxHashMap<Id, (u16, ModuleHeader)>,
+    module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
     type_sizes: HashMapWithScope<Id, usize>,
@@ -260,13 +260,23 @@ impl<'a> Analyzer<'a> {
         self.variables.get(&id)
     }
 
-    fn find_func(&self, code: &BytecodeBuilder, id: Id) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
-        if let Some(fh) = self.function_headers.get(&id) {
-            return Some((fh, code.get_function(id).unwrap().code_id, None));
+    fn find_func(&self, code: &BytecodeBuilder, path: &SymbolPath) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
+        assert!(!path.is_empty());
+
+        let func_id = path.tail().unwrap().id;
+        if let Some(fh) = self.function_headers.get(&func_id) {
+            return Some((fh, code.get_function(func_id).unwrap().code_id, None));
         }
 
+        // let module_path = path.parent()?;
+        // let (module_id, module) = self.module_headers.get(&module_path)?;
+
+        // if let Some((func_id, fh)) = module.functions.get(&func_id) {
+        //     return Some((fh, *func_id, Some(*module_id)));
+        // }
+
         for (module_id, module) in self.module_headers.values() {
-            if let Some((func_id, fh)) = module.functions.get(&id) {
+            if let Some((func_id, fh)) = module.functions.get(&func_id) {
                 return Some((fh, *func_id, Some(*module_id)));
             }
         }
@@ -704,8 +714,8 @@ impl<'a> Analyzer<'a> {
 
                 (translate::binop(binop, lhs, rhs), ty)
             },
-            Expr::Call(name, args, ty_args) => {
-                let (callee_func, code_id, module_id) = match self.find_func(code, name) {
+            Expr::Call(path, args, ty_args) => {
+                let (callee_func, code_id, module_id) = match self.find_func(code, &path.kind) {
                     Some(func) => func,
                     None => {
                         error!(self, expr.span.clone(), "undefined function");
@@ -1188,20 +1198,20 @@ impl<'a> Analyzer<'a> {
     pub fn load_modules(
         &mut self,
         code: &mut BytecodeBuilder,
-        imported_modules: Vec<Id>,
-        func_headers: &FxHashMap<Id, FxHashMap<Id, (u16, FunctionHeader)>>,
-    ) -> FxHashMap<Id, (u16, ModuleHeader)> {
+        imported_modules: Vec<SymbolPath>,
+        func_headers: &FxHashMap<SymbolPath, FxHashMap<Id, (u16, FunctionHeader)>>,
+    ) -> FxHashMap<SymbolPath, (u16, ModuleHeader)> {
         let mut headers = FxHashMap::default();
-        for name in imported_modules {
-            let func_headers = func_headers[&name].clone();
+        for path in imported_modules {
+            let func_headers = func_headers[&path].clone();
 
             let module_header = ModuleHeader {
-                id: name,
+                id: path.clone(),
                 functions: func_headers,
             };
 
-            let module_id = code.push_module(&IdMap::name(name));
-            headers.insert(name, (module_id, module_header));
+            let module_id = code.push_module(&format!("{}", path));
+            headers.insert(path, (module_id, module_header));
         }
 
         headers
@@ -1261,7 +1271,7 @@ impl<'a> Analyzer<'a> {
         mut code: BytecodeBuilder,
         program: Program,
         std_module: ModuleHeader,
-        func_headers: &FxHashMap<Id, FxHashMap<Id, (u16, FunctionHeader)>>,
+        func_headers: &FxHashMap<SymbolPath, FxHashMap<Id, (u16, FunctionHeader)>>,
     ) -> Result<Bytecode, Vec<Error>> {
         assert!(self.module_headers.is_empty());
         assert!(self.function_headers.is_empty());
@@ -1277,9 +1287,9 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
         self.push_type_scope();
 
-        let std_module_id = code.push_module(&IdMap::name(std_module.id));
+        let std_module_id = code.push_module(&format!("{}", std_module.id));
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
-        self.module_headers.insert(std_module.id, (std_module_id, std_module));
+        self.module_headers.insert(std_module.id.clone(), (std_module_id.clone(), std_module));
 
         // Main statements
         let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);
@@ -1301,21 +1311,21 @@ impl<'a> Analyzer<'a> {
 }
 
 pub fn analyze_semantics(
-    module_buffers: FxHashMap<Id, Program>,
+    module_buffers: FxHashMap<SymbolPath, Program>,
     std_module: ModuleHeader
 ) -> Result<FxHashMap<String, Bytecode>, Vec<Error>> {
     type FunctionHeaders = FxHashMap<Id, (u16, FunctionHeader)>;
-    let mut func_headers: FxHashMap<Id, FunctionHeaders> = FxHashMap::default();
-    let mut bytecode_builders: FxHashMap<Id, BytecodeBuilder> = FxHashMap::default();
-    let mut analyzers: FxHashMap<Id, Analyzer> = FxHashMap::default();
+    let mut func_headers: FxHashMap<SymbolPath, FunctionHeaders> = FxHashMap::default();
+    let mut bytecode_builders: FxHashMap<SymbolPath, BytecodeBuilder> = FxHashMap::default();
+    let mut analyzers: FxHashMap<SymbolPath, Analyzer> = FxHashMap::default();
     let mut bytecodes: FxHashMap<String, Bytecode> = FxHashMap::default();
 
     for (name, program) in &module_buffers {
-        analyzers.insert(*name, Analyzer::new());
-        bytecode_builders.insert(*name, BytecodeBuilder::new());
+        analyzers.insert(name.clone(), Analyzer::new());
+        bytecode_builders.insert(name.clone(), BytecodeBuilder::new());
         let headers = analyzers.get_mut(name).unwrap()
             .get_public_function_headers(bytecode_builders.get_mut(name).unwrap(), program);
-        func_headers.insert(*name, headers);
+        func_headers.insert(name.clone(), headers);
     }
 
     let mut errors = Vec::new();
@@ -1330,7 +1340,7 @@ pub fn analyze_semantics(
                 continue;
             },
         };
-        bytecodes.insert(IdMap::name(name), bytecode);
+        bytecodes.insert(format!("{}", name), bytecode);
     }
 
     if !errors.is_empty() {

@@ -1,5 +1,5 @@
 import assert;
-import module1;
+import module::module1;
 
 ## literals ##
 

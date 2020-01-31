@@ -5,7 +5,8 @@ use rustc_hash::FxHashMap;
 
 use crate::vm::VM;
 use crate::ty::{Type, TypeVar};
-use crate::id::Id;
+use crate::id::{Id, IdMap};
+use crate::ast::SymbolPath;
 
 pub const MODULE_EXTENSION: &str = "lang2";
 pub const ROOT_MODULE_FILE: &str = "mod.lang2";
@@ -33,19 +34,27 @@ pub struct FunctionHeader {
 
 #[derive(Debug, Clone)]
 pub struct ModuleHeader {
-    pub id: Id,
+    pub id: SymbolPath,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
 }
 
-pub fn find_module_file(current_module: &Path, module_name: &str) -> Option<PathBuf> {
-    let current_dir = current_module.parent().unwrap();
+pub fn find_module_file(root_path: &Path, module_path: &SymbolPath) -> Option<PathBuf> {
+    // example: std::collections::vec -> name: vec, dir: std/collection
+    let mut module_dir = PathBuf::from(root_path);
+    for segment in &module_path.segments {
+        module_dir = module_dir.join(&IdMap::name(segment.id));
+    }
 
-    let path = current_dir.join(&format!("{}.{}", module_name, MODULE_EXTENSION));
+
+    let module_name = module_dir.file_stem().unwrap().to_string_lossy().to_string();
+    let module_dir = module_dir.parent().unwrap();
+
+    let path = module_dir.join(&format!("{}.{}", module_name, MODULE_EXTENSION));
     if path.exists() {
         return Some(path);
     }
 
-    let path = current_dir.join(module_name).join(ROOT_MODULE_FILE);
+    let path = module_dir.join(&module_name).join(ROOT_MODULE_FILE);
     if path.exists() {
         return Some(path);
     }
