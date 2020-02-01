@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use rustc_hash::FxHashMap;
 
 use crate::vm::VM;
-use crate::ty::{Type, TypeVar};
+use crate::ty::{Type, TypeVar, type_size};
 use crate::id::{Id, IdMap};
 use crate::ast::SymbolPath;
 
@@ -37,6 +37,66 @@ pub struct ModuleHeader {
     pub id: SymbolPath,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
 }
+
+#[derive(Debug)]
+pub struct ModuleBuilder {
+    func_bodies: Vec<(usize, NativeFunctionBody)>,
+    func_headers: FxHashMap<Id, (u16, FunctionHeader)>,
+}
+
+impl ModuleBuilder {
+    pub fn new() -> Self {
+        Self {
+            func_bodies: Vec::new(),
+            func_headers: FxHashMap::default(),
+        }
+    }
+
+    pub fn define_func(
+        &mut self,
+        name: &str,
+        params: Vec<Type>,
+        return_ty: Type,
+        body: fn(&mut VM),
+    ) {
+        self.define_func_poly(name, Vec::new(), params, return_ty, body);
+    }
+
+    pub fn define_func_poly(
+        &mut self,
+        name: &str,
+        ty_params: Vec<(Id, TypeVar)>,
+        params: Vec<Type>,
+        return_ty: Type,
+        body: fn(&mut VM),
+    ) {
+        let name = IdMap::new_id(name);
+        let param_size = params
+            .iter()
+            .fold(0, |size, ty| size + type_size(ty).expect("Param size couldn't be calculated"));
+
+        self.func_bodies.push((param_size, NativeFunctionBody(body)));
+        self.func_headers.insert(name, (
+            self.func_headers.len() as u16,
+            FunctionHeader {
+                params,
+                return_ty,
+                ty_params,
+            },
+        ));
+    }
+
+    pub fn build(self, path: SymbolPath) -> (Module, ModuleHeader) {
+        let module = Module::Native(self.func_bodies);
+        let header = ModuleHeader {
+            id: path,
+            functions: self.func_headers,
+        };
+
+        (module, header)
+    }
+}
+
 
 pub fn find_module_file(root_path: &Path, module_path: &SymbolPath) -> Option<PathBuf> {
     // example: std::collections::vec -> name: vec, dir: std/collection
