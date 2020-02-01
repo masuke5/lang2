@@ -1,9 +1,45 @@
 use std::collections::LinkedList;
 use std::hash::Hash;
+use std::iter::Iterator;
+use std::fmt::Display;
 
 use rustc_hash::FxHashMap;
 
 use crate::span::Span;
+
+macro_rules! write_iter {
+    ($f:expr, $iter:expr) => {
+        {
+            use crate::utils;
+
+            let s = utils::format_iter($iter);
+            write!($f, "{}", s)
+        }
+    }
+}
+
+pub fn format_iter<I: Iterator>(mut iter: I) -> String
+    where <I as Iterator>::Item: Display
+{
+    let mut s = String::new();
+
+    if let Some(first) = iter.next() {
+        s += &format!("{}", first);
+        for value in iter {
+            s += &format!(", {}", value);
+        }
+    }
+
+    s
+}
+
+pub fn format_bool(b: bool, s: &str) -> &str {
+    if b {
+        s
+    } else {
+        ""
+    }
+}
 
 #[derive(Debug)]
 pub struct HashMapWithScope<K: Hash + Eq, V> {

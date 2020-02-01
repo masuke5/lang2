@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::span::Spanned;
 use crate::id::{Id, IdMap};
-use crate::utils::{escape_string, span_to_string};
+use crate::utils::{escape_string, span_to_string, format_iter, format_bool};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BinOp {
@@ -176,15 +176,7 @@ impl fmt::Display for ImportSymbolList {
             Self::Single(symbol) => write!(f, "{}", symbol),
             Self::Multiple(symbols) => {
                 write!(f, "{{")?;
-
-                let mut iter = symbols.iter();
-                if let Some(first) = iter.next() {
-                    write!(f, "{}", first)?;
-                    for value in iter {
-                        write!(f, ", {}", value)?;
-                    }
-                }
-
+                write_iter!(f, symbols.iter())?;
                 write!(f, "}}")
             },
             Self::All => write!(f, "*"),
@@ -290,46 +282,21 @@ impl fmt::Display for AstType {
             AstType::Bool => write!(f, "bool"),
             AstType::Unit => write!(f, "unit"),
             AstType::Named(id) => write!(f, "{}", IdMap::name(*id)),
-            AstType::Pointer(ty, is_mutable) => write!(f, "*{}{}", if *is_mutable { "mut " } else { "" }, ty.kind),
+            AstType::Pointer(ty, is_mutable) => write!(f, "*{}{}", format_bool(*is_mutable, "mut "), ty.kind),
             AstType::Array(ty, size) => write!(f, "[{}; {}]", ty.kind, size),
             AstType::Tuple(types) => {
                 write!(f, "(")?;
-
-                if !types.is_empty() {
-                    let mut iter = types.iter();
-                    write!(f, "{}", iter.next().unwrap().kind)?;
-                    for ty in iter {
-                        write!(f, ", {}", ty.kind)?;
-                    }
-                }
-
+                write_iter!(f, types.iter().map(|t| &t.kind))?;
                 write!(f, ")")
             },
             AstType::Struct(fields) => {
                 write!(f, "struct {{ ")?;
-
-                if !fields.is_empty() {
-                    let mut iter = fields.iter();
-                    let (id, ty) = iter.next().unwrap();
-                    write!(f, "{}: {}", IdMap::name(id.kind), ty.kind)?;
-                    for (id, ty) in iter {
-                        write!(f, ", {} : {}", IdMap::name(id.kind), ty.kind)?;
-                    }
-                }
-
+                write_iter!(f, fields.iter().map(|(id, ty)| format!("{}: {}", IdMap::name(id.kind), ty.kind)))?;
                 write!(f, " }}")
             }
             AstType::App(name, types) => {
                 write!(f, "{}<", IdMap::name(name.kind))?;
-
-                if !types.is_empty() {
-                    let mut iter = types.iter();
-                    write!(f, "{}", iter.next().unwrap().kind)?;
-                    for ty in iter {
-                        write!(f, ", {}", ty.kind)?;
-                    }
-                }
-
+                write_iter!(f, types.iter().map(|t| &t.kind))?;
                 write!(f, ">")
             },
         }
@@ -387,19 +354,8 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
         Expr::Call(name, args, tyargs) => {
             print!("call {}", name.kind);
 
-            if !args.is_empty() {
-                print!(".<");
-
-                let mut tyargs = tyargs.iter();
-                if let Some(tyarg) = tyargs.next() {
-                    print!("{}", tyarg.kind);
-                }
-
-                for tyarg in tyargs {
-                    print!(", {}", tyarg.kind);
-                }
-
-                print!(">");
+            if !tyargs.is_empty() {
+                print!(".<{}>", format_iter(tyargs.iter().map(|t| &t.kind)));
             }
 
             println!(" {}", span_to_string(&expr.span));
@@ -408,7 +364,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             }
         },
         Expr::Address(expr_, is_mutable) => {
-            println!("&{} {}", if *is_mutable { "mut" } else { "" }, span_to_string(&expr.span));
+            println!("&{} {}", format_bool(*is_mutable, "mut"), span_to_string(&expr.span));
             dump_expr(&expr_, strings, depth + 1);
         },
         Expr::Dereference(expr_) => {
@@ -420,7 +376,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             dump_expr(&expr_, strings, depth + 1);
         },
         Expr::Alloc(expr_, is_mutable) => {
-            println!("alloc{} {}", if *is_mutable { " mut" } else { "" }, span_to_string(&expr.span));
+            println!("new{} {}", format_bool(*is_mutable, " mut"), span_to_string(&expr.span));
             dump_expr(&expr_, strings, depth + 1);
         },
     }
@@ -432,7 +388,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
 
     match &stmt.kind {
         Stmt::Bind(name, expr, is_mutable) => {
-            println!("let {}{} =", if *is_mutable { "mut " } else { "" }, IdMap::name(*name));
+            println!("let {}{} =", format_bool(*is_mutable, "mut "), IdMap::name(*name));
             dump_expr(&expr, strings, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {
@@ -474,23 +430,15 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
 
             if !func.ty_params.is_empty() {
                 print!("<");
-
-                let mut iter = func.ty_params.iter();
-                let first = iter.next().unwrap();
-                print!("{}", IdMap::name(first.kind));
-                for var in iter {
-                    print!(", {}", IdMap::name(var.kind));
-                }
-
+                print!("{}", format_iter(func.ty_params.iter().map(|id| IdMap::name(id.kind))));
                 print!(">");
             }
 
             println!("({}): {}",
-                func.params
-                .iter()
-                .map(|p| format!("{}{}: {}", if p.is_mutable { "mut " } else { "" }, IdMap::name(p.name), p.ty.kind))
-                .collect::<Vec<String>>()
-                .join(", "),
+                format_iter(func.params
+                    .iter()
+                    .map(|p| format!("{}{}: {}", format_bool(p.is_mutable, "mut "), IdMap::name(p.name), p.ty.kind))
+                ),
                 func.return_ty.kind,
             );
             dump_stmt(&func.body, strings, 1);
@@ -498,11 +446,10 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
         Stmt::TypeDef(ty) => {
             println!("type {}<{}> {}",
                 IdMap::name(ty.name), 
-                ty.var_ids
-                .iter()
-                .map(|id| IdMap::name(id.kind))
-                .collect::<Vec<String>>()
-                .join(", "),
+                format_iter(ty.var_ids
+                    .iter()
+                    .map(|id| IdMap::name(id.kind))
+                ),
                 ty.ty.kind,
             );
         },

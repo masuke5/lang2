@@ -1,5 +1,8 @@
 #![feature(box_patterns, slice_concat_trait, drain_filter, seek_convenience)]
 
+#[macro_use]
+mod utils;
+
 mod span;
 mod error;
 mod token;
@@ -13,7 +16,6 @@ mod bytecode;
 mod vm;
 mod value;
 mod stdlib;
-mod utils;
 mod gc;
 mod module;
 mod translate;
