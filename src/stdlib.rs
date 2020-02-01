@@ -56,10 +56,10 @@ pub fn module() -> (Module, ModuleHeader) {
     let mut bodies = Vec::new();
     let mut f = (&mut bodies, &mut funcs);
 
-    func(&mut f, "printn", vec![], 1, vec![Type::Int], Type::Unit, Body(printn));
-    func(&mut f, "printnln", vec![], 1, vec![Type::Int], Type::Unit, Body(printnln));
-    func(&mut f, "print", vec![], 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(print));
-    func(&mut f, "println", vec![], 1, vec![Type::App(TypeCon::Pointer(false), vec![Type::String])], Type::Unit, Body(println));
+    func(&mut f, "printn",   vec![], 1, vec![ltype!(int)], ltype!(unit), Body(printn));
+    func(&mut f, "printnln", vec![], 1, vec![ltype!(int)], ltype!(unit), Body(printnln));
+    func(&mut f, "print",    vec![], 1, vec![ltype!(*string)], ltype!(unit), Body(print));
+    func(&mut f, "println",  vec![], 1, vec![ltype!(*string)], ltype!(unit), Body(println));
 
     let module = Module::Native(bodies);
     let header = ModuleHeader {

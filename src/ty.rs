@@ -11,6 +11,15 @@ use crate::utils::{HashMapWithScope, format_bool};
 use crate::error::Error;
 use crate::span::Span;
 
+macro_rules! ltype {
+    (int) => { Type::Int };
+    (unit) => { Type::Unit };
+    (bool) => { Type::Bool };
+    (string) => { Type::String };
+    (*$($rest:tt)*) => { Type::App(TypeCon::Pointer(false), vec![ltype!($($rest)*)]) };
+    () => { compile_error!("expected type or invalid type name") }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TypeVar(u32);
 

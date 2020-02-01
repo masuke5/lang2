@@ -2,6 +2,8 @@
 
 #[macro_use]
 mod utils;
+#[macro_use]
+mod ty;
 
 mod span;
 mod error;
@@ -9,7 +11,6 @@ mod token;
 mod lexer;
 mod ast;
 mod parser;
-mod ty;
 mod sema;
 mod id;
 mod bytecode;
