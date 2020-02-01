@@ -152,6 +152,62 @@ impl SymbolPathSegment {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ImportRange {
+     pub module_path: SymbolPath,
+     pub symbols: ImportSymbolList,
+}
+
+impl fmt::Display for ImportRange {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}::{}", self.module_path, self.symbols)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ImportSymbolList {
+    Single(ImportSymbol),
+    Multiple(Vec<ImportSymbol>),
+    All,
+}
+
+impl fmt::Display for ImportSymbolList {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Single(symbol) => write!(f, "{}", symbol),
+            Self::Multiple(symbols) => {
+                write!(f, "{{")?;
+
+                let mut iter = symbols.iter();
+                if let Some(first) = iter.next() {
+                    write!(f, "{}", first)?;
+                    for value in iter {
+                        write!(f, ", {}", value)?;
+                    }
+                }
+
+                write!(f, "}}")
+            },
+            Self::All => write!(f, "*"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ImportSymbol {
+    Id(Id),
+    As(Id, Id),
+}
+
+impl fmt::Display for ImportSymbol {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Id(id) => write!(f, "{}", IdMap::name(*id)),
+            Self::As(original, renamed) => write!(f, "{} as {}", IdMap::name(*original), IdMap::name(*renamed)),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Literal(Literal),
     Tuple(Vec<Spanned<Expr>>),
