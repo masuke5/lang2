@@ -268,17 +268,11 @@ impl<'a> Analyzer<'a> {
             return Some((fh, code.get_function(func_id).unwrap().code_id, None));
         }
 
-        // let module_path = path.parent()?;
-        // let (module_id, module) = self.module_headers.get(&module_path)?;
+        let module_path = path.parent()?;
+        let (module_id, module) = self.module_headers.get(&module_path)?;
 
-        // if let Some((func_id, fh)) = module.functions.get(&func_id) {
-        //     return Some((fh, *func_id, Some(*module_id)));
-        // }
-
-        for (module_id, module) in self.module_headers.values() {
-            if let Some((func_id, fh)) = module.functions.get(&func_id) {
-                return Some((fh, *func_id, Some(*module_id)));
-            }
+        if let Some((func_id, fh)) = module.functions.get(&func_id) {
+            return Some((fh, *func_id, Some(*module_id)));
         }
 
         None

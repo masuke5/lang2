@@ -37,7 +37,7 @@ fn parse_module<P1: AsRef<Path>, P2: AsRef<Path>>(
     let lexer = Lexer::new(&raw, module_file_id);
     let (tokens, mut errors_when_lex) = lexer.lex();
 
-    let parser = Parser::new(root_path.as_ref(), module_file.as_ref(), tokens, imported_modules);
+    let parser = Parser::new(root_path.as_ref(), tokens, imported_modules);
     match parser.parse(module_path) {
         Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
         Ok(_) => Ok(Err(errors_when_lex)),
@@ -50,7 +50,6 @@ fn parse_module<P1: AsRef<Path>, P2: AsRef<Path>>(
 
 pub struct Parser {
     root_path: PathBuf,
-    file_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
     errors: Vec<Error>,
@@ -63,10 +62,9 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new(root_path: &Path, file_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<SymbolPath>) -> Parser {
+    pub fn new(root_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<SymbolPath>) -> Parser {
         Self {
             root_path: root_path.to_path_buf(),
-            file_path: file_path.to_path_buf(),
             tokens,
             pos: 0,
             errors: Vec::new(),
@@ -258,14 +256,12 @@ impl Parser {
         }
     }
 
-    fn parse_call(&mut self, name: Id, name_span: Span, tyargs: Vec<Spanned<AstType>>) -> Option<Spanned<Expr>> {
-        // let path = self.parse_path_with_first_segment(Some(SymbolPathSegment::new(name)), name_span.clone())?;
-        let path = spanned(SymbolPath::new().append(SymbolPathSegment::new(name)), name_span.clone());
-
+    fn parse_call(&mut self, path: Spanned<SymbolPath>, tyargs: Vec<Spanned<AstType>>) -> Option<Spanned<Expr>> {
         let args = self.parse_args()?;
         let rparen_span = self.prev().span.clone();
 
-        Some(spanned(Expr::Call(path, args, tyargs), Span::merge(&name_span, &rparen_span)))
+        let span = path.span.clone();
+        Some(spanned(Expr::Call(path, args, tyargs), Span::merge(&span, &rparen_span)))
     }
 
     fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {
@@ -316,23 +312,45 @@ impl Parser {
         }
     }
 
+    fn parse_expr_path(&mut self, path: Spanned<SymbolPath>) -> Option<Spanned<Expr>> {
+        match &self.peek().kind {
+            Token::Dot if self.next_token().kind == Token::LessThan => {
+                self.next();
+
+                // parse_type_args() returns None only when the current token is not Token::LessThan
+                let tyargs = self.parse_type_args().unwrap();
+                self.expect(&Token::Lparen, &[Token::Lparen]);
+
+                self.parse_call(path, tyargs)
+            },
+            Token::Lparen => {
+                self.next();
+                self.parse_call(path, Vec::new())
+            },
+            _ => {
+                error!(self, self.peek().span.clone(), "expected `(`, `.<` and `:` but got `{}`", self.peek().kind);
+                None
+            }
+        }
+    }
+
     fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<Spanned<Expr>> {
         self.next();
 
-        if self.peek().kind == Token::Dot && self.next_token().kind == Token::LessThan {
-            self.next();
-
-            // parse_type_args() returns None only when the current token is not Token::LessThan
-            let tyargs = self.parse_type_args().unwrap();
-            self.expect(&Token::Lparen, &[Token::Lparen]);
-
-            self.parse_call(ident, ident_span, tyargs)
-        } else if self.consume(&Token::Lparen) {
-            self.parse_call(ident, ident_span, Vec::new())
-        } else if self.consume(&Token::Colon) {
-            self.parse_struct(ident, ident_span)
-        } else {
-            Some(spanned(Expr::Variable(ident), ident_span.clone()))
+        match &self.peek().kind {
+            Token::Scope => {
+                let path = self.parse_path_with_first_segment(Some(SymbolPathSegment::new(ident)), ident_span.clone())?;
+                self.parse_expr_path(path)
+            },
+            Token::Colon => {
+                self.next();
+                self.parse_struct(ident, ident_span)
+            },
+            Token::Dot if self.next_token().kind == Token::LessThan => self.parse_expr_path(spanned(SymbolPath::new().append_id(ident), ident_span)),
+            Token::Lparen => self.parse_expr_path(spanned(SymbolPath::new().append_id(ident), ident_span)),
+            _ => {
+                Some(spanned(Expr::Variable(ident), ident_span.clone()))
+            },
         }
     }
 

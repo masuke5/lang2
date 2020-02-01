@@ -118,7 +118,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     }
 
     // Parse
-    let parser = Parser::new(&root_path, &file_path, tokens, rustc_hash::FxHashSet::default());
+    let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default());
     let main_module_path = SymbolPath::from_path(&root_path, &file_path);
     let module_buffers = match parser.parse(&main_module_path) {
         Ok(p) => p,

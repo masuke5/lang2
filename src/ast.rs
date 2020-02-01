@@ -111,19 +111,24 @@ impl SymbolPath {
         self.segments.is_empty()
     }
 
-    pub fn tail(&self) -> Option<&SymbolPathSegment> {
-        self.segments.get(self.segments.len() - 1)
-    }
-
     pub fn parent(&self) -> Option<SymbolPath> {
         let mut path = self.clone();
         path.segments.pop()?;
         Some(path)
     }
 
+    pub fn tail(&self) -> Option<&SymbolPathSegment> {
+        self.segments.get(self.segments.len() - 1)
+    }
+
     #[allow(dead_code)]
     pub fn append_str(mut self, s: &str) -> SymbolPath {
         self.segments.push(SymbolPathSegment::new(IdMap::new_id(s)));
+        self
+    }
+
+    pub fn append_id(mut self, id: Id) -> SymbolPath {
+        self.segments.push(SymbolPathSegment::new(id));
         self
     }
 

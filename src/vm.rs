@@ -318,7 +318,7 @@ impl VM {
                 next_id += 1;
             }
 
-            module_global_ids.insert(String::from("::$std"), next_id);
+            module_global_ids.insert(String::from("::std"), next_id);
         }
 
         // global id -> bytecode

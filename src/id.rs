@@ -60,7 +60,7 @@ pub mod reserved_id {
     // Basically use "$" that cannot use for identifiers
     lazy_static! {
         pub static ref MAIN_FUNC: Id = IdMap::new_id("$main");
-        pub static ref STD_MODULE: Id = IdMap::new_id("$std");
+        pub static ref STD_MODULE: Id = IdMap::new_id("std");
         pub static ref CMD: Id = IdMap::new_id("$cmd");
         pub static ref RETURN_VALUE: Id = IdMap::new_id("$rv");
     }
