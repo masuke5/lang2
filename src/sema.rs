@@ -1200,7 +1200,7 @@ impl<'a> Analyzer<'a> {
             let func_headers = func_headers[&path].clone();
 
             let module_header = ModuleHeader {
-                id: path.clone(),
+                path: path.clone(),
                 functions: func_headers,
             };
 
@@ -1281,9 +1281,9 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
         self.push_type_scope();
 
-        let std_module_id = code.push_module(&format!("{}", std_module.id));
+        let std_module_id = code.push_module(&format!("{}", std_module.path));
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
-        self.module_headers.insert(std_module.id.clone(), (std_module_id.clone(), std_module));
+        self.module_headers.insert(std_module.path.clone(), (std_module_id.clone(), std_module));
 
         // Main statements
         let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);

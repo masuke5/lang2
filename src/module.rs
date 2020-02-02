@@ -34,7 +34,7 @@ pub struct FunctionHeader {
 
 #[derive(Debug, Clone)]
 pub struct ModuleHeader {
-    pub id: SymbolPath,
+    pub path: SymbolPath,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
 }
 
@@ -89,7 +89,7 @@ impl ModuleBuilder {
     pub fn build(self, path: SymbolPath) -> (Module, ModuleHeader) {
         let module = Module::Native(self.func_bodies);
         let header = ModuleHeader {
-            id: path,
+            path,
             functions: self.func_headers,
         };
 
