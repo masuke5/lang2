@@ -122,14 +122,12 @@ impl SymbolPath {
     }
 
     #[allow(dead_code)]
-    pub fn append_str(mut self, s: &str) -> SymbolPath {
-        self.segments.push(SymbolPathSegment::new(IdMap::new_id(s)));
-        self
+    pub fn append_str(self, s: &str) -> SymbolPath {
+        self.append_id(IdMap::new_id(s))
     }
 
-    pub fn append_id(mut self, id: Id) -> SymbolPath {
-        self.segments.push(SymbolPathSegment::new(id));
-        self
+    pub fn append_id(self, id: Id) -> SymbolPath {
+        self.append(SymbolPathSegment::new(id))
     }
 
     pub fn append(mut self, segment: SymbolPathSegment) -> SymbolPath {
@@ -225,7 +223,7 @@ pub enum Stmt {
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Spanned<Expr>),
-    Import(Spanned<SymbolPath>),
+    Import(Spanned<ImportRange>),
     FnDef(Box<AstFunction>),
     TypeDef(AstTypeDef),
 }

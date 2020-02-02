@@ -186,6 +186,7 @@ impl Parser {
         Some(spanned(path, span))
     }
 
+    #[allow(dead_code)]
     fn parse_path(&mut self) -> Option<Spanned<SymbolPath>> {
         let first = self.expect_identifier(&[Token::Scope]);
         let first = first.map(|id| SymbolPathSegment::new(id));
@@ -759,17 +760,61 @@ impl Parser {
         Some(spanned(Stmt::While(cond?, Box::new(stmt)), span))
     }
 
+    fn parse_import_range(&mut self) -> Option<Spanned<ImportRange>> {
+        let left_span = self.peek().span.clone();
+
+        let mut module_path = SymbolPath::new();
+
+        let first = self.expect_identifier(&[Token::Scope])?;
+        module_path = module_path.append_id(first);
+
+        let mut symbol_list = None;
+        while self.consume(&Token::Scope) {
+            match &self.peek().kind {
+                Token::Identifier(id) => {
+                    module_path = module_path.append_id(*id);
+                    self.next();
+                },
+                Token::Asterisk => {
+                    symbol_list = Some(ImportSymbolList::All);
+                    self.next();
+                    break;
+                },
+                // TODO: Token::Lbrace
+                _ => {
+                    error!(self, self.peek().span.clone(), "expected identifier, `*` and `{{` but got `{}`", self.peek().kind);
+                    return None;
+                }
+            }
+        }
+
+        if symbol_list.is_none() {
+            let symbol_id = module_path.tail().unwrap().id;
+            symbol_list = Some(ImportSymbolList::Single(ImportSymbol::Id(symbol_id)));
+            module_path = module_path.parent().unwrap();
+        }
+
+        let range = ImportRange {
+            module_path,
+            symbols: symbol_list.unwrap(),
+        };
+
+        let span = Span::merge(&left_span, &self.prev().span);
+        Some(spanned(range, span))
+    }
+
     fn parse_import_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let import_token_span = self.peek().span.clone();
         self.next();
 
-        let module_path = self.parse_path()?;
+        let import_range = self.parse_skip(Self::parse_import_range, &[Token::Semicolon])?;
+        let module_path = &import_range.kind.module_path;
 
         // Parse the module file if the module is not loaded already
-        if let Some(module_file) = module::find_module_file(&self.root_path, &module_path.kind) {
-            if !self.loaded_modules.contains(&module_path.kind) {
-                self.loaded_modules.insert(module_path.kind.clone());
-                match parse_module(&self.root_path, &module_file, &module_path.kind, self.loaded_modules.clone()) {
+        if let Some(module_file) = module::find_module_file(&self.root_path, &module_path) {
+            if !self.loaded_modules.contains(&module_path) {
+                self.loaded_modules.insert(module_path.clone());
+                match parse_module(&self.root_path, &module_file, &module_path, self.loaded_modules.clone()) {
                     Ok(Ok(module_buffers)) => {
                         // Merge module buffers
                         for (module_path, program) in module_buffers {
@@ -779,22 +824,22 @@ impl Parser {
                     },
                     Ok(Err(mut errors)) => self.errors.append(&mut errors),
                     Err(err) => {
-                        error!(self, module_path.span, "Unable to load module {}: {}", module_path.kind, err);
+                        error!(self, import_range.span, "Unable to load module {}: {}", module_path, err);
                         return None;
                     },
                 }
             }
         } else {
-            error!(self, module_path.span, "Cannot find module {}", module_path.kind);
+            error!(self, import_range.span, "Cannot find module `{}`", module_path);
             return None;
         }
 
-        self.imported_modules.push(module_path.kind.clone());
+        self.imported_modules.push(module_path.clone());
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let span = Span::merge(&import_token_span, &self.prev().span);
-        Some(spanned(Stmt::Import(module_path), span))
+        Some(spanned(Stmt::Import(import_range), span))
     }
 
     fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {

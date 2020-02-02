@@ -101,9 +101,11 @@ impl Variable {
     }
 }
 
+pub const SELF_MODULE_ID: u16 = std::u16::MAX;
+
 #[derive(Debug)]
 pub struct Analyzer<'a> {
-    function_headers: FxHashMap<Id, FunctionHeader>,
+    function_headers: FxHashMap<Id, (u16, FunctionHeader)>, // u16 is module_id
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
@@ -264,8 +266,16 @@ impl<'a> Analyzer<'a> {
         assert!(!path.is_empty());
 
         let func_id = path.tail().unwrap().id;
-        if let Some(fh) = self.function_headers.get(&func_id) {
-            return Some((fh, code.get_function(func_id).unwrap().code_id, None));
+        if let Some((module_id, fh)) = self.function_headers.get(&func_id) {
+            let module_id = if *module_id == SELF_MODULE_ID { None } else { Some(*module_id) };
+            let code_id = match module_id {
+                Some(module_id) => {
+                    let (_, (_, module)) = self.module_headers.iter().find(|(_, (id, _))| *id == module_id).unwrap();
+                    module.functions[&func_id].0
+                },
+                None => code.get_function(func_id).unwrap().code_id,
+            };
+            return Some((fh, code_id, module_id));
         }
 
         let module_path = path.parent()?;
@@ -934,25 +944,72 @@ impl<'a> Analyzer<'a> {
         Some(insts)
     }
 
-    fn walk_stmts_including_def(&mut self, code: &mut BytecodeBuilder, stmts: Vec<Spanned<Stmt>>) -> InstList {
+    fn insert_func_headers_by_range(&mut self, range: &ImportRange) {
+        let (module_id, module) = &self.module_headers[&range.module_path];
+        match &range.symbols {
+            ImportSymbolList::Single(symbol) => {
+                match symbol {
+                    ImportSymbol::Id(id) => {
+                        let (_, header) = &module.functions[&id];
+                        self.function_headers.insert(*id, (*module_id, header.clone()));
+                    },
+                    ImportSymbol::As(id, renamed) => {
+                        let (_, header) = &module.functions[&id];
+                        self.function_headers.insert(*renamed, (*module_id, header.clone()));
+                    }
+                }
+            },
+            ImportSymbolList::Multiple(symbols) => {
+                for symbol in symbols {
+                    match symbol {
+                        ImportSymbol::Id(id) => {
+                            let (_, header) = &module.functions[&id];
+                            self.function_headers.insert(*id, (*module_id, header.clone()));
+                        },
+                        ImportSymbol::As(id, renamed) => {
+                            let (_, header) = &module.functions[&id];
+                            self.function_headers.insert(*renamed, (*module_id, header.clone()));
+                        }
+                    }
+                }
+            },
+            ImportSymbolList::All => {
+                for (name, (_, header)) in &module.functions {
+                    self.function_headers.insert(*name, (*module_id, header.clone()));
+                }
+            },
+        }
+    }
+
+    fn insert_extern_module_headers(&mut self, stmts: &Vec<Spanned<Stmt>>) {
+        for stmt in stmts {
+            if let Stmt::Import(range) = &stmt.kind {
+                self.insert_func_headers_by_range(&range.kind);
+            }
+        }
+    }
+
+    fn insert_type_headers_in_stmts(&mut self, stmts: &Vec<Spanned<Stmt>>) {
         // Insert type headers
-        for stmt in &stmts {
+        for stmt in stmts {
             if let Stmt::TypeDef(tydef) = &stmt.kind {
                 self.insert_type_header(tydef);
             }
         }
+    }
 
+    fn walk_type_def_in_stmts(&mut self, stmts: &Vec<Spanned<Stmt>>) {
         // Walk the type definitions
-        for stmt in &stmts {
+        for stmt in stmts {
             if let Stmt::TypeDef(tydef) = &stmt.kind {
                 self.walk_type_def(tydef.clone()); // TODO: Avoid clone()
             }
         }
+    }
 
-        self.resolve_type_sizes();
-
+    fn insert_func_headers_in_stmts(&mut self, code: &mut BytecodeBuilder, stmts: &Vec<Spanned<Stmt>>) {
         // Insert function headers
-        'l: for stmt in &stmts {
+        'l: for stmt in stmts {
             if let Stmt::FnDef(func) = &stmt.kind {
                 if self.function_headers.contains_key(&func.name) {
                     error!(self, stmt.span.clone(), "this function name exists already");
@@ -960,11 +1017,21 @@ impl<'a> Analyzer<'a> {
                 }
 
                 if let Some((header, func)) = self.generate_function_header(&func) {
-                    self.function_headers.insert(func.name, header);
+                    self.function_headers.insert(func.name, (SELF_MODULE_ID, header));
                     code.insert_function_header(func);
                 }
             }
         }
+    }
+
+    fn walk_stmts_including_def(&mut self, code: &mut BytecodeBuilder, stmts: Vec<Spanned<Stmt>>) -> InstList {
+        self.insert_extern_module_headers(&stmts);
+        self.insert_type_headers_in_stmts(&stmts);
+        self.walk_type_def_in_stmts(&stmts);
+
+        self.resolve_type_sizes();
+
+        self.insert_func_headers_in_stmts(code, &stmts);
 
         // Walk the statements
         let mut insts = InstList::new();
@@ -1098,7 +1165,7 @@ impl<'a> Analyzer<'a> {
         self.push_type_scope();
 
         let header = match self.function_headers.get(&func.name) {
-            Some(fh) => fh,
+            Some((_, fh)) => fh,
             None => return, // the function headers may be not inserted by errors
         };
 
@@ -1276,7 +1343,7 @@ impl<'a> Analyzer<'a> {
             return_ty: Type::Unit,
             ty_params: Vec::new(),
         };
-        self.function_headers.insert(*reserved_id::MAIN_FUNC, header);
+        self.function_headers.insert(*reserved_id::MAIN_FUNC, (SELF_MODULE_ID, header));
 
         self.push_scope();
         self.push_type_scope();
@@ -1284,6 +1351,12 @@ impl<'a> Analyzer<'a> {
         let std_module_id = code.push_module(&format!("{}", std_module.path));
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
         self.module_headers.insert(std_module.path.clone(), (std_module_id.clone(), std_module));
+
+        // import std::*
+        self.insert_func_headers_by_range(&ImportRange {
+            module_path: SymbolPath::new().append_id(*reserved_id::STD_MODULE),
+            symbols: ImportSymbolList::All,
+        });
 
         // Main statements
         let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);
