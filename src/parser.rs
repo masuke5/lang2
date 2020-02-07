@@ -809,7 +809,11 @@ impl Parser {
 
                     break;
                 },
-                // Token::Asterisk => {},
+                Token::Asterisk => {
+                    self.next();
+                    top = Some(ImportRange::All);
+                    break;
+                },
                 _ => break,
             }
         }
@@ -876,7 +880,8 @@ impl Parser {
 
         let mut failed = false;
         let paths = import_range.kind.to_paths();
-        for (_, path) in &paths {
+        for path in &paths {
+            let path = path.as_path();
             if !self.load_module(path, &import_range.span, true) {
                 failed = true;
             }

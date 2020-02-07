@@ -977,19 +977,40 @@ impl<'a> Analyzer<'a> {
         Some(insts)
     }
 
+    // TODO: Refactoring
     fn insert_func_headers_by_range(&mut self, range: &Spanned<ImportRange>) {
         let paths = range.kind.to_paths();
-        for (renamed_symbol_name, path) in paths {
-            if !self.module_headers.contains_key(&path) {
+        for path in paths {
+            if let ImportRangePath::All(spath) = path {
+                match self.module_headers.get(&spath) {
+                    Some((module_id, module)) => {
+                        for (func_name, (_, func)) in &module.functions {
+                            self.function_headers.insert(*func_name, NewFunctionHeader::new(*module_id, func.clone()));
+                        }
+                    },
+                    _ => {
+                        error!(self, range.span.clone(), "undefined module `{}`", spath);
+                    },
+                }
+                continue;
+            }
+
+            let spath = path.as_path();
+            if !self.module_headers.contains_key(spath) {
                 // if path is not module
-                if let Some(parent) = path.parent() {
+                if let Some(parent) = spath.parent() {
                     // if there is parent
-                    let symbol = path.tail().unwrap();
+                    let symbol = spath.tail().unwrap();
                     if let Some((module_id, module)) = self.module_headers.get(&parent) {
                         match module.functions.get(&symbol.id) {
                             Some((_, func)) => {
-                                let header = NewFunctionHeader::new_renamed(*module_id, func.clone(), symbol.id);
-                                self.function_headers.insert(renamed_symbol_name, header);
+                                let (name, header) = match &path {
+                                    ImportRangePath::Path(_) => (symbol.id, NewFunctionHeader::new(*module_id, func.clone())),
+                                    ImportRangePath::Renamed(_, renamed) => (*renamed, NewFunctionHeader::new_renamed(*module_id, func.clone(), symbol.id)),
+                                    ImportRangePath::All(_) => unreachable!(),
+                                };
+
+                                self.function_headers.insert(name, header);
                             },
                             None => {
                                 error!(self, range.span.clone(), "undefined function `{}` in `{}`", IdMap::name(symbol.id), parent);
@@ -998,7 +1019,7 @@ impl<'a> Analyzer<'a> {
                     }
                 } else {
                     // if there is not parent
-                    error!(self, range.span.clone(), "undefined module `{}`", path);
+                    error!(self, range.span.clone(), "undefined module `{}`", spath);
                 }
             } else {
                 // if path is module, does nothing
@@ -1377,7 +1398,11 @@ impl<'a> Analyzer<'a> {
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
         self.module_headers.insert(std_module.path.clone(), (std_module_id.clone(), std_module));
 
-        // FIXME: import std::*
+        let range = ImportRange::Scope(*reserved_id::STD_MODULE, Box::new(ImportRange::All));
+        self.insert_func_headers_by_range(&Spanned {
+            kind: range,
+            span: program.main_stmts[0].span.clone(), // ??
+        });
 
         // Main statements
         let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);

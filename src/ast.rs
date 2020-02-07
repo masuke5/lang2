@@ -154,6 +154,7 @@ impl SymbolPathSegment {
 pub enum ImportRange {
     Symbol(Id),
     Renamed(Id, Id),
+    All,
     Multiple(Vec<ImportRange>),
     Scope(Id, Box<ImportRange>),
 }
@@ -163,6 +164,7 @@ impl fmt::Display for ImportRange {
         match self {
             Self::Symbol(id) => write!(f, "{}", IdMap::name(*id)),
             Self::Renamed(id, renamed) => write!(f, "{} as {}", IdMap::name(*id), IdMap::name(*renamed)),
+            Self::All => write!(f, "*"),
             Self::Multiple(symbols) => {
                 write!(f, "{{")?;
                 write_iter!(f, symbols.iter())?;
@@ -173,18 +175,36 @@ impl fmt::Display for ImportRange {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportRangePath {
+    All(SymbolPath),
+    Renamed(SymbolPath, Id),
+    Path(SymbolPath),
+}
+
+impl ImportRangePath {
+    pub fn as_path(&self) -> &SymbolPath {
+        match self {
+            Self::All(path) | Self::Renamed(path, _) | Self::Path(path) => path,
+        }
+    }
+}
+
 impl ImportRange {
-    pub fn to_paths(&self) -> Vec<(Id, SymbolPath)> {
-        fn convert(range: &ImportRange, path: &mut SymbolPath, paths: &mut Vec<(Id, SymbolPath)>) {
+    pub fn to_paths(&self) -> Vec<ImportRangePath> {
+        fn convert(range: &ImportRange, path: &mut SymbolPath, paths: &mut Vec<ImportRangePath>) {
             match range {
                 ImportRange::Symbol(id) => {
                     let path = path.clone().append_id(*id);
-                    paths.push((*id, path));
+                    paths.push(ImportRangePath::Path(path));
                 },
                 ImportRange::Renamed(id, renamed) => {
                     let path = path.clone().append_id(*id);
-                    paths.push((*renamed, path));
+                    paths.push(ImportRangePath::Renamed(path, *renamed));
                 }
+                ImportRange::All => {
+                    paths.push(ImportRangePath::All(path.clone()));
+                },
                 ImportRange::Multiple(ranges) => {
                     for range in ranges {
                         convert(range, path, paths);
@@ -504,7 +524,7 @@ mod tests {
         type IR = ImportRange;
         let id = IdMap::new_id;
 
-        // m1::m2::{m3, m4 as m5, m6::m7};
+        // m1::m2::{m3, m4 as m5, m6::m7, m8::*};
         let range = IR::Scope(
             id("m1"),
             Box::new(IR::Scope(id("m2"),
@@ -512,6 +532,7 @@ mod tests {
                     IR::Symbol(id("m3")),
                     IR::Renamed(id("m4"), id("m5")),
                     IR::Scope(id("m6"), Box::new(IR::Symbol(id("m7")))),
+                    IR::Scope(id("m8"), Box::new(IR::All)),
                 ]))
             ))
         );
@@ -523,11 +544,13 @@ mod tests {
             .append_str("m2");
         let expected = vec![
             // m1::m2::m3
-            (id("m3"), base_path.clone().append_str("m3")),
+            ImportRangePath::Path(base_path.clone().append_str("m3")),
             // m1::m2::m4
-            (id("m5"), base_path.clone().append_str("m4")),
+            ImportRangePath::Renamed(base_path.clone().append_str("m4"), id("m5")),
             // m1::m2::m6::m7
-            (id("m7"), base_path.clone().append_str("m6").append_str("m7")),
+            ImportRangePath::Path(base_path.clone().append_str("m6").append_str("m7")),
+            // m1::m2::m8::*
+            ImportRangePath::All(base_path.clone().append_str("m8")),
         ];
 
         assert_eq!(expected, paths);
