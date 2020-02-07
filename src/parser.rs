@@ -774,8 +774,7 @@ impl Parser {
                     let id = *id;
                     self.next();
 
-                    // TODO: Substitute Equal with As
-                    if self.consume(&Token::Equal) {
+                    if self.consume(&Token::As) {
                         let renamed = self.expect_identifier(&[Token::Semicolon])?;
                         top = Some(ImportRange::Renamed(id, renamed));
 
