@@ -1,7 +1,7 @@
 use std::collections::LinkedList;
 use std::mem;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ty::*;
 use crate::ast::{*, Param as AstParam};
@@ -138,7 +138,8 @@ impl NewFunctionHeader {
 
 #[derive(Debug)]
 pub struct Analyzer<'a> {
-    function_headers: FxHashMap<Id, NewFunctionHeader>, // u16 is module_id
+    function_headers: FxHashMap<Id, NewFunctionHeader>,
+    visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
@@ -156,6 +157,7 @@ impl<'a> Analyzer<'a> {
     pub fn new() -> Self {
         Self {
             function_headers: FxHashMap::default(),
+            visible_modules: FxHashSet::default(),
             module_headers: FxHashMap::default(),
             variables: HashMapWithScope::new(),
             types: HashMapWithScope::new(),
@@ -298,27 +300,38 @@ impl<'a> Analyzer<'a> {
     fn find_func(&self, code: &BytecodeBuilder, path: &SymbolPath) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
         assert!(!path.is_empty());
 
+        let module_path = path.parent().unwrap();
         let func_id = path.tail().unwrap().id;
-        if let Some(header) = self.function_headers.get(&func_id) {
-            let module_id = if header.is_in_self_module() { None } else { Some(header.module_id) };
-            let code_id = match module_id {
-                Some(module_id) => {
-                    let (_, (_, module)) = self.module_headers.iter().find(|(_, (id, _))| *id == module_id).unwrap();
-                    module.functions[&header.original_name.unwrap_or(func_id)].0
-                },
-                None => code.get_function(func_id).unwrap().code_id,
-            };
-            return Some((&header.header, code_id, module_id));
+
+        if module_path.is_empty() {
+            if let Some(header) = self.function_headers.get(&func_id) {
+                let module_id = if header.is_in_self_module() { None } else { Some(header.module_id) };
+                // Get code id of the function
+                let code_id = match module_id {
+                    Some(module_id) => {
+                        // Get the module from the ID
+                        let (_, (_, module)) = self.module_headers.iter().find(|(_, (id, _))| *id == module_id).unwrap();
+                        // Get the function original name
+                        let id = header.original_name.unwrap_or(func_id);
+
+                        module.functions[&id].0
+                    },
+                    None => code.get_function(func_id).unwrap().code_id,
+                };
+
+                Some((&header.header, code_id, module_id))
+            } else {
+                None
+            }
+        } else {
+            if !self.visible_modules.contains(&module_path) {
+                return None;
+            }
+
+            // Get the function from the module
+            let (module_id, module) = self.module_headers.get(&module_path)?;
+            module.functions.get(&func_id).map(|(func_id, fh)| (fh, *func_id, Some(*module_id)))
         }
-
-        let module_path = path.parent()?;
-        let (module_id, module) = self.module_headers.get(&module_path)?;
-
-        if let Some((func_id, fh)) = module.functions.get(&func_id) {
-            return Some((fh, *func_id, Some(*module_id)));
-        }
-
-        None
     }
 
     // Pointer
@@ -977,7 +990,6 @@ impl<'a> Analyzer<'a> {
         Some(insts)
     }
 
-    // TODO: Refactoring
     fn insert_func_headers_by_range(&mut self, range: &Spanned<ImportRange>) {
         let paths = range.kind.to_paths();
         for path in paths {
@@ -1022,7 +1034,8 @@ impl<'a> Analyzer<'a> {
                     error!(self, range.span.clone(), "undefined module `{}`", spath);
                 }
             } else {
-                // if path is module, does nothing
+                // if path is module
+                self.visible_modules.insert(path.as_path().clone());
             }
         }
     }
