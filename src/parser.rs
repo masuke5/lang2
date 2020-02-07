@@ -761,54 +761,77 @@ impl Parser {
     }
 
     fn parse_import_range(&mut self) -> Option<Spanned<ImportRange>> {
-        let left_span = self.peek().span.clone();
-
-        let mut module_path = SymbolPath::new();
+        let mut stack = Vec::new();
+        let mut top = None;
 
         let first = self.expect_identifier(&[Token::Scope])?;
-        module_path = module_path.append_id(first);
+        let first_span = self.prev().span.clone();
+        stack.push(first);
 
-        let mut symbol_list = None;
         while self.consume(&Token::Scope) {
             match &self.peek().kind {
                 Token::Identifier(id) => {
-                    module_path = module_path.append_id(*id);
+                    let id = *id;
                     self.next();
+
+                    // TODO: Substitute Equal with As
+                    if self.consume(&Token::Equal) {
+                        let renamed = self.expect_identifier(&[Token::Semicolon])?;
+                        top = Some(ImportRange::Renamed(id, renamed));
+
+                        break;
+                    } else {
+                        stack.push(id);
+                    }
                 },
-                Token::Asterisk => {
-                    symbol_list = Some(ImportSymbolList::All);
+                Token::Lbrace => {
                     self.next();
+
+                    let mut ranges = Vec::new();
+
+                    if let Some(first) = self.parse_skip(Self::parse_import_range, &[Token::Rbrace, Token::Comma]) {
+                        ranges.push(first.kind);
+                    }
+
+                    while self.peek().kind != Token::Rbrace && self.consume(&Token::Comma) {
+                        if self.peek().kind == Token::Rbrace {
+                            break;
+                        }
+
+                        if let Some(range) = self.parse_skip(Self::parse_import_range, &[Token::Rbrace, Token::Comma]) {
+                            ranges.push(range.kind);
+                        }
+                    }
+
+                    self.expect(&Token::Rbrace, &[Token::Rbrace]);
+
+                    top = Some(ImportRange::Multiple(ranges));
+
                     break;
                 },
-                // TODO: Token::Lbrace
-                _ => {
-                    error!(self, self.peek().span.clone(), "expected identifier, `*` and `{{` but got `{}`", self.peek().kind);
-                    return None;
-                }
+                // Token::Asterisk => {},
+                _ => break,
             }
         }
 
-        if symbol_list.is_none() {
-            let symbol_id = module_path.tail().unwrap().id;
-            symbol_list = Some(ImportSymbolList::Single(ImportSymbol::Id(symbol_id)));
-            module_path = module_path.parent().unwrap();
+        let end_span = self.prev().span.clone();
+
+        let mut range = top.unwrap_or_else(|| ImportRange::Symbol(stack.pop().unwrap()));
+        while let Some(id) = stack.pop() {
+            range = ImportRange::Scope(id, Box::new(range));
         }
 
-        let range = ImportRange {
-            module_path,
-            symbols: symbol_list.unwrap(),
-        };
-
-        let span = Span::merge(&left_span, &self.prev().span);
+        let span = Span::merge(&first_span, &end_span);
         Some(spanned(range, span))
     }
-
-    fn parse_import_stmt(&mut self) -> Option<Spanned<Stmt>> {
-        let import_token_span = self.peek().span.clone();
-        self.next();
-
-        let import_range = self.parse_skip(Self::parse_import_range, &[Token::Semicolon])?;
-        let module_path = &import_range.kind.module_path;
+    
+    fn load_module(&mut self, module_path: &SymbolPath, span: &Span, load_parent: bool) -> bool {
+        // TODO: Remove later
+        if let Some(SymbolPathSegment { id }) = module_path.segments.get(0) {
+            if *id == *crate::id::reserved_id::STD_MODULE {
+                return true;
+            }
+        }
 
         // Parse the module file if the module is not loaded already
         if let Some(module_file) = module::find_module_file(&self.root_path, &module_path) {
@@ -824,17 +847,44 @@ impl Parser {
                     },
                     Ok(Err(mut errors)) => self.errors.append(&mut errors),
                     Err(err) => {
-                        error!(self, import_range.span, "Unable to load module {}: {}", module_path, err);
-                        return None;
+                        error!(self, span.clone(), "Unable to load module {}: {}", module_path, err);
+                        return false;
                     },
                 }
             }
         } else {
-            error!(self, import_range.span, "Cannot find module `{}`", module_path);
-            return None;
+            match module_path.parent() {
+                Some(path) if load_parent => {
+                    return self.load_module(&path, span, false);
+                },
+                _ => {
+                    error!(self, span.clone(), "Cannot find module `{}`", module_path);
+                    return false;
+                },
+            }
         }
 
         self.imported_modules.push(module_path.clone());
+        true
+    }
+
+    fn parse_import_stmt(&mut self) -> Option<Spanned<Stmt>> {
+        let import_token_span = self.peek().span.clone();
+        self.next();
+
+        let import_range = self.parse_skip(Self::parse_import_range, &[Token::Semicolon])?;
+
+        let mut failed = false;
+        let paths = import_range.kind.to_paths();
+        for (_, path) in &paths {
+            if !self.load_module(path, &import_range.span, true) {
+                failed = true;
+            }
+        }
+
+        if failed {
+            return None;
+        }
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 

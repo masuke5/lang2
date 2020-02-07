@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem;
 
 use crate::span::Spanned;
 use crate::id::{Id, IdMap};
@@ -149,51 +150,57 @@ impl SymbolPathSegment {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct ImportRange {
-     pub module_path: SymbolPath,
-     pub symbols: ImportSymbolList,
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+pub enum ImportRange {
+    Symbol(Id),
+    Renamed(Id, Id),
+    Multiple(Vec<ImportRange>),
+    Scope(Id, Box<ImportRange>),
 }
 
 impl fmt::Display for ImportRange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}::{}", self.module_path, self.symbols)
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum ImportSymbolList {
-    Single(ImportSymbol),
-    Multiple(Vec<ImportSymbol>),
-    All,
-}
-
-impl fmt::Display for ImportSymbolList {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Single(symbol) => write!(f, "{}", symbol),
+            Self::Symbol(id) => write!(f, "{}", IdMap::name(*id)),
+            Self::Renamed(id, renamed) => write!(f, "{} as {}", IdMap::name(*id), IdMap::name(*renamed)),
             Self::Multiple(symbols) => {
                 write!(f, "{{")?;
                 write_iter!(f, symbols.iter())?;
                 write!(f, "}}")
             },
-            Self::All => write!(f, "*"),
+            Self::Scope(module, rest) => write!(f, "{}::{}", IdMap::name(*module), rest),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum ImportSymbol {
-    Id(Id),
-    As(Id, Id),
-}
-
-impl fmt::Display for ImportSymbol {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Id(id) => write!(f, "{}", IdMap::name(*id)),
-            Self::As(original, renamed) => write!(f, "{} as {}", IdMap::name(*original), IdMap::name(*renamed)),
+impl ImportRange {
+    pub fn to_paths(&self) -> Vec<(Id, SymbolPath)> {
+        fn convert(range: &ImportRange, path: &mut SymbolPath, paths: &mut Vec<(Id, SymbolPath)>) {
+            match range {
+                ImportRange::Symbol(id) => {
+                    let path = path.clone().append_id(*id);
+                    paths.push((*id, path));
+                },
+                ImportRange::Renamed(id, renamed) => {
+                    let path = path.clone().append_id(*id);
+                    paths.push((*renamed, path));
+                }
+                ImportRange::Multiple(ranges) => {
+                    for range in ranges {
+                        convert(range, path, paths);
+                    }
+                },
+                ImportRange::Scope(id, rest) => {
+                    *path = mem::replace(path, SymbolPath::new()).append_id(*id);
+                    convert(rest, path, paths);
+                },
+            }
         }
+
+        let mut paths = Vec::new();
+        convert(self, &mut SymbolPath::new(), &mut paths);
+
+        paths
     }
 }
 
@@ -490,5 +497,39 @@ mod tests {
             .append_str("test2")
             .append_str("test");
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_import_range_to_paths() {
+        type IR = ImportRange;
+        let id = IdMap::new_id;
+
+        // m1::m2::{m3, m4 as m5, m6::m7};
+        let range = IR::Scope(
+            id("m1"),
+            Box::new(IR::Scope(id("m2"),
+                Box::new(IR::Multiple(vec![
+                    IR::Symbol(id("m3")),
+                    IR::Renamed(id("m4"), id("m5")),
+                    IR::Scope(id("m6"), Box::new(IR::Symbol(id("m7")))),
+                ]))
+            ))
+        );
+
+        let paths = range.to_paths();
+
+        let base_path = SymbolPath::new()
+            .append_str("m1")
+            .append_str("m2");
+        let expected = vec![
+            // m1::m2::m3
+            (id("m3"), base_path.clone().append_str("m3")),
+            // m1::m2::m4
+            (id("m5"), base_path.clone().append_str("m4")),
+            // m1::m2::m6::m7
+            (id("m7"), base_path.clone().append_str("m6").append_str("m7")),
+        ];
+
+        assert_eq!(expected, paths);
     }
 }

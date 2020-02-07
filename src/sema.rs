@@ -101,11 +101,44 @@ impl Variable {
     }
 }
 
-pub const SELF_MODULE_ID: u16 = std::u16::MAX;
+#[derive(Debug)]
+pub struct NewFunctionHeader {
+    module_id: u16,
+    original_name: Option<Id>,
+    header: FunctionHeader,
+}
+
+impl NewFunctionHeader {
+    const SELF_MODULE_ID: u16 = std::u16::MAX;
+
+    fn new(module_id: u16, header: FunctionHeader) -> Self {
+        Self {
+            module_id,
+            original_name: None,
+            header,
+        }
+    }
+
+    fn new_renamed(module_id: u16, header: FunctionHeader, original_name: Id) -> Self {
+        Self {
+            module_id,
+            original_name: Some(original_name),
+            header,
+        }
+    }
+
+    fn new_self(header: FunctionHeader) -> Self {
+        Self::new(Self::SELF_MODULE_ID, header)
+    }
+
+    fn is_in_self_module(&self) -> bool {
+        self.module_id == Self::SELF_MODULE_ID
+    }
+}
 
 #[derive(Debug)]
 pub struct Analyzer<'a> {
-    function_headers: FxHashMap<Id, (u16, FunctionHeader)>, // u16 is module_id
+    function_headers: FxHashMap<Id, NewFunctionHeader>, // u16 is module_id
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
@@ -266,16 +299,16 @@ impl<'a> Analyzer<'a> {
         assert!(!path.is_empty());
 
         let func_id = path.tail().unwrap().id;
-        if let Some((module_id, fh)) = self.function_headers.get(&func_id) {
-            let module_id = if *module_id == SELF_MODULE_ID { None } else { Some(*module_id) };
+        if let Some(header) = self.function_headers.get(&func_id) {
+            let module_id = if header.is_in_self_module() { None } else { Some(header.module_id) };
             let code_id = match module_id {
                 Some(module_id) => {
                     let (_, (_, module)) = self.module_headers.iter().find(|(_, (id, _))| *id == module_id).unwrap();
-                    module.functions[&func_id].0
+                    module.functions[&header.original_name.unwrap_or(func_id)].0
                 },
                 None => code.get_function(func_id).unwrap().code_id,
             };
-            return Some((fh, code_id, module_id));
+            return Some((&header.header, code_id, module_id));
         }
 
         let module_path = path.parent()?;
@@ -944,47 +977,39 @@ impl<'a> Analyzer<'a> {
         Some(insts)
     }
 
-    fn insert_func_headers_by_range(&mut self, range: &ImportRange) {
-        let (module_id, module) = &self.module_headers[&range.module_path];
-        match &range.symbols {
-            ImportSymbolList::Single(symbol) => {
-                match symbol {
-                    ImportSymbol::Id(id) => {
-                        let (_, header) = &module.functions[&id];
-                        self.function_headers.insert(*id, (*module_id, header.clone()));
-                    },
-                    ImportSymbol::As(id, renamed) => {
-                        let (_, header) = &module.functions[&id];
-                        self.function_headers.insert(*renamed, (*module_id, header.clone()));
-                    }
-                }
-            },
-            ImportSymbolList::Multiple(symbols) => {
-                for symbol in symbols {
-                    match symbol {
-                        ImportSymbol::Id(id) => {
-                            let (_, header) = &module.functions[&id];
-                            self.function_headers.insert(*id, (*module_id, header.clone()));
-                        },
-                        ImportSymbol::As(id, renamed) => {
-                            let (_, header) = &module.functions[&id];
-                            self.function_headers.insert(*renamed, (*module_id, header.clone()));
+    fn insert_func_headers_by_range(&mut self, range: &Spanned<ImportRange>) {
+        let paths = range.kind.to_paths();
+        for (renamed_symbol_name, path) in paths {
+            if !self.module_headers.contains_key(&path) {
+                // if path is not module
+                if let Some(parent) = path.parent() {
+                    // if there is parent
+                    let symbol = path.tail().unwrap();
+                    if let Some((module_id, module)) = self.module_headers.get(&parent) {
+                        match module.functions.get(&symbol.id) {
+                            Some((_, func)) => {
+                                let header = NewFunctionHeader::new_renamed(*module_id, func.clone(), symbol.id);
+                                self.function_headers.insert(renamed_symbol_name, header);
+                            },
+                            None => {
+                                error!(self, range.span.clone(), "undefined function `{}` in `{}`", IdMap::name(symbol.id), parent);
+                            },
                         }
                     }
+                } else {
+                    // if there is not parent
+                    error!(self, range.span.clone(), "undefined module `{}`", path);
                 }
-            },
-            ImportSymbolList::All => {
-                for (name, (_, header)) in &module.functions {
-                    self.function_headers.insert(*name, (*module_id, header.clone()));
-                }
-            },
+            } else {
+                // if path is module, does nothing
+            }
         }
     }
 
     fn insert_extern_module_headers(&mut self, stmts: &Vec<Spanned<Stmt>>) {
         for stmt in stmts {
             if let Stmt::Import(range) = &stmt.kind {
-                self.insert_func_headers_by_range(&range.kind);
+                self.insert_func_headers_by_range(&range);
             }
         }
     }
@@ -1017,7 +1042,7 @@ impl<'a> Analyzer<'a> {
                 }
 
                 if let Some((header, func)) = self.generate_function_header(&func) {
-                    self.function_headers.insert(func.name, (SELF_MODULE_ID, header));
+                    self.function_headers.insert(func.name, NewFunctionHeader::new_self(header));
                     code.insert_function_header(func);
                 }
             }
@@ -1165,7 +1190,7 @@ impl<'a> Analyzer<'a> {
         self.push_type_scope();
 
         let header = match self.function_headers.get(&func.name) {
-            Some((_, fh)) => fh,
+            Some(h) => &h.header,
             None => return, // the function headers may be not inserted by errors
         };
 
@@ -1343,7 +1368,7 @@ impl<'a> Analyzer<'a> {
             return_ty: Type::Unit,
             ty_params: Vec::new(),
         };
-        self.function_headers.insert(*reserved_id::MAIN_FUNC, (SELF_MODULE_ID, header));
+        self.function_headers.insert(*reserved_id::MAIN_FUNC, NewFunctionHeader::new_self(header));
 
         self.push_scope();
         self.push_type_scope();
@@ -1352,11 +1377,7 @@ impl<'a> Analyzer<'a> {
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
         self.module_headers.insert(std_module.path.clone(), (std_module_id.clone(), std_module));
 
-        // import std::*
-        self.insert_func_headers_by_range(&ImportRange {
-            module_path: SymbolPath::new().append_id(*reserved_id::STD_MODULE),
-            symbols: ImportSymbolList::All,
-        });
+        // FIXME: import std::*
 
         // Main statements
         let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);
