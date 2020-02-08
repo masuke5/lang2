@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap, reserved_id};
 use crate::bytecode::{Bytecode, Function, opcode, BytecodeBuilder, InstList};
-use crate::module::{FunctionHeader, ModuleHeader};
+use crate::module::{Module, FunctionHeader, ModuleHeader, ModuleContainer};
 use crate::translate;
 use crate::utils::HashMapWithScope;
 
@@ -1390,7 +1390,6 @@ impl<'a> Analyzer<'a> {
         mut self,
         mut code: BytecodeBuilder,
         program: Program,
-        std_module: ModuleHeader,
         func_headers: &FxHashMap<SymbolPath, FxHashMap<Id, (u16, FunctionHeader)>>,
     ) -> Result<Bytecode, Vec<Error>> {
         assert!(self.module_headers.is_empty());
@@ -1407,9 +1406,7 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
         self.push_type_scope();
 
-        let std_module_id = code.push_module(&format!("{}", std_module.path));
         self.module_headers = self.load_modules(&mut code, program.imported_modules, func_headers);
-        self.module_headers.insert(std_module.path.clone(), (std_module_id.clone(), std_module));
 
         let range = ImportRange::Scope(*reserved_id::STD_MODULE, Box::new(ImportRange::All));
         self.insert_func_headers_by_range(&Spanned {
@@ -1436,22 +1433,39 @@ impl<'a> Analyzer<'a> {
     }
 }
 
+pub enum ModuleBody {
+    Normal(Bytecode),
+    Native(Module),
+}
+
 pub fn analyze_semantics(
     module_buffers: FxHashMap<SymbolPath, Program>,
-    std_module: ModuleHeader
-) -> Result<FxHashMap<String, Bytecode>, Vec<Error>> {
+    native_modules: &ModuleContainer,
+) -> Result<FxHashMap<String, ModuleBody>, Vec<Error>> {
     type FunctionHeaders = FxHashMap<Id, (u16, FunctionHeader)>;
     let mut func_headers: FxHashMap<SymbolPath, FunctionHeaders> = FxHashMap::default();
     let mut bytecode_builders: FxHashMap<SymbolPath, BytecodeBuilder> = FxHashMap::default();
     let mut analyzers: FxHashMap<SymbolPath, Analyzer> = FxHashMap::default();
-    let mut bytecodes: FxHashMap<String, Bytecode> = FxHashMap::default();
+    let mut bodies: FxHashMap<String, ModuleBody> = FxHashMap::default();
 
+    let mut imported_native_modules: FxHashSet<SymbolPath> = FxHashSet::default();
+
+    // Insert all function headers
     for (name, program) in &module_buffers {
         analyzers.insert(name.clone(), Analyzer::new());
         bytecode_builders.insert(name.clone(), BytecodeBuilder::new());
         let headers = analyzers.get_mut(name).unwrap()
             .get_public_function_headers(bytecode_builders.get_mut(name).unwrap(), program);
         func_headers.insert(name.clone(), headers);
+
+        // Native modules
+        for path in &program.imported_modules {
+            if let Some(module) = native_modules.get(path) {
+                let headers = &module.header.functions;
+                func_headers.insert(path.clone(), headers.clone());
+                imported_native_modules.insert(path.clone());
+            }
+        }
     }
 
     let mut errors = Vec::new();
@@ -1459,19 +1473,24 @@ pub fn analyze_semantics(
     for (name, program) in module_buffers {
         let analyzer = analyzers.remove(&name).unwrap();
         let builder = bytecode_builders.remove(&name).unwrap();
-        let bytecode = match analyzer.analyze(builder, program, std_module.clone(), &func_headers) {
+        let bytecode = match analyzer.analyze(builder, program, &func_headers) {
             Ok(b) => b,
             Err(mut new_errors) => {
                 errors.append(&mut new_errors);
                 continue;
             },
         };
-        bytecodes.insert(format!("{}", name), bytecode);
+        bodies.insert(format!("{}", name), ModuleBody::Normal(bytecode));
+    }
+
+    for path in &imported_native_modules {
+        let module = native_modules.get(path).unwrap().module.clone();
+        bodies.insert(format!("{}", path), ModuleBody::Native(module));
     }
 
     if !errors.is_empty() {
         Err(errors)
     } else {
-        Ok(bytecodes)
+        Ok(bodies)
     }
 }

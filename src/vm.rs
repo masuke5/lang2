@@ -12,6 +12,7 @@ use crate::bytecode::{Bytecode, opcode, opcode_name};
 use crate::value::{Value, Lang2String};
 use crate::gc::Gc;
 use crate::module::Module;
+use crate::sema::ModuleBody;
 
 const STACK_SIZE: usize = 10000;
 
@@ -294,7 +295,7 @@ impl VM {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
     
-    pub fn run(&mut self, module_bytecodes: Vec<(String, Bytecode)>, std_module: Module, enable_trace: bool, enable_measure: bool) {
+    pub fn run(&mut self, module_bodies: Vec<(String, ModuleBody)>, enable_trace: bool, enable_measure: bool) {
         #[inline]
         fn ip_after_jump_to(ip: usize, loc: u8) -> usize {
             let loc = i8::from_le_bytes([loc]) as isize;
@@ -303,28 +304,33 @@ impl VM {
 
         // global id -> module
         let mut all_modules = Vec::new();
-        for _ in &module_bytecodes {
-            all_modules.push(Module::Normal);
+        for (_, body) in &module_bodies {
+            let module = match body {
+                ModuleBody::Normal(_) => Module::Normal,
+                ModuleBody::Native(module) => module.clone(),
+            };
+            all_modules.push(module);
         }
-        all_modules.push(std_module);
 
         // module name -> global id
         let mut module_global_ids = FxHashMap::default();
 
         {
             let mut next_id = 0;
-            for (name, _) in &module_bytecodes {
+            for (name, _) in &module_bodies {
                 module_global_ids.insert(name.clone(), next_id);
                 next_id += 1;
             }
-
-            module_global_ids.insert(String::from("::std"), next_id);
         }
 
         // global id -> bytecode
-        let mut bytecodes: Vec<Option<Bytecode>> = module_bytecodes.into_iter().map(|(_, bc)| Some(bc)).collect();
-
-        bytecodes.push(None); // $std
+        let bytecodes: Vec<Option<Bytecode>> = module_bodies
+            .into_iter()
+            .map(|(_, body)| match body {
+                ModuleBody::Normal(bc) => Some(bc),
+                ModuleBody::Native(_) => None,
+            })
+            .collect();
 
         // string map start per module
         let mut string_map_start = Vec::with_capacity(all_modules.len());

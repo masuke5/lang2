@@ -11,6 +11,7 @@ use crate::ast::SymbolPath;
 pub const MODULE_EXTENSION: &str = "lang2";
 pub const ROOT_MODULE_FILE: &str = "mod.lang2";
 
+#[derive(Clone)]
 pub struct NativeFunctionBody(pub fn(&mut VM));
 
 impl fmt::Debug for NativeFunctionBody {
@@ -19,7 +20,7 @@ impl fmt::Debug for NativeFunctionBody {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Module {
     Normal,
     Native(Vec<(usize, NativeFunctionBody)>), // parameter size, function pointer
@@ -36,6 +37,45 @@ pub struct FunctionHeader {
 pub struct ModuleHeader {
     pub path: SymbolPath,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
+}
+
+#[derive(Debug)]
+pub struct ModuleWithChild {
+    pub module: Module,
+    pub header: ModuleHeader,
+    pub child_modules: FxHashMap<Id, ModuleWithChild>,
+}
+
+#[derive(Debug)]
+pub struct ModuleContainer {
+    modules: FxHashMap<Id, ModuleWithChild>,
+}
+
+impl ModuleContainer {
+    pub fn new() -> Self {
+        Self {
+            modules: FxHashMap::default(),
+        }
+    }
+
+    pub fn add(&mut self, id: Id, module: ModuleWithChild) {
+        self.modules.insert(id, module);
+    }
+
+    pub fn contains(&self, path: &SymbolPath) -> bool {
+        self.get(path).is_some()
+    }
+
+    pub fn get(&self, path: &SymbolPath) -> Option<&ModuleWithChild> {
+        let mut iter = path.segments.iter();
+
+        let mut module = self.modules.get(&iter.next()?.id)?; 
+        for segment in iter {
+            module = module.child_modules.get(&segment.id)?;
+        }
+
+        Some(&module)
+    }
 }
 
 #[derive(Debug)]
@@ -86,14 +126,18 @@ impl ModuleBuilder {
         ));
     }
 
-    pub fn build(self, path: SymbolPath) -> (Module, ModuleHeader) {
+    pub fn build(self, path: SymbolPath) -> ModuleWithChild {
         let module = Module::Native(self.func_bodies);
         let header = ModuleHeader {
             path,
             functions: self.func_headers,
         };
 
-        (module, header)
+        ModuleWithChild {
+            module,
+            header,
+            child_modules: FxHashMap::default(),
+        }
     }
 }
 

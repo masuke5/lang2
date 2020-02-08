@@ -36,6 +36,8 @@ use parser::Parser;
 use ast::*;
 use id::{Id, IdMap, reserved_id};
 use vm::VM;
+use module::ModuleContainer;
+use sema::ModuleBody;
 
 use clap::{Arg, App, ArgMatches};
 use rustc_hash::FxHashMap;
@@ -105,7 +107,8 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
         eprintln!("warning: \"--trace\" and \"--measure\" are enabled only when the interpreter is built on debug mode");
     }
 
-    let (std_module, std_module_header) = stdlib::module();
+    let mut container = ModuleContainer::new();
+    container.add(*reserved_id::STD_MODULE, stdlib::module());
 
     let pwd = env::current_dir().expect("Unable to get current directory");
     let file_path = file_path.unwrap_or(PathBuf::from(&pwd).join("cmd"));
@@ -121,7 +124,7 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     }
 
     // Parse
-    let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default());
+    let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default(), &container);
     let main_module_path = SymbolPath::from_path(&root_path, &file_path);
     let module_buffers = match parser.parse(&main_module_path) {
         Ok(p) => p,
@@ -146,29 +149,31 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
 
     // Analyze semantics and translate to a bytecode
 
-    let mut module_bytecodes = sema::analyze_semantics(module_buffers, std_module_header)?;
+    let mut module_bodies = sema::analyze_semantics(module_buffers, &container)?;
 
     if matches.is_present("dump-insts") {
-        for (name, bytecode) in module_bytecodes {
-            println!("--- {}", name);
-            bytecode.dump();
+        for (name, body) in module_bodies {
+            if let ModuleBody::Normal(bytecode) = body {
+                println!("--- {}", name);
+                bytecode.dump();
+            }
         }
 
         return Ok(());
     }
 
-    let mut new_module_bytecodes = Vec::with_capacity(module_bytecodes.len());
-    let main_bytecode = module_bytecodes.remove(&IdMap::name(main_module_name)).unwrap();
+    let mut new_module_bodies = Vec::with_capacity(module_bodies.len());
+    let main_body = module_bodies.remove(&IdMap::name(main_module_name)).unwrap();
 
     // After push the main bytecode, push the other bytecodes
-    new_module_bytecodes.push((IdMap::name(main_module_name), main_bytecode));
-    for (name, bytecode) in module_bytecodes {
-        new_module_bytecodes.push((name, bytecode));
+    new_module_bodies.push((IdMap::name(main_module_name), main_body));
+    for (name, body) in module_bodies {
+        new_module_bodies.push((name, body));
     }
 
     // Execute the bytecode
     let mut vm = VM::new();
-    vm.run(new_module_bytecodes, std_module, enable_trace, enable_measure);
+    vm.run(new_module_bodies, enable_trace, enable_measure);
 
     Ok(())
 }

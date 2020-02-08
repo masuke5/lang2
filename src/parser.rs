@@ -9,8 +9,9 @@ use crate::span::{Span, Spanned};
 use crate::error::Error;
 use crate::token::*;
 use crate::ast::*;
-use crate::id::{Id, IdMap};
+use crate::id::{Id, IdMap, reserved_id};
 use crate::module;
+use crate::module::ModuleContainer;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
@@ -22,11 +23,12 @@ macro_rules! error {
     };
 }
 
-fn parse_module<P1: AsRef<Path>, P2: AsRef<Path>>(
+fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     root_path: P1,
     module_file: P2,
     module_path: &SymbolPath,
-    imported_modules: FxHashSet<SymbolPath>
+    imported_modules: FxHashSet<SymbolPath>,
+    native_modules: &'a ModuleContainer,
 ) -> Result<Result<FxHashMap<SymbolPath, Program>, Vec<Error>>, io::Error> {
     use crate::lexer::Lexer;
 
@@ -37,7 +39,7 @@ fn parse_module<P1: AsRef<Path>, P2: AsRef<Path>>(
     let lexer = Lexer::new(&raw, module_file_id);
     let (tokens, mut errors_when_lex) = lexer.lex();
 
-    let parser = Parser::new(root_path.as_ref(), tokens, imported_modules);
+    let parser = Parser::new(root_path.as_ref(), tokens, imported_modules, native_modules);
     match parser.parse(module_path) {
         Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
         Ok(_) => Ok(Err(errors_when_lex)),
@@ -48,7 +50,7 @@ fn parse_module<P1: AsRef<Path>, P2: AsRef<Path>>(
     }
 }
 
-pub struct Parser {
+pub struct Parser<'a> {
     root_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
@@ -59,10 +61,11 @@ pub struct Parser {
     module_buffers: FxHashMap<SymbolPath, Program>,
     imported_modules: Vec<SymbolPath>,
     loaded_modules: FxHashSet<SymbolPath>,
+    native_modules: &'a ModuleContainer,
 }
 
-impl Parser {
-    pub fn new(root_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<SymbolPath>) -> Parser {
+impl<'a> Parser<'a> {
+    pub fn new(root_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<SymbolPath>, native_modules: &'a ModuleContainer) -> Parser<'a> {
         Self {
             root_path: root_path.to_path_buf(),
             tokens,
@@ -73,6 +76,7 @@ impl Parser {
             module_buffers: FxHashMap::default(),
             imported_modules: Vec::new(),
             loaded_modules,
+            native_modules,
         }
     }
 
@@ -829,18 +833,11 @@ impl Parser {
     }
     
     fn load_module(&mut self, module_path: &SymbolPath, span: &Span, load_parent: bool) -> bool {
-        // TODO: Remove later
-        if let Some(SymbolPathSegment { id }) = module_path.segments.get(0) {
-            if *id == *crate::id::reserved_id::STD_MODULE {
-                return true;
-            }
-        }
-
         // Parse the module file if the module is not loaded already
         if let Some(module_file) = module::find_module_file(&self.root_path, &module_path) {
             if !self.loaded_modules.contains(&module_path) {
                 self.loaded_modules.insert(module_path.clone());
-                match parse_module(&self.root_path, &module_file, &module_path, self.loaded_modules.clone()) {
+                match parse_module(&self.root_path, &module_file, &module_path, self.loaded_modules.clone(), &self.native_modules) {
                     Ok(Ok(module_buffers)) => {
                         // Merge module buffers
                         for (module_path, program) in module_buffers {
@@ -855,6 +852,9 @@ impl Parser {
                     },
                 }
             }
+        } else if self.native_modules.contains(module_path) {
+            self.imported_modules.push(module_path.clone());
+            return true;
         } else {
             match module_path.parent() {
                 Some(path) if load_parent => {
@@ -1240,6 +1240,8 @@ impl Parser {
     }
 
     pub fn parse(mut self, module_path: &SymbolPath) -> Result<FxHashMap<SymbolPath, Program>, Vec<Error>> {
+        self.imported_modules.push(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
+
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
                 continue;

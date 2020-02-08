@@ -1,7 +1,7 @@
 use crate::id::reserved_id;
 use crate::ty::{Type, TypeCon};
 use crate::vm::VM;
-use crate::module::{ModuleBuilder, Module, ModuleHeader};
+use crate::module::{ModuleBuilder, ModuleWithChild};
 use crate::ast::SymbolPath;
 
 fn printnln(vm: &mut VM) {
@@ -28,7 +28,7 @@ fn println(vm: &mut VM) {
     println!("{}", s);
 }
 
-pub fn module() -> (Module, ModuleHeader) {
+pub fn module() -> ModuleWithChild {
     let mut b = ModuleBuilder::new();
 
     b.define_func("printn",   vec![ltype!(int)], ltype!(unit), printn);
