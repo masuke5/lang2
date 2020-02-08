@@ -895,6 +895,27 @@ impl<'a> Analyzer<'a> {
 
                 return Some(expr)
             },
+            Expr::If(cond, then_expr, None) => {
+                let cond = self.walk_expr_with_conversion(code, *cond, &Type::Bool);
+                let then_expr = self.walk_expr(code, *then_expr);
+                try_some!(cond, then_expr);
+
+                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
+
+                (translate::if_expr(cond, then_expr.insts, &then_expr.ty), Type::Unit)
+            },
+            Expr::If(cond, then_expr, Some(else_expr)) => {
+                let cond = self.walk_expr_with_conversion(code, *cond, &Type::Bool);
+                let then = self.walk_expr(code, *then_expr);
+                try_some!(cond, then);
+
+                let els = self.walk_expr_with_conversion(code, *else_expr, &then.ty)?;
+
+                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
+                unify(&mut self.errors, &els.span, &then.ty, &els.ty);
+
+                (translate::if_else_expr(cond, then.insts, els.insts, &then.ty), then.ty.clone())
+            },
         };
 
         Some(ExprInfo::new(insts, ty, expr.span))
@@ -906,25 +927,6 @@ impl<'a> Analyzer<'a> {
                 let expr = self.walk_expr(code, expr)?;
 
                 translate::expr_stmt(expr)
-            },
-            Stmt::If(cond, stmt, None) => {
-                let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
-                let then_insts = self.walk_stmt(code, *stmt);
-                try_some!(cond, then_insts);
-
-                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
-
-                translate::if_stmt(cond, then_insts)
-            },
-            Stmt::If(cond, then_stmt, Some(else_stmt)) => {
-                let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
-                let then = self.walk_stmt(code, *then_stmt);
-                let els = self.walk_stmt(code, *else_stmt);
-                try_some!(cond, then, els);
-
-                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
-
-                translate::if_else_stmt(cond, then, els)
             },
             Stmt::While(cond, stmt) => {
                 let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);

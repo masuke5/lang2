@@ -101,12 +101,10 @@ fn early_return(a: int): int = {
 
 fn fib(n: int): int = {
     if n = 0 || n = 1 {
-        return n;
+        n
     } else {
-        return fib(n - 1) + fib(n - 2);
+        fib(n - 1) + fib(n - 2)
     }
-
-    0
 }
 
 ## tuple ##
@@ -288,3 +286,10 @@ let num = {
     }
 };
 test_eq("block expression", 211268, num);
+
+let num = if false {
+    9318051
+} else {
+    f(12834)
+};
+test_eq("if expression", 12834, num);

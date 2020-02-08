@@ -1,11 +1,9 @@
-import module::module2::*;
+import module::module2::pow_inner;
 
 fn pow(n: int, a: int): int = {
     if a <= 1 {
-        return n;
+        n
     } else {
-        return pow_inner(n, a);
+        pow_inner(n, a)
     }
-
-    0
 }

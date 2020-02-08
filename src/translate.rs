@@ -396,27 +396,35 @@ pub fn expr_stmt(expr: ExprInfo) -> InstList {
     insts
 }
 
-pub fn if_stmt(cond: ExprInfo, then: InstList) -> InstList {
+pub fn if_expr(cond: ExprInfo, then: InstList, ty: &Type) -> InstList {
     with_label!([end], {
         let mut insts = cond.insts;
         push_copy_inst(&mut insts, &cond.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, end.id());
         insts.append(then);
+        push_copy_inst(&mut insts, ty);
         end.set_here(&insts);
         insts
     })
 }
 
-pub fn if_else_stmt(cond: ExprInfo, then: InstList, els: InstList) -> InstList {
+pub fn if_else_expr(cond: ExprInfo, then: InstList, els: InstList, ty: &Type) -> InstList {
     with_label!([elsl, end], {
         let mut insts = cond.insts;
         push_copy_inst(&mut insts, &cond.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, elsl.id());
+
+        // Then-clause
         insts.append(then);
+        push_copy_inst(&mut insts, ty);
         insts.push_jump(opcode::JUMP, end.id());
+
+        // Else-clause
         elsl.set_here(&insts);
         insts.append(els);
+        push_copy_inst(&mut insts, ty);
         end.set_here(&insts);
+
         insts
     })
 }

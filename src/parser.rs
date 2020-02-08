@@ -21,10 +21,16 @@ macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
         {
             let mess = format!($fmt $(,$arg)*);
-            println!("{} {:?}", mess, $span);
             $self.errors.push(Error::new(&mess, $span));
         }
     };
+}
+
+fn needs_semicolon(expr: &Expr) -> bool {
+    match expr {
+        Expr::Block(..) | Expr::If(..) => false,
+        _ => true,
+    }
 }
 
 fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
@@ -460,6 +466,7 @@ impl<'a> Parser<'a> {
                 }
             },
             Token::Lbrace => self.parse_block_expr(),
+            Token::If => self.parse_if_expr(),
             _ => {
                 error!(self, token.span, "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`", self.peek().kind);
                 None
@@ -667,7 +674,9 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
-                self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+                if needs_semicolon(&expr.kind) {
+                    self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+                }
 
                 let span = expr.span.clone();
                 stmts.push(spanned(Stmt::Expr(expr), span));
@@ -687,14 +696,18 @@ impl<'a> Parser<'a> {
 
         Some(spanned(Expr::Block(stmts, Box::new(result_expr)), span.clone()))
     }
-
-    fn expect_block(&mut self) -> Option<Spanned<Stmt>> {
+    
+    fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
         if self.peek().kind != Token::Lbrace {
             error!(self, self.peek().span.clone(), "expected block");
             return None;
         }
 
-        let block = self.parse_block_expr()?;
+        self.parse_block_expr()
+    }
+
+    fn expect_block(&mut self) -> Option<Spanned<Stmt>> {
+        let block = self.expect_block_expr()?;
         let span = block.span.clone();
         let block = spanned(Stmt::Expr(block), span);
 
@@ -730,28 +743,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_if_stmt(&mut self) -> Option<Spanned<Stmt>> {
+    fn parse_if_expr(&mut self) -> Option<Spanned<Expr>> {
         let if_token_span = self.peek().span.clone();
         self.next();
 
         // Parse condition expression
         let expr = self.parse_skip(Self::parse_expr, &[Token::Lbrace, Token::Else]);
         // Parse then-clause
-        let stmt = self.expect_block()?;
+        let then_expr = self.expect_block_expr()?;
 
         // Parse else-clause
-        let else_stmt = if self.consume(&Token::Else) {
+        let else_expr = if self.consume(&Token::Else) {
             if self.peek().kind == Token::If {
-                Some(self.parse_skip(Self::parse_if_stmt, &[Token::Rbrace])?)
+                Some(self.parse_skip(Self::parse_if_expr, &[Token::Rbrace])?)
             } else {
-                Some(self.expect_block()?)
+                Some(self.expect_block_expr()?)
             }
         } else {
             None
         }.map(Box::new);
 
-        let span = Span::merge(&if_token_span, &stmt.span);
-        Some(spanned(Stmt::If(expr?, Box::new(stmt), else_stmt), span))
+        let span = Span::merge(&if_token_span, &then_expr.span);
+        Some(spanned(Expr::If(Box::new(expr?), Box::new(then_expr), else_expr), span))
     }
 
     fn parse_while_stmt(&mut self) -> Option<Spanned<Stmt>> {
@@ -904,7 +917,6 @@ impl<'a> Parser<'a> {
         let stmt = match token.kind {
             Token::Let => self.parse_bind_stmt(),
             Token::Return => self.parse_return(),
-            Token::If => self.parse_if_stmt(),
             Token::While => self.parse_while_stmt(),
             Token::Import => self.parse_import_stmt(),
             Token::Fn => {
@@ -934,11 +946,8 @@ impl<'a> Parser<'a> {
                 return self.parse_stmt_assign(expr);
             }
 
-            match &expr.kind {
-                Expr::Block(_, _) => {},
-                _ => {
-                    self.expect(&Token::Semicolon, &[Token::Semicolon])?;
-                },
+            if needs_semicolon(&expr.kind) {
+                self.expect(&Token::Semicolon, &[Token::Semicolon])?;
             }
 
             let span = expr.span.clone();
@@ -1209,9 +1218,8 @@ impl<'a> Parser<'a> {
         self.expect(&Token::Equal, &[Token::Equal]);
 
         let body = self.parse_skip(Self::parse_expr, &[Token::Semicolon, Token::Rbrace])?;
-        match &body.kind {
-            Expr::Block(..) => {},
-            _ => self.expect(&Token::Semicolon, &[Token::Semicolon])?, 
+        if needs_semicolon(&body.kind) {
+            self.expect(&Token::Semicolon, &[Token::Semicolon])?;
         }
 
         Some(AstFunction {

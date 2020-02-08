@@ -240,6 +240,7 @@ pub enum Expr {
     Negative(Box<Spanned<Expr>>),
     Alloc(Box<Spanned<Expr>>, bool),
     Block(Vec<Spanned<Stmt>>, Box<Spanned<Expr>>),
+    If(Box<Spanned<Expr>>, Box<Spanned<Expr>>, Option<Box<Spanned<Expr>>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -247,7 +248,6 @@ pub enum Stmt {
     Bind(Id, Spanned<Expr>, bool),
     Expr(Spanned<Expr>),
     Return(Option<Spanned<Expr>>),
-    If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Spanned<Expr>),
     Import(Spanned<ImportRange>),
@@ -412,6 +412,14 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
 
             dump_expr(expr, strings, depth + 1);
         },
+        Expr::If(cond, body, else_expr) => {
+            println!("if {}", span_to_string(&expr.span));
+            dump_expr(&cond, strings, depth + 1);
+            dump_expr(&body, strings, depth + 1);
+            if let Some(else_stmt) = else_expr {
+                dump_expr(&else_stmt, strings, depth + 1);
+            }
+        },
     }
 }
 
@@ -439,14 +447,6 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
                 dump_expr(&expr, strings, depth + 1);
             }
         },
-        Stmt::If(cond, body, else_stmt) => {
-            println!("if {}", span_to_string(&stmt.span));
-            dump_expr(&cond, strings, depth + 1);
-            dump_stmt(&body, strings, depth + 1);
-            if let Some(else_stmt) = else_stmt {
-                dump_stmt(&else_stmt, strings, depth + 1);
-            }
-        },
         Stmt::While(cond, body) => {
             println!("while {}", span_to_string(&stmt.span));
             dump_expr(&cond, strings, depth + 1);
@@ -466,6 +466,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
                     .iter()
                     .map(|p| format!("{}{}: {}", format_bool(p.is_mutable, "mut "), IdMap::name(p.name), p.ty.kind))
                 ),
+
                 func.return_ty.kind,
             );
             dump_expr(&func.body, strings, 1);
