@@ -477,7 +477,7 @@ impl<'a> Analyzer<'a> {
                 (translate::literal_str(i), ty)
             },
             Expr::Literal(Literal::Unit) => {
-                (translate::literal_unit(), Type::Unit)
+                (InstList::new(), Type::Unit)
             },
             Expr::Literal(Literal::True) => {
                 (translate::literal_true(), Type::Bool)
@@ -882,6 +882,19 @@ impl<'a> Analyzer<'a> {
                 let insts = translate::alloc(expr);
                 (insts, ty)
             },
+            Expr::Block(stmts, result_expr) => {
+                self.push_scope();
+
+                let mut insts = self.walk_stmts_including_def(code, stmts);
+                let mut expr = self.walk_expr(code, *result_expr)?;
+
+                mem::swap(&mut expr.insts, &mut insts);
+                expr.insts.append(insts);
+
+                self.pop_scope();
+
+                return Some(expr)
+            },
         };
 
         Some(ExprInfo::new(insts, ty, expr.span))
@@ -921,13 +934,6 @@ impl<'a> Analyzer<'a> {
                 unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
 
                 translate::while_stmt(cond, body)
-            },
-            Stmt::Block(stmts) => {
-                self.push_scope();
-                let insts = self.walk_stmts_including_def(code, stmts);
-                self.pop_scope();
-
-                insts
             },
             Stmt::Bind(name, expr, is_mutable) => {
                 if self.function_headers.contains_key(&name) {

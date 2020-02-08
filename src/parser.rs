@@ -19,7 +19,10 @@ fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
 
 macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
-        $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
+        {
+            let mess = format!($fmt $(,$arg)*);
+            $self.errors.push(Error::new(&mess, $span));
+        }
     };
 }
 
@@ -455,6 +458,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             },
+            Token::Lbrace => self.parse_block_expr(),
             _ => {
                 error!(self, token.span, "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`", self.peek().kind);
                 None
@@ -636,64 +640,51 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::Bind(name, expr, is_mutable), span))
     }
 
-    fn parse_expr_stmt(&mut self) -> Option<Spanned<Stmt>> {
-        let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon, Token::Assign])?;
-
-        if self.consume(&Token::Assign) {
-            let rhs = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
-
-            self.expect(&Token::Semicolon, &[Token::Semicolon])?;
-            let semicolon_span = &self.prev().span;
-
-            let span = Span::merge(&expr.span, semicolon_span);
-
-            Some(spanned(Stmt::Assign(expr, rhs), span))
-        } else {
-            self.expect(&Token::Semicolon, &[Token::Semicolon])?;
-            let semicolon_span = &self.prev().span;
-
-            let span = Span::merge(&expr.span, semicolon_span);
-
-            Some(spanned(Stmt::Expr(expr), span))
-        }
-    }
-
-    // Return None if reach EOF
-    fn parse_multiple_statements(&mut self, end_token: &Token) -> Option<Vec<Spanned<Stmt>>> {
-        let mut stmts = Vec::new();
-
-        while self.peek().kind != *end_token {
-            if let Token::EOF = self.peek().kind {
-                error!(self, self.peek().span.clone(), "expected `{}`, but got EOF", end_token);
-                return None;
-            }
-
-            // Skip semicolon
-            if self.consume(&Token::Semicolon) {
-                continue;
-            }
-
-            if let Some(stmt) = self.parse_stmt() {
-                stmts.push(stmt);
-            }
-        }
-
-        Some(stmts)
-    }
-
-    fn parse_block(&mut self) -> Option<Spanned<Stmt>> {
-        // Eat "{"
+    fn parse_block_expr(&mut self) -> Option<Spanned<Expr>> {
         let lbrace_span = self.peek().span.clone();
         self.next();
 
-        let stmts = self.parse_multiple_statements(&Token::Rbrace)?;
+        let mut result_expr = None;
+        let mut stmts = Vec::new();
 
-        // Eat "}"
-        let rbrace_span = self.peek().span.clone();
-        self.next();
+        while !self.consume(&Token::Rbrace) {
+            let (is_expr, stmt) = self.parse_stmt_without_expr();
+            if is_expr {
+                let expr = self.parse_expr()?;
 
-        let span = Span::merge(&lbrace_span, &rbrace_span);
-        Some(spanned(Stmt::Block(stmts), span))
+                // Assign statement
+                if self.consume(&Token::Assign) {
+                    if let Some(stmt) = self.parse_stmt_assign(expr) {
+                        stmts.push(stmt);
+                    }
+
+                    continue;
+                }
+
+                if self.consume(&Token::Rbrace) {
+                    result_expr = Some(expr);
+                    break;
+                }
+
+                self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+
+                let span = expr.span.clone();
+                stmts.push(spanned(Stmt::Expr(expr), span));
+            } else {
+                if let Some(stmt) = stmt {
+                    stmts.push(stmt);
+                }
+            }
+        }
+
+        let span = Span::merge(&lbrace_span, &self.prev().span);
+
+        // Push literal unit if there is no result expression
+        let result_expr = result_expr.unwrap_or_else(|| {
+            spanned(Expr::Literal(Literal::Unit), span.clone())
+        });
+
+        Some(spanned(Expr::Block(stmts, Box::new(result_expr)), span.clone()))
     }
 
     fn expect_block(&mut self) -> Option<Spanned<Stmt>> {
@@ -702,9 +693,20 @@ impl<'a> Parser<'a> {
             return None;
         }
 
-        let block = self.parse_block()?;
+        let block = self.parse_block_expr()?;
+        let span = block.span.clone();
+        let block = spanned(Stmt::Expr(block), span);
 
         Some(block)
+    }
+
+    fn parse_stmt_assign(&mut self, lhs: Spanned<Expr>) -> Option<Spanned<Stmt>> {
+        let rhs = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
+
+        self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+
+        let span = Span::merge(&lhs.span, &self.prev().span);
+        Some(spanned(Stmt::Assign(lhs, rhs), span))
     }
 
     fn parse_return(&mut self) -> Option<Spanned<Stmt>> {
@@ -896,29 +898,52 @@ impl<'a> Parser<'a> {
         Some(spanned(Stmt::Import(import_range), span))
     }
 
-    fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {
+    fn parse_stmt_without_expr(&mut self) -> (bool, Option<Spanned<Stmt>>) {
         let token = self.peek();
-
-        match token.kind {
+        let stmt = match token.kind {
             Token::Let => self.parse_bind_stmt(),
-            Token::Lbrace => self.parse_block(),
             Token::Return => self.parse_return(),
             Token::If => self.parse_if_stmt(),
             Token::While => self.parse_while_stmt(),
             Token::Import => self.parse_import_stmt(),
             Token::Fn => {
                 let fn_span = token.span.clone();
-                let func = self.parse_fn_decl()?;
+                let func = self.parse_fn_decl();
                 let span = Span::merge(&fn_span, &self.prev().span);
-                Some(spanned(Stmt::FnDef(Box::new(func)), span))
+                func.map(|func| spanned(Stmt::FnDef(Box::new(func)), span))
             },
             Token::Type => {
                 let type_span = token.span.clone();
-                let tydef = self.parse_def_type()?;
+                let tydef = self.parse_def_type();
                 let span = Span::merge(&type_span, &self.prev().span);
-                Some(spanned(Stmt::TypeDef(tydef), span))
+                tydef.map(|tydef| spanned(Stmt::TypeDef(tydef), span))
             },
-            _ => self.parse_expr_stmt(),
+            _ => return (true, None),
+        };
+
+        (false, stmt)
+    }
+
+    fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {
+        let (is_expr, stmt) = self.parse_stmt_without_expr();
+        if is_expr {
+            let expr = self.parse_expr()?;
+
+            if self.consume(&Token::Assign) {
+                return self.parse_stmt_assign(expr);
+            }
+
+            match &expr.kind {
+                Expr::Block(_, _) => {},
+                _ => {
+                    self.expect(&Token::Semicolon, &[Token::Semicolon])?;
+                },
+            }
+
+            let span = expr.span.clone();
+            Some(spanned(Stmt::Expr(expr), span))
+        } else {
+            stmt
         }
     }
 

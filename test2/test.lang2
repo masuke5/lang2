@@ -291,3 +291,11 @@ test_eq("mutually importing", 243, pow(3, 5));
 ## other expressions ##
 
 test_eq("negative", -39, -15 - 24);
+
+let num = {
+    let num = 120944;
+    {
+        num + 90324
+    }
+};
+test_eq("block expression", 211268, num);

@@ -145,12 +145,6 @@ pub fn literal_str(id: usize) -> InstList {
     insts
 }
 
-pub fn literal_unit() -> InstList {
-    let mut insts = InstList::new();
-    insts.push_inst(opcode::ZERO, 1);
-    insts
-}
-
 pub fn literal_true() -> InstList {
     let mut insts = InstList::new();
     insts.push_inst_noarg(opcode::TRUE);

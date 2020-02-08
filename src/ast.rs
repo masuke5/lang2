@@ -239,13 +239,13 @@ pub enum Expr {
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
     Alloc(Box<Spanned<Expr>>, bool),
+    Block(Vec<Spanned<Stmt>>, Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
     Bind(Id, Spanned<Expr>, bool),
     Expr(Spanned<Expr>),
-    Block(Vec<Spanned<Stmt>>),
     Return(Option<Spanned<Expr>>),
     If(Spanned<Expr>, Box<Spanned<Stmt>>, Option<Box<Spanned<Stmt>>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
@@ -404,6 +404,14 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             println!("new{} {}", format_bool(*is_mutable, " mut"), span_to_string(&expr.span));
             dump_expr(&expr_, strings, depth + 1);
         },
+        Expr::Block(stmts, expr) => {
+            println!("block {}", span_to_string(&expr.span));
+            for stmt in stmts {
+                dump_stmt(&stmt, strings, depth + 1);
+            }
+
+            dump_expr(expr, strings, depth + 1);
+        },
     }
 }
 
@@ -424,12 +432,6 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
         Stmt::Expr(expr) => {
             print!("\r");
             dump_expr(&expr, strings, depth);
-        },
-        Stmt::Block(stmts) => {
-            println!("block {}", span_to_string(&stmt.span));
-            for stmt in stmts {
-                dump_stmt(&stmt, strings, depth + 1);
-            }
         },
         Stmt::Return(expr) => {
             println!("return {}", span_to_string(&stmt.span));
