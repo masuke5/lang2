@@ -1,9 +1,11 @@
 import module::module2::*;
 
-fn pow(n: int, a: int): int {
+fn pow(n: int, a: int): int = {
     if a <= 1 {
         return n;
     } else {
         return pow_inner(n, a);
     }
+
+    0
 }

@@ -8,7 +8,7 @@ use crate::ast::{*, Param as AstParam};
 use crate::error::Error;
 use crate::span::{Span, Spanned};
 use crate::id::{Id, IdMap, reserved_id};
-use crate::bytecode::{Bytecode, Function, opcode, BytecodeBuilder, InstList};
+use crate::bytecode::{Bytecode, Function, BytecodeBuilder, InstList};
 use crate::module::{Module, FunctionHeader, ModuleHeader, ModuleContainer};
 use crate::translate;
 use crate::utils::HashMapWithScope;
@@ -1255,13 +1255,12 @@ impl<'a> Analyzer<'a> {
         }
 
         // `None` is not returned because `func.body` is always a block statement
-        let mut insts = self.walk_stmt(code, func.body).unwrap();
+        let body = self.walk_expr(code, func.body).unwrap();
 
-        // Push a return instruction if the return value type is unit
+        unify(&mut self.errors, &body.span, &return_ty, &body.ty);
+
         let return_var = self.get_return_var();
-        if let Type::Unit = return_var.ty {
-            insts.push_inst_noarg(opcode::RETURN);
-        }
+        let insts = translate::return_stmt(return_var.loc, Some(body), &return_ty);
 
         self.function_insts.push_back((func.name, insts));
 

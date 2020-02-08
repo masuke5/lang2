@@ -1,4 +1,4 @@
-fn test_eq(name: *string, expected: int, actual: int) {
+fn test_eq(name: *string, expected: int, actual: int) = {
     print(name);
     print(" => ");
 
@@ -14,7 +14,7 @@ fn test_eq(name: *string, expected: int, actual: int) {
     }
 }
 
-fn test(name: *string, ok: bool) {
+fn test(name: *string, ok: bool) = {
     print(name);
     print(" => ");
 

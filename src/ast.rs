@@ -267,7 +267,7 @@ pub struct AstFunction {
     pub name: Id,
     pub params: Vec<Param>,
     pub return_ty: Spanned<AstType>,
-    pub body: Spanned<Stmt>,
+    pub body: Spanned<Expr>,
     pub ty_params: Vec<Spanned<Id>>,
 }
 
@@ -468,7 +468,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
                 ),
                 func.return_ty.kind,
             );
-            dump_stmt(&func.body, strings, 1);
+            dump_expr(&func.body, strings, 1);
         },
         Stmt::TypeDef(ty) => {
             println!("type {}<{}> {}",

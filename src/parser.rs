@@ -21,6 +21,7 @@ macro_rules! error {
     ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
         {
             let mess = format!($fmt $(,$arg)*);
+            println!("{} {:?}", mess, $span);
             $self.errors.push(Error::new(&mess, $span));
         }
     };
@@ -1205,7 +1206,13 @@ impl<'a> Parser<'a> {
             Some(spanned(AstType::Unit, self.prev().span.clone()))
         };
 
-        let body = self.expect_block()?;
+        self.expect(&Token::Equal, &[Token::Equal]);
+
+        let body = self.parse_skip(Self::parse_expr, &[Token::Semicolon, Token::Rbrace])?;
+        match &body.kind {
+            Expr::Block(..) => {},
+            _ => self.expect(&Token::Semicolon, &[Token::Semicolon])?, 
+        }
 
         Some(AstFunction {
             name: name?,
