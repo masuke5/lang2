@@ -144,7 +144,7 @@ impl VM {
     pub fn get_string(&self, loc: usize) -> &Lang2String {
         let value = self.stack[loc];
         if !value.is_heap_ptr() {
-            panic!();
+            self.panic("no heap ptr");
         }
 
         unsafe { &*value.as_ptr() }
@@ -271,6 +271,11 @@ impl VM {
         // Allocate stack frame
         self.fp = self.sp + 1;
         self.sp += func.stack_size as usize;
+    }
+
+    fn panic(&self, message: &str) -> ! {
+        eprintln!("PANIC AT RUNTIME: {}", message);
+        std::process::exit(10)
     }
 
     #[inline]
@@ -467,8 +472,7 @@ impl VM {
                     push!(self, Value::new_ptr(value.as_ptr::<Value>()));
                 },
                 opcode::DEREFERENCE => {
-                    let ptr = pop!(self);
-                    push!(self, ptr);
+                    // Does nothing
                 },
                 opcode::NEGATIVE => {
                     let tos = &mut self.stack[self.sp];
@@ -477,10 +481,11 @@ impl VM {
                 opcode::COPY => {
                     let size = arg as usize;
                     if self.sp + size >= STACK_SIZE {
-                        panic!("stack overflow");
+                        self.panic("stack overflow");
                     }
 
                     let value_ref = pop!(self);
+                    // TODO: check pointer
 
                     unsafe {
                         let value_ref = value_ref.as_ptr();
@@ -493,7 +498,7 @@ impl VM {
                 opcode::OFFSET => {
                     let offset = pop!(self).as_i64();
                     if offset < 0 {
-                        panic!("negative offset");
+                        self.panic("negative offset");
                     }
 
                     let ptr = self.stack[self.sp].as_ptr::<Value>();
@@ -526,7 +531,7 @@ impl VM {
                 opcode::LOAD_REF => {
                     let loc = (self.fp as isize + i8::from_le_bytes([arg]) as isize) as usize;
                     if loc >= STACK_SIZE {
-                        panic!("out of bounds");
+                        self.panic("out of bounds");
                     }
 
                     let value = &mut self.stack[loc];
@@ -538,7 +543,7 @@ impl VM {
 
                     let loc = (self.fp as isize + loc as isize) as usize;
                     if loc >= STACK_SIZE {
-                        panic!("out of bounds");
+                        self.panic("out of bounds");
                     }
 
                     unsafe {
@@ -552,8 +557,11 @@ impl VM {
                 opcode::STORE => {
                     let size = arg as usize;
 
+                    let dst = pop!(self);
+                    // TODO: check pointer
+
                     unsafe {
-                        let dst = pop!(self).as_ptr();
+                        let dst = dst.as_ptr();
                         let src = &self.stack[self.sp - size + 1] as *const _;
                         ptr::copy_nonoverlapping(src, dst, size);
                     }
@@ -612,7 +620,7 @@ impl VM {
                             opcode::BINOP_GE => Value::new_bool(lhs >= rhs),
                             opcode::BINOP_EQ => Value::new_bool(lhs == rhs),
                             opcode::BINOP_NEQ => Value::new_bool(lhs != rhs),
-                            _ => panic!("bug"),
+                            _ => panic!("binop bug"),
                         }
                     };
 
