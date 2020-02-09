@@ -65,7 +65,7 @@ macro_rules! let_label {
 
 fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     if insts.len() < 1 {
-        panic!();
+        return;
     }
 
     let [opcode, arg] = insts.prev_inst();

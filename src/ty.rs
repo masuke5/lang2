@@ -211,9 +211,10 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
                 for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
                     unify(errors, span, a_ty, b_ty)?;
                 }
+
+                return Some(());
             }
 
-            return Some(());
         },
         _ => {},
     };
