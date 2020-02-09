@@ -786,6 +786,13 @@ impl<'a> Parser<'a> {
 
         let first = self.expect_identifier(&[Token::Scope])?;
         let first_span = self.prev().span.clone();
+
+        if self.consume(&Token::As) {
+            let renamed = self.expect_identifier(&[Token::Semicolon])?;
+            let span = Span::merge(&first_span, &self.prev().span);
+            return Some(spanned(ImportRange::Renamed(first, renamed), span));
+        }
+
         stack.push(first);
 
         while self.consume(&Token::Scope) {

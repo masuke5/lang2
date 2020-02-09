@@ -1,4 +1,4 @@
-import assert::{test, test_eq};
+import assert::{testo as test, test_eq};
 import module::module1::*;
 
 ## literals ##
