@@ -937,13 +937,25 @@ impl<'a> Analyzer<'a> {
 
                 translate::while_stmt(cond, body)
             },
-            Stmt::Bind(name, expr, is_mutable) => {
+            Stmt::Bind(name, ty, expr, is_mutable) => {
                 if self.function_headers.contains_key(&name) {
                     error!(self, stmt.span, "the same function as this variable name exists");
                     return None;
                 }
 
-                let expr = self.walk_expr(code, expr)?;
+                let expr = match ty {
+                    Some(ty) => {
+                        let ty = self.walk_type(ty)?;
+                        let mut expr = self.walk_expr_with_conversion(code, expr, &ty)?;
+
+                        unify(&mut self.errors, &expr.span, &ty, &expr.ty)?;
+                        expr.ty = ty;
+
+                        expr
+                    },
+                    None => self.walk_expr(code, expr)?,
+                };
+
                 let loc = self.new_var_in_current_func(code, name, expr.ty.clone(), is_mutable);
 
                 translate::bind_stmt(loc, expr)

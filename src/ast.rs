@@ -245,7 +245,7 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
-    Bind(Id, Spanned<Expr>, bool),
+    Bind(Id, Option<Spanned<AstType>>, Spanned<Expr>, bool),
     Expr(Spanned<Expr>),
     Return(Option<Spanned<Expr>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
@@ -428,8 +428,13 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
     print!("{}", "  ".repeat(depth));
 
     match &stmt.kind {
-        Stmt::Bind(name, expr, is_mutable) => {
-            println!("let {}{} =", format_bool(*is_mutable, "mut "), IdMap::name(*name));
+        Stmt::Bind(name, ty, expr, is_mutable) => {
+            print!("let {}", format_bool(*is_mutable, "mut "));
+            if let Some(ty) = ty {
+                print!(": {}", ty.kind);
+            }
+
+            println!("{} =", IdMap::name(*name));
             dump_expr(&expr, strings, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {

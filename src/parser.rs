@@ -629,6 +629,13 @@ impl<'a> Parser<'a> {
         // Bind name
         let name = self.expect_identifier(&[Token::Semicolon])?;
 
+        let ty = if self.consume(&Token::Colon) {
+            let ty = self.parse_skip(Self::parse_type, &[Token::Equal])?;
+            Some(ty)
+        } else {
+            None
+        };
+
         self.expect(&Token::Equal, &[Token::Semicolon])?;
 
         // Initial expression
@@ -645,7 +652,7 @@ impl<'a> Parser<'a> {
 
         let span = Span::merge(&let_span, semicolon_span);
 
-        Some(spanned(Stmt::Bind(name, expr, is_mutable), span))
+        Some(spanned(Stmt::Bind(name, ty, expr, is_mutable), span))
     }
 
     fn parse_block_expr(&mut self) -> Option<Spanned<Expr>> {
