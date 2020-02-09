@@ -763,7 +763,7 @@ impl<'a> Parser<'a> {
             None
         }.map(Box::new);
 
-        let span = Span::merge(&if_token_span, &then_expr.span);
+        let span = Span::merge(&if_token_span, else_expr.as_ref().map(|e| &e.span).unwrap_or(&then_expr.span));
         Some(spanned(Expr::If(Box::new(expr?), Box::new(then_expr), else_expr), span))
     }
 

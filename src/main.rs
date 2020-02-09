@@ -74,15 +74,24 @@ fn print_errors(errors: Vec<Error>) {
             let line_len = if line >= input.len() as usize { 0 } else { input[line].len() as u32 };
             println!("{}", if line >= input.len() as usize { "" } else { &input[line] });
 
+            let indent = input[line]
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .fold(0, |indent, c| indent + match c {
+                    ' ' => 1,
+                    '\t' => 4,
+                    _ => unreachable!(),
+                }) as u32;
+
             // Print the error span
             let (start, length) = if line_count == 1 {
                 (es.start_col, es.end_col - es.start_col)
             } else if i == 0 {
                 (es.start_col, line_len - es.start_col)
             } else if i == line_count - 1 {
-                (0, line_len - es.end_col)
+                (indent, line_len - es.end_col - 1)
             } else {
-                (0, line_len)
+                (indent, line_len - indent)
             };
 
             let (start, length) = (start as usize, length as usize);
