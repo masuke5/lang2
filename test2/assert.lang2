@@ -1,27 +1,27 @@
 fn test_eq(name: *string, expected: int, actual: int) = {
-    print(name);
-    print(" => ");
+    print name;
+    print " => ";
 
     if expected = actual {
-        println("\x1b[92msucceed\x1b[0m");
+        println "\x1b[92msucceed\x1b[0m";
     } else {
-        print("\x1b[91m");
-        print("expected:");
-        printn(expected);
-        print(", actual:");
-        printnln(actual);
-        print("\x1b[0m");
+        print "\x1b[91m";
+        print "expected:";
+        printn expected;
+        print ", actual:";
+        printnln actual;
+        print "\x1b[0m";
     }
 }
 
 fn testo(name: *string, ok: bool) = {
-    print(name);
-    print(" => ");
+    print name;
+    print " => ";
 
     if ok {
-        println("\x1b[92msucceed\x1b[0m");
+        println "\x1b[92msucceed\x1b[0m";
     } else {
-        println("\x1b[91mfailed\x1b[0m");
+        println "\x1b[91mfailed\x1b[0m";
     }
 }
 

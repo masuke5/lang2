@@ -4,6 +4,6 @@ fn pow(n: int, a: int): int = {
     if a <= 1 {
         n
     } else {
-        pow_inner(n, a)
+        pow_inner n a
     }
 }

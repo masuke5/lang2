@@ -1268,8 +1268,10 @@ impl<'a> Analyzer<'a> {
             return;
         }
 
-        // `None` is not returned because `func.body` is always a block statement
-        let body = self.walk_expr(code, func.body).unwrap();
+        let body = match self.walk_expr(code, func.body) {
+            Some(e) => e,
+            None => return,
+        };
 
         unify(&mut self.errors, &body.span, &return_ty, &body.ty);
 
