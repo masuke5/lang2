@@ -271,14 +271,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_call(&mut self, path: Spanned<SymbolPath>, tyargs: Vec<Spanned<AstType>>) -> Option<Spanned<Expr>> {
-        let args = self.parse_args()?;
-        let rparen_span = self.prev().span.clone();
-
-        let span = path.span.clone();
-        Some(spanned(Expr::Call(path, args, tyargs), Span::merge(&span, &rparen_span)))
-    }
-
     fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {
         let tokens_to_skip = &[Token::Comma, Token::Rbrace];
 
@@ -327,42 +319,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expr_path(&mut self, path: Spanned<SymbolPath>) -> Option<Spanned<Expr>> {
-        match &self.peek().kind {
-            Token::Dot if self.next_token().kind == Token::LessThan => {
-                self.next();
-
-                // parse_type_args() returns None only when the current token is not Token::LessThan
-                let tyargs = self.parse_type_args().unwrap();
-                self.expect(&Token::Lparen, &[Token::Lparen]);
-
-                self.parse_call(path, tyargs)
-            },
-            Token::Lparen => {
-                self.next();
-                self.parse_call(path, Vec::new())
-            },
-            _ => {
-                error!(self, self.peek().span.clone(), "expected `(`, `.<` and `:` but got `{}`", self.peek().kind);
-                None
-            }
-        }
-    }
-
     fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<Spanned<Expr>> {
         self.next();
 
         match &self.peek().kind {
             Token::Scope => {
                 let path = self.parse_path_with_first_segment(Some(SymbolPathSegment::new(ident)), ident_span.clone())?;
-                self.parse_expr_path(path)
+                Some(spanned(Expr::Path(path.kind), path.span))
             },
             Token::Colon => {
                 self.next();
                 self.parse_struct(ident, ident_span)
             },
-            Token::Dot if self.next_token().kind == Token::LessThan => self.parse_expr_path(spanned(SymbolPath::new().append_id(ident), ident_span)),
-            Token::Lparen => self.parse_expr_path(spanned(SymbolPath::new().append_id(ident), ident_span)),
             _ => {
                 Some(spanned(Expr::Variable(ident), ident_span.clone()))
             },
@@ -530,6 +498,28 @@ impl<'a> Parser<'a> {
         Some(expr)
     }
 
+    fn next_is_arg(&self) -> bool {
+        match &self.peek().kind {
+            Token::Number(_) | Token::String(_) | Token::Identifier(_) | Token::True | Token::False
+                | Token::Null | Token::Lparen => true,
+            _ => false,
+        }
+    }
+
+    fn parse_call(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_subscript;
+
+        let mut expr = parse(self)?;
+
+        while self.next_is_arg() {
+            let arg_expr = parse(self)?;
+            let span = Span::merge(&expr.span, &arg_expr.span);
+            expr = spanned(Expr::Call(Box::new(expr), Box::new(arg_expr)), span);
+        }
+
+        Some(expr)
+    }
+
     #[inline]
     fn parse_unary_op<P, F>(&mut self, mut parse: P, f: F) -> Option<Spanned<Expr>>
         where P: FnMut(&mut Self) -> Option<Spanned<Expr>>,
@@ -544,7 +534,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> Option<Spanned<Expr>> {
-        let parse = Self::parse_subscript;
+        let parse = Self::parse_call;
 
         match self.peek().kind {
             Token::Asterisk => self.parse_unary_op(parse, |expr| Expr::Dereference(expr)),

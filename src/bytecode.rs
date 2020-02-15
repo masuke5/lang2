@@ -48,6 +48,8 @@ pub mod opcode {
     pub const WRAP: u8 = 0x25;
     pub const UNWRAP: u8 = 0x26;
     pub const CONST_OFFSET: u8 = 0x27;
+    pub const CALL_POS: u8 = 0x28;
+    pub const CALL_EXTERN_POS: u8 = 0x29;
 
     pub const END: u8 = 0x50;
 }
@@ -86,6 +88,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::POP => "POP",
         opcode::ALLOC => "ALLOC",
         opcode::CALL => "CALL",
+        opcode::CALL_POS => "CALL_POS",
         opcode::CALL_NATIVE => "CALL_NATIVE",
         opcode::JUMP => "JUMP",
         opcode::JUMP_IF_FALSE => "JUMP_IF_FALSE",
@@ -315,6 +318,8 @@ impl Bytecode {
             opcode::POP => println!(),
             opcode::ALLOC => println!("size={}", arg),
             opcode::CALL => println!("{}", arg),
+            opcode::CALL_POS => println!(),
+            opcode::CALL_EXTERN_POS => println!(),
             opcode::CALL_NATIVE => println!(" unimplemented"),
             opcode::CALL_EXTERN => {
                 let module = (arg & 0b11110000) >> 4;
@@ -504,6 +509,23 @@ impl InstList {
             }
         }
 
+        self.insts.append(&mut insts.insts);
+        self.refs.append(&mut insts.refs);
+    }
+
+    #[inline]
+    pub fn prepend(&mut self, mut insts: InstList) {
+        // Update ref id and label ids
+        for [opcode, arg] in &mut insts.insts {
+            match *opcode {
+                opcode::INT | opcode::DUPLICATE => {
+                    *arg += self.refs.len() as u8;
+                },
+                _ => {},
+            }
+        }
+
+        mem::swap(&mut self.insts, &mut insts.insts);
         self.insts.append(&mut insts.insts);
         self.refs.append(&mut insts.refs);
     }
@@ -727,5 +749,55 @@ mod tests {
 
         assert_eq!(bytecode.read_u64(base), 123123123123);
         assert_eq!(bytecode.read_u64(bytecode.len() - 16), 456456456456);
+    }
+
+    #[test]
+    fn instlist_append() {
+        let mut insts = InstList::new();
+        insts.push_inst(opcode::TINY_INT, 30);
+        insts.push_inst_ref(opcode::INT, 505050 as u64);
+
+        let mut insts2 = InstList::new();
+        insts2.push_inst_noarg(opcode::BINOP_ADD);
+        insts2.push_inst_ref(opcode::INT, 606060 as u64);
+        insts2.push_inst_noarg(opcode::BINOP_MUL);
+
+        insts.append(insts2);
+
+        let expected: LinkedList<[u8; 2]> = vec![
+            [opcode::TINY_INT, 30],
+            [opcode::INT, 0],
+            [opcode::BINOP_ADD, 0],
+            [opcode::INT, 1],
+            [opcode::BINOP_MUL, 0],
+        ].into_iter().collect();
+
+        assert_eq!(expected, insts.insts);
+        assert_eq!(vec![505050, 606060], insts.refs);
+    }
+
+    #[test]
+    fn instlist_prepend() {
+        let mut insts = InstList::new();
+        insts.push_inst_noarg(opcode::BINOP_ADD);
+        insts.push_inst_ref(opcode::INT, 606060 as u64);
+        insts.push_inst_noarg(opcode::BINOP_MUL);
+
+        let mut insts2 = InstList::new();
+        insts2.push_inst(opcode::TINY_INT, 30);
+        insts2.push_inst_ref(opcode::INT, 505050 as u64);
+
+        insts.prepend(insts2);
+
+        let expected: LinkedList<[u8; 2]> = vec![
+            [opcode::TINY_INT, 30],
+            [opcode::INT, 1],
+            [opcode::BINOP_ADD, 0],
+            [opcode::INT, 0],
+            [opcode::BINOP_MUL, 0],
+        ].into_iter().collect();
+
+        assert_eq!(expected, insts.insts);
+        assert_eq!(vec![606060, 505050], insts.refs);
     }
 }

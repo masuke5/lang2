@@ -14,6 +14,8 @@ use crate::gc::Gc;
 use crate::module::Module;
 use crate::sema::ModuleBody;
 
+pub const SELF_MODULE_ID: usize = 0x7fffffff;
+
 const STACK_SIZE: usize = 10000;
 
 macro_rules! pop {
@@ -647,6 +649,37 @@ impl VM {
                 },
                 opcode::CALL => {
                     self.call(self.current_module, arg as usize);
+                },
+                opcode::CALL_POS => {
+                    let pos = pop!(self).as_u64();
+
+                    let module_local_id = (pos >> 32) as usize;
+                    let func_id = pos as u32 as usize;
+
+                    if module_local_id == SELF_MODULE_ID {
+                        self.call(self.current_module, func_id);
+                    } else {
+                        let module_global_id = modules[self.current_module].as_ref().unwrap()[module_local_id];
+                        let module = &mut all_modules[module_global_id];
+
+                        match module {
+                            Module::Normal => {
+                                current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
+                                self.call(module_global_id, func_id);
+                            },
+                            Module::Native(funcs) => {
+                                let (param_size, func) = &funcs[func_id];
+
+                                let fp = self.fp;
+                                self.fp = self.sp + 1;
+
+                                func.0(self);
+
+                                self.fp = fp;
+                                self.sp -= param_size;
+                            },
+                        }
+                    }
                 },
                 opcode::CALL_EXTERN => {
                     let module_local_id = ((arg & 0b11110000) >> 4) as usize;

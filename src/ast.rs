@@ -234,7 +234,8 @@ pub enum Expr {
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id),
-    Call(Spanned<SymbolPath>, Vec<Spanned<Expr>>, Vec<Spanned<AstType>>),
+    Path(SymbolPath),
+    Call(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
@@ -376,17 +377,14 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             dump_expr(&lhs, strings, depth + 1);
             dump_expr(&rhs, strings, depth + 1);
         },
-        Expr::Call(name, args, tyargs) => {
-            print!("call {}", name.kind);
+        Expr::Call(func_expr, arg) => {
+            println!("call {}", span_to_string(&expr.span));
 
-            if !tyargs.is_empty() {
-                print!(".<{}>", format_iter(tyargs.iter().map(|t| &t.kind)));
-            }
-
-            println!(" {}", span_to_string(&expr.span));
-            for arg in args {
-                dump_expr(&arg, strings, depth + 1);
-            }
+            dump_expr(func_expr, strings, depth + 1);
+            dump_expr(&arg, strings, depth + 1);
+        },
+        Expr::Path(path) => {
+            println!("path {} {}", path, span_to_string(&expr.span));
         },
         Expr::Address(expr_, is_mutable) => {
             println!("&{} {}", format_bool(*is_mutable, "mut"), span_to_string(&expr.span));

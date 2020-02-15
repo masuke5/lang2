@@ -5,6 +5,7 @@ use crate::bytecode::{opcode, InstList};
 use crate::ast::BinOp;
 use crate::ty::{Type, TypeCon, type_size_nocheck};
 use crate::sema::ExprInfo;
+use crate::vm::SELF_MODULE_ID;
 
 struct Label(u8, Option<usize>);
 
@@ -241,6 +242,18 @@ pub fn variable(loc: isize) -> InstList {
     insts
 }
 
+pub fn func_pos(module_id: Option<u16>, func_id: u16) -> InstList {
+    let mut insts = InstList::new();
+
+    let arg = match module_id {
+        Some(module_id) => ((module_id as u64) << 32) | func_id as u64,
+        None => ((SELF_MODULE_ID as u64) << 32) | func_id as u64,
+    };
+    insts.push_inst_ref(opcode::INT, arg);
+
+    insts
+}
+
 //   lhs
 //   JUMP_IF_FALSE a
 //   rhs
@@ -315,6 +328,27 @@ pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> InstList {
     };
 
     insts.push_inst_noarg(opcode);
+    insts
+}
+
+pub fn arg(insts: &mut InstList, arg_expr: ExprInfo) {
+    insts.append(arg_expr.insts);
+    push_copy_inst(insts, &arg_expr.ty);
+}
+
+pub fn call_expr(return_ty: &Type, func_ty: &Type, args_insts: InstList, func_insts: InstList) -> InstList {
+    let mut insts = InstList::new();
+
+    let return_value_size = type_size_nocheck(return_ty);
+    if return_value_size != 0 {
+        insts.push_inst(opcode::ZERO, type_size_nocheck(return_ty) as u8);
+    }
+
+    insts.append(args_insts);
+    insts.append(func_insts);
+    push_copy_inst(&mut insts, func_ty);
+
+    insts.push_inst_noarg(opcode::CALL_POS);
     insts
 }
 

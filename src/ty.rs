@@ -97,6 +97,7 @@ impl fmt::Display for Type {
                 )?;
                 write!(f, "}}")
             },
+            Self::App(TypeCon::Arrow, types) => write!(f, "{} -> {}", types[0], types[1]),
             Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
             Self::App(TypeCon::Unique(tycon, uniq), types) => write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq),
             Self::App(TypeCon::Wrapped, types) => write!(f, "'{}", types[0]),
@@ -119,6 +120,7 @@ impl fmt::Display for Type {
 pub enum TypeCon {
     Pointer(bool),
     Tuple,
+    Arrow,
     Struct(Vec<Id>),
     Array(usize),
     Fun(Vec<TypeVar>, Box<Type>),
@@ -132,6 +134,7 @@ impl fmt::Display for TypeCon {
         match self {
             Self::Pointer(is_mutable) => write!(f, "{}pointer", format_bool(*is_mutable, "mut ")),
             Self::Tuple => write!(f, "tuple"),
+            Self::Arrow => write!(f, "arrow"),
             Self::Struct(fields) => {
                 write!(f, "{{")?;
                 write_iter!(f, fields.iter().map(|id| IdMap::name(*id)))?;
@@ -284,6 +287,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::App(TypeCon::Named(_, size), _) => {
             Some(*size)
         },
+        Type::App(TypeCon::Arrow, _) => Some(1),
         ty @ Type::App(TypeCon::Unique(_, _), _) => {
             let ty = expand_unique(ty.clone());
             type_size(&ty)
@@ -380,4 +384,19 @@ pub fn wrap_typevar(ty: &mut Type) {
         },
         _ => {},
     }
+}
+
+pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type) -> Type {
+    // Generate type
+    let mut stack = Vec::with_capacity(params.len());
+    for param in params {
+        stack.push(param);
+    }
+
+    let mut result_ty = Type::App(TypeCon::Arrow, vec![stack.pop().unwrap().clone(), return_ty.clone()]);
+    while let Some(ty) = stack.pop() {
+        result_ty = Type::App(TypeCon::Arrow, vec![ty.clone(), result_ty]);
+    }
+
+    result_ty
 }
