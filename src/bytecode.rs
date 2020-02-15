@@ -514,6 +514,7 @@ impl InstList {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn prepend(&mut self, mut insts: InstList) {
         // Update ref id and label ids
         for [opcode, arg] in &mut insts.insts {

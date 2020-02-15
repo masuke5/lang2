@@ -113,11 +113,6 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn next_token(&self) -> &Spanned<Token> {
-        &self.tokens[self.pos + 1]
-    }
-
-    #[inline]
     fn consume(&mut self, token: &Token) -> bool {
         if &self.peek().kind == token {
             self.pos += 1;
@@ -240,35 +235,6 @@ impl<'a> Parser<'a> {
         }
 
         Some(expr)
-    }
-
-    fn parse_args(&mut self) -> Option<Vec<Spanned<Expr>>> {
-        if !self.consume(&Token::Rparen) {
-            let mut args = Vec::new();
-
-            // Parse a first argument 
-            match self.parse_expr() {
-                Some(expr) => args.push(expr),
-                None => self.skip_to(&[Token::Comma, Token::Rparen]),
-            };
-
-            // Parse other arguments
-            while self.peek().kind != Token::Rparen && self.consume(&Token::Comma) {
-                if self.peek().kind == Token::Rparen {
-                    break;
-                }
-
-                match self.parse_expr() {
-                    Some(expr) => args.push(expr),
-                    None => self.skip_to(&[Token::Comma, Token::Rparen]),
-                };
-            }
-
-            self.expect(&Token::Rparen, &[Token::Rparen])?;
-            Some(args)
-        } else {
-            Some(Vec::new())
-        }
     }
 
     fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {

@@ -352,38 +352,6 @@ pub fn call_expr(return_ty: &Type, func_ty: &Type, args_insts: InstList, func_in
     insts
 }
 
-pub fn call(
-    code_id: u16,
-    module_id: Option<u16>,
-    args: Vec<ExprInfo>,
-    return_ty: &Type,
-) -> InstList {
-    let mut insts = InstList::new();
-    
-    // Push placeholder for the return value
-    let return_value_size = type_size_nocheck(return_ty);
-    if return_value_size > 0 {
-        insts.push_inst(opcode::ZERO, return_value_size as u8);
-    }
-
-    // Push arguments
-    for arg in args {
-        insts.append(arg.insts);
-        push_copy_inst(&mut insts, &arg.ty);
-    }
-
-    if let Some(module_id) = module_id {
-        let code_id = code_id as u8;
-        let module_id = module_id as u8;
-        let arg = (module_id << 4) | code_id;
-        insts.push_inst(opcode::CALL_EXTERN, arg);
-    } else {
-        insts.push_inst(opcode::CALL, code_id as u8);
-    }
-
-    insts
-}
-
 pub fn address(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     insts.push_inst_noarg(opcode::POINTER);
