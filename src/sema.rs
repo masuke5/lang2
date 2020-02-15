@@ -144,15 +144,10 @@ impl NewFunctionHeader {
     fn new_self(header: FunctionHeader) -> Self {
         Self::new(Self::SELF_MODULE_ID, header)
     }
-
-    fn is_in_self_module(&self) -> bool {
-        self.module_id == Self::SELF_MODULE_ID
-    }
 }
 
 #[derive(Debug)]
 pub struct Analyzer<'a> {
-    function_headers: FxHashMap<Id, NewFunctionHeader>,
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
@@ -170,7 +165,6 @@ pub struct Analyzer<'a> {
 impl<'a> Analyzer<'a> {
     pub fn new() -> Self {
         Self {
-            function_headers: FxHashMap::default(),
             visible_modules: FxHashSet::default(),
             module_headers: FxHashMap::default(),
             variables: HashMapWithScope::new(),
@@ -317,32 +311,14 @@ impl<'a> Analyzer<'a> {
         self.variables.get(&id)
     }
 
-    fn find_func(&self, code: &BytecodeBuilder, path: &SymbolPath) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
+    fn find_external_func(&self, path: &SymbolPath) -> Option<(&FunctionHeader, u16, Option<u16>)> { // header, code id, module id
         assert!(!path.is_empty());
 
         let module_path = path.parent().unwrap();
         let func_id = path.tail().unwrap().id;
 
         if module_path.is_empty() {
-            if let Some(header) = self.function_headers.get(&func_id) {
-                let module_id = if header.is_in_self_module() { None } else { Some(header.module_id) };
-                // Get code id of the function
-                let code_id = match module_id {
-                    Some(module_id) => {
-                        // Get the module from the ID
-                        let (_, (_, module)) = self.module_headers.iter().find(|(_, (id, _))| *id == module_id).unwrap();
-                        // Get the function original name
-                        let id = header.original_name.unwrap_or(func_id);
-
-                        module.functions[&id].0
-                    },
-                    None => code.get_function(func_id).unwrap().code_id,
-                };
-
-                Some((&header.header, code_id, module_id))
-            } else {
-                None
-            }
+            None
         } else {
             if !self.visible_modules.contains(&module_path) {
                 return None;
@@ -774,7 +750,7 @@ impl<'a> Analyzer<'a> {
                 return Some(ExprInfo::new_lvalue(insts, ty, expr.span, is_mutable));
             },
             Expr::Path(path) => {
-                let (header, func_id, module_id) = match self.find_func(code, &path) {
+                let (header, func_id, module_id) = match self.find_external_func(&path) {
                     Some(t) => t,
                     None => {
                         error!(self, expr.span, "undefined function `{}`", path);
@@ -969,11 +945,6 @@ impl<'a> Analyzer<'a> {
                 translate::while_stmt(cond, body)
             },
             Stmt::Bind(name, ty, expr, is_mutable) => {
-                if self.function_headers.contains_key(&name) {
-                    error!(self, stmt.span, "the same function as this variable name exists");
-                    return None;
-                }
-
                 let expr = match ty {
                     Some(ty) => {
                         let ty = self.walk_type(ty)?;
@@ -1049,7 +1020,6 @@ impl<'a> Analyzer<'a> {
                     Some((module_id, module)) => {
                         for (func_name, (_, func)) in &module.functions {
                             let header = NewFunctionHeader::new(*module_id, func.clone());
-                            self.function_headers.insert(*func_name, header.clone());
                             self.variables.insert(*func_name, Entry::Function(header));
                         }
                     },
@@ -1075,7 +1045,6 @@ impl<'a> Analyzer<'a> {
                                     ImportRangePath::All(..) => unreachable!(),
                                 };
 
-                                self.function_headers.insert(name, header.clone());
                                 self.variables.insert(name, Entry::Function(header.clone()));
                             },
                             None => {
@@ -1124,15 +1093,13 @@ impl<'a> Analyzer<'a> {
         // Insert function headers
         'l: for stmt in stmts {
             if let Stmt::FnDef(func) = &stmt.kind {
-                if self.function_headers.contains_key(&func.name) {
-                    error!(self, stmt.span.clone(), "this function name exists already");
+                if self.variables.contains_key(&func.name) {
+                    error!(self, stmt.span.clone(), "A function or variable with the same name exists");
                     continue;
                 }
 
                 if let Some((header, func)) = self.generate_function_header(&func) {
                     let fh = NewFunctionHeader::new_self(header);
-
-                    self.function_headers.insert(func.name, fh.clone());
                     self.variables.insert(func.name, Entry::Function(fh));
 
                     code.insert_function_header(func);
@@ -1281,9 +1248,9 @@ impl<'a> Analyzer<'a> {
         self.push_scope();
         self.push_type_scope();
 
-        let header = match self.function_headers.get(&func.name) {
-            Some(h) => &h.header,
-            None => return, // the function headers may be not inserted by errors
+        let header = match self.variables.get(&func.name) {
+            Some(Entry::Function(h)) => &h.header,
+            _ => return, // the function headers may be not inserted by errors
         };
 
         let return_ty = header.return_ty.clone();
@@ -1452,15 +1419,6 @@ impl<'a> Analyzer<'a> {
         func_headers: &FxHashMap<SymbolPath, FxHashMap<Id, (u16, FunctionHeader)>>,
     ) -> Result<Bytecode, Vec<Error>> {
         assert!(self.module_headers.is_empty());
-        assert!(self.function_headers.is_empty());
-
-        // Insert main function header
-        let header = FunctionHeader {
-            params: Vec::new(),
-            return_ty: Type::Unit,
-            ty_params: Vec::new(),
-        };
-        self.function_headers.insert(*reserved_id::MAIN_FUNC, NewFunctionHeader::new_self(header));
 
         self.push_scope();
         self.push_type_scope();
