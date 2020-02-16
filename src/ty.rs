@@ -108,9 +108,13 @@ impl fmt::Display for Type {
             },
             Self::Var(var) => write!(f, "{}", var),
             Self::Poly(vars, ty) => {
-                write!(f, "{}<", ty)?;
-                write_iter!(f, vars.iter())?;
-                write!(f, ">")
+                if !cfg!(debug_assertions) {
+                    write!(f, "{}", ty)
+                } else {
+                    write!(f, "(")?;
+                    write_iter!(f, vars.iter())?;
+                    write!(f, "): {}", ty)
+                }
             },
         }
     }
@@ -386,7 +390,7 @@ pub fn wrap_typevar(ty: &mut Type) {
     }
 }
 
-pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type) -> Type {
+pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type, ty_params: &Vec<(Id, TypeVar)>) -> Type {
     // Generate type
     let mut stack = Vec::with_capacity(params.len());
     for param in params {
@@ -398,5 +402,10 @@ pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type) -> Type {
         result_ty = Type::App(TypeCon::Arrow, vec![ty.clone(), result_ty]);
     }
 
-    result_ty
+    if ty_params.is_empty() {
+        result_ty
+    } else {
+        let tyvars = ty_params.iter().map(|(_, var)| *var).collect();
+        Type::Poly(tyvars, Box::new(result_ty))
+    }
 }

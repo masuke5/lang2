@@ -242,6 +242,7 @@ pub enum Expr {
     Alloc(Box<Spanned<Expr>>, bool),
     Block(Vec<Spanned<Stmt>>, Box<Spanned<Expr>>),
     If(Box<Spanned<Expr>>, Box<Spanned<Expr>>, Option<Box<Spanned<Expr>>>),
+    App(Box<Spanned<Expr>>, Vec<Spanned<AstType>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -418,6 +419,10 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
                 dump_expr(&else_stmt, strings, depth + 1);
             }
         },
+        Expr::App(expr, tyargs) => {
+            println!("app <{}>", format_iter(tyargs.iter().map(|a| &a.kind)));
+            dump_expr(expr, strings, depth + 1);
+        }
     }
 }
 

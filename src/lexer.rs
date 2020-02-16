@@ -260,6 +260,7 @@ impl<'a> Lexer<'a> {
             '&' if self.next_is('&') => self.two_char(Token::And),
             '&' => Some(Token::Ampersand),
             '|' if self.next_is('|') => self.two_char(Token::Or),
+            '.' if self.next_is('<') => self.two_char(Token::LTypeArgs),
             '.' => Some(Token::Dot),
             '#' => {
                 self.skip_comment();

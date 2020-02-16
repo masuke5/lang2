@@ -443,8 +443,23 @@ impl<'a> Parser<'a> {
         Some(expr)
     }
 
-    fn parse_subscript(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_expr_app(&mut self) -> Option<Spanned<Expr>> {
         let parse = Self::parse_field;
+
+        let mut expr = parse(self)?;
+
+        if self.consume(&Token::LTypeArgs) {
+            let tyargs = self.parse_type_args();
+
+            let span = Span::merge(&expr.span, &self.prev().span);
+            expr = spanned(Expr::App(Box::new(expr), tyargs), span);
+        }
+
+        Some(expr)
+    }
+
+    fn parse_subscript(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_expr_app;
 
         let mut expr = parse(self)?;
 
@@ -621,7 +636,7 @@ impl<'a> Parser<'a> {
         while !self.consume(&Token::Rbrace) {
             let (is_expr, stmt) = self.parse_stmt_without_expr();
             if is_expr {
-                let expr = self.parse_expr()?;
+                let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
                 // Assign statement
                 if self.consume(&Token::Assign) {
@@ -910,7 +925,7 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> Option<Spanned<Stmt>> {
         let (is_expr, stmt) = self.parse_stmt_without_expr();
         if is_expr {
-            let expr = self.parse_expr()?;
+            let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
             if self.consume(&Token::Assign) {
                 return self.parse_stmt_assign(expr);
@@ -1048,13 +1063,9 @@ impl<'a> Parser<'a> {
         Some(spanned(AstType::Array(Box::new(ty), size), span))
     }
 
-    fn parse_type_args(&mut self) -> Option<Vec<Spanned<AstType>>> {
-        if !self.consume(&Token::LessThan) {
-            return None;
-        }
-
+    fn parse_type_args(&mut self) -> Vec<Spanned<AstType>> {
         if self.consume(&Token::GreaterThan) {
-            Some(Vec::new())
+            Vec::new()
         } else {
             let mut types = Vec::new();
 
@@ -1075,12 +1086,16 @@ impl<'a> Parser<'a> {
 
             self.expect(&Token::GreaterThan, &[Token::GreaterThan]);
 
-            Some(types)
+            types
         }
     }
 
     fn parse_type_app(&mut self, id: Spanned<Id>) -> Spanned<AstType> {
-        let args = self.parse_type_args().unwrap_or(Vec::new());
+        let args = if self.consume(&Token::LessThan) {
+            self.parse_type_args()
+        } else {
+            Vec::new()
+        };
 
         if args.is_empty() {
             spanned(AstType::Named(id.kind), id.span)

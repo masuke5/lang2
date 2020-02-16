@@ -402,12 +402,9 @@ impl<'a> Analyzer<'a> {
             },
         };
 
-        let arg_expr = self.walk_expr(code, arg_expr).unwrap();
-
-        let ty = match &ty {
+        let (arg_ty, return_ty) = match &ty {
             Type::App(TypeCon::Arrow, types) => {
-                unify(&mut self.errors, &arg_expr.span, &types[0], &arg_expr.ty)?;
-                types[1].clone()
+                (types[0].clone(), types[1].clone())
             },
             ty => {
                 error!(self, arg_expr.span, "expected type `function` but got `{}`", ty);
@@ -415,9 +412,12 @@ impl<'a> Analyzer<'a> {
             },
         };
 
+        let arg_expr = self.walk_expr_with_conversion(code, arg_expr, &arg_ty)?;
+        unify(&mut self.errors, &arg_expr.span, &arg_ty, &arg_expr.ty)?;
+
         translate::arg(&mut insts, arg_expr);
 
-        Some((ty, func_ty, insts, func_insts))
+        Some((return_ty, func_ty, insts, func_insts))
     }
 
     fn walk_expr_with_conversion(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>, ty: &Type) -> Option<ExprInfo> {
@@ -743,7 +743,7 @@ impl<'a> Analyzer<'a> {
                         };
 
                         let insts = translate::func_pos(fh.get_module_id(), code_id);
-                        let ty = generate_func_type(&fh.header.params, &fh.header.return_ty);
+                        let ty = generate_func_type(&fh.header.params, &fh.header.return_ty, &fh.header.ty_params);
                         (insts, ty, false)
                     },
                 };
@@ -922,6 +922,42 @@ impl<'a> Analyzer<'a> {
                 unify(&mut self.errors, &els.span, &then.ty, &els.ty);
 
                 (translate::if_else_expr(cond, then.insts, els.insts, &then.ty), then.ty.clone())
+            },
+            Expr::App(expr, old_tyargs) => {
+                let expr = self.walk_expr(code, *expr);
+
+                let mut tyargs = Vec::with_capacity(old_tyargs.len());
+                let mut failed = false;
+                for arg in old_tyargs {
+                    if let Some(arg) = self.walk_type(arg) {
+                        tyargs.push(arg);
+                    } else {
+                        failed = true;
+                    }
+                }
+
+                let mut expr = expr?;
+                if failed {
+                    return None;
+                }
+                
+                expr.ty = match expr.ty {
+                    Type::Poly(vars, ty) => {
+                        if vars.len() != tyargs.len() {
+                            error!(self, expr.span, "the expression takes {} parameters but got {} arguments", vars.len(), tyargs.len());
+                            return None;
+                        }
+
+                        let map: FxHashMap<TypeVar, Type> = vars.into_iter().zip(tyargs.into_iter()).collect();
+                        subst(*ty, &map)
+                    },
+                    ty => {
+                        error!(self, expr.span, "The expression with type `{}` cannot be apply", ty);
+                        return None;
+                    }
+                };
+
+                return Some(expr);
             },
         };
 
