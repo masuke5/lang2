@@ -33,6 +33,10 @@ fn needs_semicolon(expr: &Expr) -> bool {
     }
 }
 
+fn expr_is_callable(expr: &Expr) -> bool {
+    needs_semicolon(expr)
+}
+
 fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     root_path: P1,
     module_file: P2,
@@ -492,7 +496,7 @@ impl<'a> Parser<'a> {
 
         let mut expr = parse(self)?;
 
-        while self.next_is_arg() {
+        while expr_is_callable(&expr.kind) && self.next_is_arg() {
             let arg_expr = parse(self)?;
             let span = Span::merge(&expr.span, &arg_expr.span);
             expr = spanned(Expr::Call(Box::new(expr), Box::new(arg_expr)), span);
@@ -1190,7 +1194,16 @@ impl<'a> Parser<'a> {
 
         // Parse parameters
         self.expect(&Token::Lparen, &[Token::Lparen]);
-        let params = self.parse_param_list()?;
+        let mut params = self.parse_param_list()?;
+
+        // Insert unit param if no params
+        if params.is_empty() {
+            params.push(Param {
+                name: *reserved_id::DUMMY_PARAM,
+                ty: spanned(AstType::Unit, self.prev().span.clone()),
+                is_mutable: false,
+            });
+        }
 
         // Parse the return type
         let return_ty = if self.consume(&Token::Colon) {
