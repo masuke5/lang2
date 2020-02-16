@@ -302,7 +302,7 @@ impl<'a> Parser<'a> {
                 self.parse_struct(ident, ident_span)
             },
             _ => {
-                Some(spanned(Expr::Variable(ident), ident_span.clone()))
+                Some(spanned(Expr::Variable(ident, false), ident_span.clone()))
             },
         }
     }
@@ -627,7 +627,7 @@ impl<'a> Parser<'a> {
 
         let span = Span::merge(&let_span, semicolon_span);
 
-        Some(spanned(Stmt::Bind(name, ty, expr, is_mutable), span))
+        Some(spanned(Stmt::Bind(name, ty, expr, is_mutable, false), span))
     }
 
     fn parse_block_expr(&mut self) -> Option<Spanned<Expr>> {
@@ -1152,6 +1152,7 @@ impl<'a> Parser<'a> {
             name,
             ty,
             is_mutable,
+            is_escaped: false,
         })
     }
 
@@ -1202,6 +1203,7 @@ impl<'a> Parser<'a> {
                 name: *reserved_id::DUMMY_PARAM,
                 ty: spanned(AstType::Unit, self.prev().span.clone()),
                 is_mutable: false,
+                is_escaped: false,
             });
         }
 

@@ -20,6 +20,7 @@ mod stdlib;
 mod gc;
 mod module;
 mod translate;
+mod escape;
 
 use std::process::exit;
 use std::fs;
@@ -135,13 +136,17 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     // Parse
     let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default(), &container);
     let main_module_path = SymbolPath::from_path(&root_path, &file_path);
-    let module_buffers = match parser.parse(&main_module_path) {
+    let mut module_buffers = match parser.parse(&main_module_path) {
         Ok(p) => p,
         Err(mut perrors) => {
             errors.append(&mut perrors);
             return Err(errors);
         },
     };
+
+    for (_, program) in &mut module_buffers {
+        escape::find(program);
+    }
 
     if matches.is_present("dump-ast") {
         for (name, program) in module_buffers {

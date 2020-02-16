@@ -233,7 +233,7 @@ pub enum Expr {
     Field(Box<Spanned<Expr>>, Field),
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    Variable(Id),
+    Variable(Id, bool),
     Path(SymbolPath),
     Call(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Dereference(Box<Spanned<Expr>>),
@@ -247,7 +247,8 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
-    Bind(Id, Option<Spanned<AstType>>, Spanned<Expr>, bool),
+    // name, type, initial expression, is mutable, is escaped
+    Bind(Id, Option<Spanned<AstType>>, Spanned<Expr>, bool, bool),
     Expr(Spanned<Expr>),
     Return(Option<Spanned<Expr>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
@@ -262,6 +263,7 @@ pub struct Param {
     pub name: Id,
     pub ty: Spanned<AstType>,
     pub is_mutable: bool,
+    pub is_escaped: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -372,7 +374,9 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             dump_expr(&expr, strings, depth + 1);
             dump_expr(&subscript, strings, depth + 1);
         },
-        Expr::Variable(name) => println!("{} {}", IdMap::name(*name), span_to_string(&expr.span)),
+        Expr::Variable(name, is_escaped) => {
+            println!("{}{} {}", IdMap::name(*name), format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"), span_to_string(&expr.span));
+        },
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
             dump_expr(&lhs, strings, depth + 1);
@@ -431,13 +435,14 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
     print!("{}", "  ".repeat(depth));
 
     match &stmt.kind {
-        Stmt::Bind(name, ty, expr, is_mutable) => {
-            print!("let {}", format_bool(*is_mutable, "mut "));
+        Stmt::Bind(name, ty, expr, is_mutable, is_escaped) => {
+            print!("let{}{} ", format_bool(*is_mutable, " mut"), format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"));
+            print!("{}", IdMap::name(*name));
             if let Some(ty) = ty {
                 print!(": {}", ty.kind);
             }
 
-            println!("{} =", IdMap::name(*name));
+            println!(" =");
             dump_expr(&expr, strings, depth + 1);
         },
         Stmt::Assign(lhs, rhs) => {
@@ -472,7 +477,13 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             println!("({}): {}",
                 format_iter(func.params
                     .iter()
-                    .map(|p| format!("{}{}: {}", format_bool(p.is_mutable, "mut "), IdMap::name(p.name), p.ty.kind))
+                    .map(|p| format!(
+                        "{}{}{}: {}",
+                        format_bool(p.is_mutable, "mut "),
+                        IdMap::name(p.name),
+                        format_bool(p.is_escaped, " \x1b[32mescaped\x1b[0m"),
+                        p.ty.kind
+                    ))
                 ),
 
                 func.return_ty.kind,

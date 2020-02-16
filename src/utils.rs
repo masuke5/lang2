@@ -71,6 +71,33 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
         None
     }
 
+    #[allow(dead_code)]
+    pub fn get_with_level(&self, key: &K) -> Option<(&V, usize)> {
+        let mut level = self.level();
+        for map in self.maps.iter() {
+            if let Some(value) = map.get(key) {
+                return Some((value, level));
+            }
+
+            level -= 1;
+        }
+
+        None
+    }
+
+    pub fn get_mut_with_level(&mut self, key: &K) -> Option<(&mut V, usize)> {
+        let mut level = self.level();
+        for map in self.maps.iter_mut() {
+            if let Some(value) = map.get_mut(key) {
+                return Some((value, level));
+            }
+
+            level -= 1;
+        }
+
+        None
+    }
+
     pub fn insert(&mut self, key: K, value: V) {
         let front_map = self.maps.front_mut().unwrap();
         front_map.insert(key, value);
@@ -88,6 +115,10 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
 
     pub fn last_scope(&self) -> Option<&FxHashMap<K, V>> {
         self.maps.front()
+    }
+
+    pub fn level(&self) -> usize {
+        self.maps.len()
     }
 }
 

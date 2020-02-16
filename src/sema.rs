@@ -732,7 +732,7 @@ impl<'a> Analyzer<'a> {
                     is_mutable,
                 });
             },
-            Expr::Variable(name) => {
+            Expr::Variable(name, is_escaped) => {
                 let entry = match self.find_var(name) {
                     Some(v) => v,
                     None => {
@@ -998,7 +998,7 @@ impl<'a> Analyzer<'a> {
 
                 translate::while_stmt(cond, body)
             },
-            Stmt::Bind(name, ty, expr, is_mutable) => {
+            Stmt::Bind(name, ty, expr, is_mutable, is_escaped) => {
                 let expr = match ty {
                     Some(ty) => {
                         let ty = self.walk_type(ty)?;
