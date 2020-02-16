@@ -390,11 +390,15 @@ impl<'a> Analyzer<'a> {
     }
 
     fn walk_call(
-        &mut self, code: &mut BytecodeBuilder, func_expr: Spanned<Expr>, arg_expr: Spanned<Expr>
+        &mut self,
+        code: &mut BytecodeBuilder,
+        func_expr: Spanned<Expr>,
+        arg_expr: Spanned<Expr>,
+        map: &mut FxHashMap<TypeVar, Type>,
     ) -> Option<(Type, Type, InstList, InstList)> {
         let (ty, func_ty, mut insts, func_insts) = match func_expr.kind {
             Expr::Call(func_expr, arg_expr) => {
-                self.walk_call(code, *func_expr, *arg_expr)?
+                self.walk_call(code, *func_expr, *arg_expr, map)?
             },
             _ => {
                 let expr = self.walk_expr(code, func_expr)?;
@@ -402,7 +406,13 @@ impl<'a> Analyzer<'a> {
             },
         };
 
-        let (arg_ty, return_ty) = match &ty {
+        // Unwrap Poly
+        let ty = match ty {
+            Type::Poly(_, ty) => *ty,
+            ty => ty,
+        };
+
+        let (mut arg_ty, mut return_ty) = match &ty {
             Type::App(TypeCon::Arrow, types) => {
                 (types[0].clone(), types[1].clone())
             },
@@ -413,6 +423,10 @@ impl<'a> Analyzer<'a> {
         };
 
         let arg_expr = self.walk_expr_with_conversion(code, arg_expr, &arg_ty)?;
+        Self::insert_type_param(&arg_ty, &arg_expr.ty, map);
+        arg_ty = subst(arg_ty, &map);
+        return_ty = subst(return_ty, &map);
+
         unify(&mut self.errors, &arg_expr.span, &arg_ty, &arg_expr.ty)?;
 
         translate::arg(&mut insts, arg_expr);
@@ -829,7 +843,10 @@ impl<'a> Analyzer<'a> {
                 (translate::binop(binop, lhs, rhs), ty)
             },
             Expr::Call(func_expr, arg_expr) => {
-                let (ty, func_ty, args_insts, func_insts) = self.walk_call(code, *func_expr, *arg_expr)?;
+                let mut map = FxHashMap::default();
+                let (ty, func_ty, args_insts, func_insts) = self.walk_call(code, *func_expr, *arg_expr, &mut map)?;
+
+                let func_ty = subst(func_ty, &map);
 
                 let insts = translate::call_expr(&ty, &func_ty, args_insts, func_insts);
                 (insts, ty)
