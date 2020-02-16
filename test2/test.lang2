@@ -74,6 +74,10 @@ test_eq "assign" 931 b;
 ## function ##
 
 test_eq "simple function" 30 (add 14 16);
+
+let func = add;
+test_eq "function as value" 40 (func 33 7);
+
 test_eq "no parameter" 33019 (no_param ());
 test_eq "early return" 1000 (early_return 3);
 test_eq "fibonacci" 55 (fib 10);
