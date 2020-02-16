@@ -258,7 +258,7 @@ impl Bytecode {
             opcode::NOP => println!(),
             opcode::INT => {
                 let value = self.read_i64(ref_start + arg as usize * 8);
-                println!("{} ({})", arg, value);
+                println!("{} ({:x})", arg, value);
             },
             opcode::TINY_INT => {
                 println!("{}", arg);
