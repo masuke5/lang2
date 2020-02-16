@@ -89,7 +89,7 @@ fn print_errors(errors: Vec<Error>) {
             } else if i == 0 {
                 (es.start_col, line_len - es.start_col)
             } else if i == line_count - 1 {
-                (indent, line_len - es.end_col - 1)
+                (indent, (line_len - es.end_col).checked_sub(1).unwrap_or(0))
             } else {
                 (indent, line_len - indent)
             };
