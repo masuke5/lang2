@@ -1,6 +1,6 @@
 type Node<T> struct {
     value: T,
-    next: *Node<T>,
+    next: *mut Node<T>,
 };
 
 type List<T> struct {
@@ -9,37 +9,37 @@ type List<T> struct {
     len: int,
 };
 
-fn list_new<T>(): List<T> {
-    return List:<T>{
+fn list_new<T>(): List<T> = {
+    List:<T>{
         front: __null__,
         back: __null__,
         len: 0,
-    };
+    }
 }
 
-fn list_push_front<T>(l: *mut List<T>, value: T) {
-    l.front := new Node:<T>{
+fn list_push_front<T>(l: *mut List<T>, value: T) = {
+    l.front := new mut Node:<T>{
         value: value,
         next: l.front,
     };
     l.len := l.len + 1;
 }
 
-fn list_pop_front<T>(l: *mut List<T>) {
+fn list_pop_front<T>(l: *mut List<T>) = {
     l.front := l.front.next;
     l.len := l.len - 1;
 }
 
-let mut list = list_new.<int>();
-list_push_front(&mut list, 9031);
-list_push_front(&mut list, 931);
-list_push_front(&mut list, 9);
-list_push_front(&mut list, 91);
-list_pop_front(&mut list);
+let mut list = list_new.<int> ();
+list_push_front (&mut list) 9031;
+list_push_front (&mut list) 931;
+list_push_front (&mut list) 9;
+list_push_front (&mut list) 91;
+list_pop_front (&mut list);
 
-let mut node = list.front;
+let mut node: *Node<int> = list.front;
 while node <> __null__ {
-    printnln(node.value);
+    printnln node.value;
     node := node.next;
 }
 
