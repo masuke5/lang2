@@ -80,7 +80,7 @@ impl fmt::Display for Type {
             Self::Int => write!(f, "int"),
             Self::Bool => write!(f, "bool"),
             Self::String => write!(f, "string"),
-            Self::Unit => write!(f, "unit"),
+            Self::Unit => write!(f, "()"),
             Self::Null => write!(f, "null"),
             Self::App(TypeCon::Pointer(is_mutable), types) => write!(f, "*{}{}", format_bool(*is_mutable, "mut "), types[0]),
             Self::App(TypeCon::Tuple, types) => {
@@ -391,6 +391,8 @@ pub fn wrap_typevar(ty: &mut Type) {
 }
 
 pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type, ty_params: &Vec<(Id, TypeVar)>) -> Type {
+    assert!(!params.is_empty());
+
     // Generate type
     let mut stack = Vec::with_capacity(params.len());
     for param in params {

@@ -396,6 +396,7 @@ impl<'a> Analyzer<'a> {
         arg_expr: Spanned<Expr>,
         map: &mut FxHashMap<TypeVar, Type>,
     ) -> Option<(Type, Type, InstList, InstList)> {
+        let func_span = func_expr.span.clone();
         let (ty, func_ty, mut insts, func_insts) = match func_expr.kind {
             Expr::Call(func_expr, arg_expr) => {
                 self.walk_call(code, *func_expr, *arg_expr, map)?
@@ -417,7 +418,7 @@ impl<'a> Analyzer<'a> {
                 (types[0].clone(), types[1].clone())
             },
             ty => {
-                error!(self, arg_expr.span, "expected type `function` but got `{}`", ty);
+                error!(self, func_span, "expected type `function` but got `{}`", ty);
                 return None;
             },
         };
