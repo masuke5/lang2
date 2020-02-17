@@ -66,7 +66,12 @@ let b = 10;
 test_eq "scope" 10 b;
 
 let mut b = 30;
-test_eq "shadowing" 30 b;
+test_eq "shadowing 1" 30 b;
+
+let x = 31413;
+let y = &x;
+let x = 192;
+test_eq "shadowing 2" 31413 (*y);
 
 b := 931;
 test_eq "assign" 931 b;
