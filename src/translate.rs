@@ -1,11 +1,16 @@
 use std::convert::TryInto;
 use std::mem;
-
 use crate::bytecode::{opcode, InstList};
 use crate::ast::BinOp;
 use crate::ty::{Type, TypeCon, type_size_nocheck};
 use crate::sema::ExprInfo;
 use crate::vm::SELF_MODULE_ID;
+
+#[derive(Debug)]
+pub enum RelativeVariableLoc {
+    Stack(isize),
+    StackInHeap(usize, usize),
+}
 
 struct Label(u8, Option<usize>);
 
@@ -64,14 +69,13 @@ macro_rules! let_label {
     };
 }
 
-fn push_copy_inst(insts: &mut InstList, ty: &Type) {
+fn push_copy_inst_with_size(insts: &mut InstList, size: usize) {
     if insts.len() < 1 {
         return;
     }
 
     let [opcode, arg] = insts.prev_inst();
     let loc = i8::from_le_bytes([arg]);
-    let size = type_size_nocheck(ty);
 
     match opcode {
         opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
@@ -81,21 +85,61 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
         opcode::DEREFERENCE => {
             insts.replace_last_inst_with(opcode::COPY, size as u8);
         },
-        opcode::LOAD_REF | opcode::OFFSET | opcode::CONST_OFFSET => {
+        opcode::LOAD_REF | opcode::LOAD_HEAP | opcode::LOAD_HEAP_TRACE | opcode::OFFSET | opcode::CONST_OFFSET => {
             insts.push_inst(opcode::COPY, size as u8);
         },
         _ => {},
     }
 }
 
-fn push_store_insts(insts: &mut InstList, loc: isize, ty: &Type) {
+
+fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     let size = type_size_nocheck(ty);
-    insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
+    push_copy_inst_with_size(insts, size);
+}
+
+fn push_store_insts(insts: &mut InstList, loc: &RelativeVariableLoc, ty: &Type) {
+    let size = type_size_nocheck(ty);
+    push_load_insts(insts, loc);
     insts.push_inst(opcode::STORE, size as u8);
 }
 
+fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
+    match loc {
+        RelativeVariableLoc::Stack(loc) => {
+            insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
+        },
+        RelativeVariableLoc::StackInHeap(loc, level) => {
+            if *level == 0 {
+                insts.push_inst(opcode::LOAD_HEAP, loc.to_le_bytes()[0]);
+            } else {
+                push_u64_insts(insts, *level as u64);
+                insts.push_inst(opcode::LOAD_HEAP_TRACE, loc.to_le_bytes()[0]);
+            }
+        },
+    }
+}
+
+pub fn push_i64_insts(insts: &mut InstList, n: i64) {
+    if let Ok(n) = n.try_into() {
+        let [n] = i8::to_le_bytes(n);
+        insts.push_inst(opcode::TINY_INT, n);
+    } else {
+        insts.push_inst_ref(opcode::INT, n);
+    }
+}
+
+pub fn push_u64_insts(insts: &mut InstList, n: u64) {
+    if let Ok(n) = n.try_into() {
+        let [n] = i8::to_le_bytes(n);
+        insts.push_inst(opcode::TINY_INT, n);
+    } else {
+        insts.push_inst_ref(opcode::INT, n);
+    }
+}
+
 pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
-    // Don't wrap doubly
+    // Don't allow to wrap doubly
     assert!(if let Type::App(TypeCon::Wrapped, _) = ty { false } else { true });
 
     push_copy_inst(&mut insts, ty);
@@ -125,18 +169,21 @@ pub fn unwrap(mut insts: InstList, ty: &Type) -> InstList {
     insts
 }
 
+pub fn escaped_param(ty: &Type, loc: isize, heap_loc: usize) -> InstList {
+    let mut insts = InstList::new();
+
+    push_load_insts(&mut insts, &RelativeVariableLoc::Stack(loc));
+    push_copy_inst(&mut insts, ty);
+    push_store_insts(&mut insts, &RelativeVariableLoc::StackInHeap(heap_loc, 0), &ty);
+
+    insts
+}
+
 // Expression
 
 pub fn literal_int(n: i64) -> InstList {
     let mut insts = InstList::new();
-
-    if let Ok(n) = n.try_into() {
-        let [n] = i8::to_le_bytes(n);
-        insts.push_inst(opcode::TINY_INT, n);
-    } else {
-        insts.push_inst_ref(opcode::INT, n);
-    }
-
+    push_i64_insts(&mut insts, n);
     insts
 }
 
@@ -190,12 +237,12 @@ pub fn literal_tuple(expr: ExprInfo) -> InstList {
     insts
 }
 
-pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset: usize) -> InstList {
+pub fn field(loc: Option<RelativeVariableLoc>, should_deref: bool, comp_expr: ExprInfo, offset: usize) -> InstList {
     let mut insts = comp_expr.insts;
 
     if let Some(loc) = loc {
-        push_store_insts(&mut insts, loc, &comp_expr.ty);
-        insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
+        push_store_insts(&mut insts, &loc, &comp_expr.ty);
+        push_load_insts(&mut insts, &loc);
     }
 
     if should_deref {
@@ -215,12 +262,12 @@ pub fn field(loc: Option<isize>, should_deref: bool, comp_expr: ExprInfo, offset
     insts
 }
 
-pub fn subscript(loc: Option<isize>, should_deref: bool, expr: ExprInfo, subscript_expr: ExprInfo) -> InstList {
+pub fn subscript(loc: Option<RelativeVariableLoc>, should_deref: bool, expr: ExprInfo, subscript_expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
 
     if let Some(loc) = loc {
-        push_store_insts(&mut insts, loc, &expr.ty);
-        insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
+        push_store_insts(&mut insts, &loc, &expr.ty);
+        push_load_insts(&mut insts, &loc);
     }
 
     if should_deref {
@@ -236,9 +283,9 @@ pub fn subscript(loc: Option<isize>, should_deref: bool, expr: ExprInfo, subscri
     insts
 }
 
-pub fn variable(loc: isize) -> InstList {
+pub fn variable(loc: &RelativeVariableLoc) -> InstList {
     let mut insts = InstList::new();
-    insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
+    push_load_insts(&mut insts, loc);
     insts
 }
 
@@ -336,7 +383,12 @@ pub fn arg(insts: &mut InstList, arg_expr: ExprInfo) {
     push_copy_inst(insts, &arg_expr.ty);
 }
 
-pub fn call_expr(return_ty: &Type, func_ty: &Type, args_insts: InstList, func_insts: InstList) -> InstList {
+pub fn call_expr(
+    return_ty: &Type,
+    func_ty: &Type,
+    args_insts: InstList,
+    func_insts: InstList,
+) -> InstList {
     let mut insts = InstList::new();
 
     let return_value_size = type_size_nocheck(return_ty);
@@ -358,10 +410,10 @@ pub fn address(expr: ExprInfo) -> InstList {
     insts
 }
 
-pub fn address_no_lvalue(expr: ExprInfo, loc: isize) -> InstList {
+pub fn address_no_lvalue(expr: ExprInfo, loc: &RelativeVariableLoc) -> InstList {
     let mut insts = expr.insts;
     push_store_insts(&mut insts, loc, &expr.ty);
-    insts.push_inst(opcode::LOAD_REF, i8::to_le_bytes(loc as i8)[0]);
+    push_load_insts(&mut insts, &loc);
     insts.push_inst_noarg(opcode::POINTER);
     insts
 }
@@ -445,7 +497,7 @@ pub fn while_stmt(cond: ExprInfo, body: InstList) -> InstList {
     })
 }
 
-pub fn bind_stmt(loc: isize, expr: ExprInfo) -> InstList {
+pub fn bind_stmt(loc: &RelativeVariableLoc, expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
     push_store_insts(&mut insts, loc, &expr.ty);
@@ -460,7 +512,7 @@ pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
     insts
 }
 
-pub fn return_stmt(loc: isize, expr: Option<ExprInfo>, return_ty: &Type) -> InstList {
+pub fn return_stmt(loc: &RelativeVariableLoc, expr: Option<ExprInfo>, return_ty: &Type) -> InstList {
     let mut insts = InstList::new();
 
     if let Some(expr) = expr {

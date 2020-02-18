@@ -37,6 +37,7 @@ macro_rules! push {
 
 #[derive(Debug, Clone)]
 struct Function {
+    stack_in_heap_size: usize,
     stack_size: usize,
     param_size: usize,
     pos: usize,
@@ -111,6 +112,8 @@ pub struct VM {
     fp: usize,
     // stack pointer
     sp: usize,
+    // heap frame pointer
+    hfp: *const Value,
 
     stack: [Value; STACK_SIZE],
 
@@ -128,6 +131,7 @@ impl VM {
             ip: 0,
             fp: 0,
             sp: 0,
+            hfp: ptr::null(),
             stack: unsafe { mem::zeroed() },
             functions: Vec::new(),
             current_func: 0,
@@ -163,6 +167,7 @@ impl VM {
 
     fn dump_stack(&self, stop: usize) {
         let current_is_main = self.current_func == 0;
+        let saved_hfp = if !current_is_main { Some(self.fp - 5) } else { None };
         let saved_module_id = if !current_is_main { Some(self.fp - 4) } else { None };
         let saved_func_id = if !current_is_main { Some(self.fp - 3) } else { None };
         let saved_ip = if !current_is_main { Some(self.fp - 2) } else { None };
@@ -194,8 +199,12 @@ impl VM {
                 print!("[fp] ");
             }
 
+            if Some(i) == saved_hfp {
+                print!("[hfp]");
+            }
+
             if i > stop {
-                println!("[{}]", i);
+                println!("-- {} --", i);
                 break;
             }
 
@@ -203,6 +212,36 @@ impl VM {
             Self::dump_value(value, 0);
         }
         println!("-------- END DUMP ----------");
+    }
+
+    #[allow(dead_code)]
+    fn dump_stack_in_heap(&self) {
+        use crate::gc::GcRegion;
+
+        unsafe {
+            let mut hfp = self.hfp;
+            let mut i = 0;
+            while hfp != ptr::null() {
+                println!("------ HEAP STACK {} ------", i);
+
+                let region = &*(hfp as *const GcRegion).sub(1);
+                let count = region.size / mem::size_of::<Value>();
+
+                for i in 0..count {
+                    if i == 0 {
+                        print!("(parent) ");
+                    }
+
+                    let value = &*hfp.add(i);
+                    Self::dump_value(value, 0);
+                }
+
+                println!("---- END HEAP STACK {} ----", i);
+
+                hfp = (*hfp).as_ptr();
+                i += 1;
+            }
+        }
     }
 
     fn read_functions(&mut self, bytecode: &Bytecode, module_id: usize) {
@@ -213,12 +252,14 @@ impl VM {
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
+            let stack_in_heap_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_IN_HEAP_SIZE) as usize;
             let stack_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE) as usize;
-            let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE ) as usize;
+            let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE) as usize;
             let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as usize;
             let ref_start = bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START) as usize;
 
             self.functions[module_id].push(Function {
+                stack_in_heap_size,
                 stack_size,
                 param_size,
                 pos,
@@ -257,7 +298,31 @@ impl VM {
         &self.functions[0][0]
     }
 
+    fn alloc_stack_frame_in_heap(&mut self, size: usize) -> *const Value {
+        let mut region = self.gc.alloc::<Value>(size + 1, true, &mut self.stack[..=self.sp]);
+        // Write the pointer to the parent stack frame
+        unsafe {
+            let value: *mut Value = region.as_mut().as_mut_ptr();
+            if self.hfp != ptr::null() {
+                *value = Value::new_ptr_to_heap(self.hfp);
+            } else {
+                *value = Value::new_ptr(self.hfp);
+            }
+        }
+
+        unsafe { region.as_mut().as_ptr() as *const _ }
+    }
+
     fn call(&mut self, global_module_id: usize, func_id: usize) {
+        assert_ne!(self.hfp, ptr::null());
+
+        // Allocate stack frame in heap
+        push!(self, Value::new_ptr_to_heap(self.hfp));
+
+        let stack_in_heap_size = self.functions[global_module_id][func_id].stack_in_heap_size;
+        let new_hfp = self.alloc_stack_frame_in_heap(stack_in_heap_size);
+        self.hfp = new_hfp;
+
         let func = &self.functions[global_module_id][func_id];
 
         push!(self, Value::new_u64(self.current_module as u64));
@@ -375,17 +440,18 @@ impl VM {
         }
 
         if self.functions.is_empty() {
-            panic!("the bytecode need an entrypoint");
+            panic!("bytecodes need an entrypoint");
         }
 
         self.current_func = 0;
 
         let func = self.main_func().clone();
+        self.hfp = self.alloc_stack_frame_in_heap(func.stack_in_heap_size);
+        self.stack[0] = Value::new_ptr_to_heap(self.hfp);
+
         self.ip = func.pos;
-        self.fp = 0;
-        if func.stack_size > 0 {
-            self.sp = func.stack_size as usize - 1;
-        }
+        self.fp = 1;
+        self.sp = func.stack_size + 1;
 
         let mut current_bytecode = bytecodes[0].as_ref().unwrap();
 
@@ -538,6 +604,27 @@ impl VM {
 
                     let value = &mut self.stack[loc];
                     push!(self, Value::new_ptr(value as *mut Value));
+                },
+                opcode::LOAD_HEAP => {
+                    let loc = arg as usize;
+
+                    let value = unsafe { self.hfp.add(loc) };
+                    push!(self, Value::new_ptr(value));
+                },
+                opcode::LOAD_HEAP_TRACE => {
+                    let loc = arg as usize;
+                    let count = pop!(self).as_u64();
+
+                    let value = unsafe {
+                        let mut hfp = self.hfp;
+                        for _ in 0..count {
+                            hfp = (*hfp).as_ptr();
+                        }
+
+                        hfp.add(loc)
+                    };
+
+                    push!(self, Value::new_ptr(value));
                 },
                 opcode::LOAD_COPY => {
                     let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
@@ -707,13 +794,16 @@ impl VM {
                     }
                 },
                 opcode::RETURN => {
-                    // Restore stack frame
                     self.sp = self.fp - 1;
+
+                    // Restore stack frame
                     self.fp = pop!(self).as_u64() as usize;
 
                     self.ip = pop!(self).as_u64() as usize;
                     let prev_func = pop!(self).as_u64() as usize;
                     let prev_module =  pop!(self).as_u64() as usize;
+
+                    self.hfp = pop!(self).as_ptr();
 
                     // Pop arguments
                     self.sp -= self.current_func().param_size as usize;
@@ -751,10 +841,10 @@ impl VM {
         }
 
         if cfg!(debug_assertions) {
-            let main_func_stack_size = self.main_func().stack_size as usize;
-            if (main_func_stack_size != 0 || self.sp != 0) && self.sp != main_func_stack_size - 1 {
+            let mfss = self.main_func().stack_size as usize;
+            if self.sp != mfss + 1 {
                 self.dump_stack(self.sp);
-                eprintln!("warning: expected sp {}, but sp is {}.", main_func_stack_size - 1, self.sp);
+                eprintln!("warning: expected sp {}, but sp is {}.", mfss + 1, self.sp);
             }
         }
 

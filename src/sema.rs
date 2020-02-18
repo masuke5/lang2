@@ -11,6 +11,7 @@ use crate::id::{Id, IdMap, reserved_id};
 use crate::bytecode::{Bytecode, Function, BytecodeBuilder, InstList};
 use crate::module::{Module, FunctionHeader, ModuleHeader, ModuleContainer};
 use crate::translate;
+use crate::translate::RelativeVariableLoc;
 use crate::utils::HashMapWithScope;
 
 macro_rules! error {
@@ -82,17 +83,24 @@ struct Param {
     name: Id,
     ty: Type,
     is_mutable: bool,
+    is_escaped: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum VariableLoc {
+    Stack(isize),
+    StackInHeap(usize, usize),
 }
 
 #[derive(Debug)]
 struct Variable {
     ty: Type,
     is_mutable: bool,
-    loc: isize,
+    loc: VariableLoc,
 }
 
 impl Variable {
-    fn new(ty: Type, is_mutable: bool, loc: isize) -> Self {
+    fn new(ty: Type, is_mutable: bool, loc: VariableLoc) -> Self {
         Self {
             ty,
             is_mutable,
@@ -159,6 +167,7 @@ pub struct Analyzer<'a> {
     next_temp_num: u32,
     next_unique: u32,
     function_insts: LinkedList<(Id, InstList)>,
+    var_level: usize,
     _phantom: &'a std::marker::PhantomData<Self>,
 }
 
@@ -176,6 +185,7 @@ impl<'a> Analyzer<'a> {
             next_temp_num: 0,
             next_unique: 0,
             function_insts: LinkedList::new(),
+            var_level: 0,
             _phantom: &std::marker::PhantomData,
         }
     }
@@ -209,23 +219,44 @@ impl<'a> Analyzer<'a> {
     }
 
     // Insert parameters and return value as variables to `self.variables`
-    fn insert_params(&mut self, params: Vec<Param>, return_ty: &Type) -> Option<()> {
-        let mut loc = -4isize; // fp, ip
-        for Param { name, ty, is_mutable } in params.into_iter().rev() {
+    fn insert_params(
+        &mut self,
+        func: &mut Function,
+        params: Vec<Param>,
+        return_ty: &Type
+    ) -> Option<InstList> {
+        let mut insts = InstList::new();
+
+        let mut loc = -5isize; // fp, ip, mid, fid, hfp
+        for Param { name, ty, is_mutable, is_escaped } in params.into_iter().rev() {
             loc -= type_size_nocheck(&ty) as isize;
 
+            let loc = if is_escaped {
+                let heap_loc = func.stack_in_heap_size as usize + 1;
+
+                // If the parameter is escaped, store to stack in heap
+                insts.append(translate::escaped_param(&ty, loc, heap_loc));
+                func.stack_in_heap_size += type_size_nocheck(&ty) as u8;
+
+                VariableLoc::StackInHeap(heap_loc, self.var_level)
+            } else {
+                VariableLoc::Stack(loc)
+            };
+
             // Insert the parameter as a variable to the current scope
-            self.variables.insert(name, Entry::Variable(Variable::new(ty.clone(), is_mutable, loc)));
+            let var = Entry::Variable(Variable::new(ty.clone(), is_mutable, loc));
+            self.variables.insert(name, var);
         }
 
+        // The variable that is stored a return value
         loc -= type_size_nocheck(return_ty) as isize;
 
         self.variables.insert(
             *reserved_id::RETURN_VALUE,
-            Entry::Variable(Variable::new(return_ty.clone(), false, loc))
+            Entry::Variable(Variable::new(return_ty.clone(), false, VariableLoc::Stack(loc)))
         );
 
-        Some(())
+        Some(insts)
     }
 
     fn get_return_var(&self) -> &Variable {
@@ -275,36 +306,49 @@ impl<'a> Analyzer<'a> {
     //  Variable
     // ====================================
 
-    fn new_var(&mut self, current_func: &mut Function, id: Id, ty: Type, is_mutable: bool) -> isize {
+    fn new_var(&mut self, current_func: &mut Function, id: Id, ty: Type, is_mutable: bool, is_escaped: bool) -> VariableLoc {
         let new_var_size = type_size_nocheck(&ty);
 
-        let last_map = self.variables.last_scope().unwrap();
-        let loc = match last_map.get(&id) {
-            // If the same scope contains the same size variable, use the variable location
-            Some(Entry::Variable(var)) if new_var_size == type_size_nocheck(&var.ty) => {
-                var.loc
-            },
-            _ => {
-                let loc = current_func.stack_size as isize;
-                current_func.stack_size += new_var_size as u8;
-                loc
-            },
+        let loc = if is_escaped {
+            let loc = VariableLoc::StackInHeap(current_func.stack_in_heap_size as usize + 1, self.var_level);
+            current_func.stack_in_heap_size += new_var_size as u8;
+            loc
+        } else {
+            let loc = VariableLoc::Stack(current_func.stack_size as isize);
+            current_func.stack_size += new_var_size as u8;
+            loc
         };
 
-        self.variables.insert(id, Entry::Variable(Variable::new(ty.clone(), is_mutable, loc)));
+        self.variables.insert(id, Entry::Variable(Variable::new(ty.clone(), is_mutable, loc.clone())));
 
         loc
     }
 
     #[inline]
-    fn new_var_in_current_func(&mut self, code: &mut BytecodeBuilder, id: Id, ty: Type, is_mutable: bool) -> isize {
-        self.new_var(code.get_function_mut(self.current_func).unwrap(), id, ty, is_mutable)
+    fn new_var_in_current_func(
+        &mut self,
+        code: &mut BytecodeBuilder,
+        id: Id,
+        ty: Type,
+        is_mutable: bool,
+        is_escaped: bool
+    ) -> VariableLoc {
+        self.new_var(code.get_function_mut(self.current_func).unwrap(), id, ty, is_mutable, is_escaped)
     }
 
     fn gen_temp_id(&mut self) -> Id {
         let id = IdMap::new_id(&format!("$comp{}", self.next_temp_num));
         self.next_temp_num += 1;
         id
+    }
+
+    fn relative_loc(&self, loc: &VariableLoc) -> RelativeVariableLoc {
+        match loc {
+            VariableLoc::Stack(loc) => RelativeVariableLoc::Stack(*loc),
+            VariableLoc::StackInHeap(loc, level) => {
+                RelativeVariableLoc::StackInHeap(*loc, self.var_level - *level)
+            },
+        }
     }
 
     fn find_var(&self, id: Id) -> Option<&Entry> {
@@ -621,7 +665,7 @@ impl<'a> Analyzer<'a> {
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
-                    Some(self.new_var_in_current_func(code, id, comp_expr.ty.clone(), false))
+                    Some(self.new_var_in_current_func(code, id, comp_expr.ty.clone(), false, false))
                 } else {
                     None
                 };
@@ -673,7 +717,7 @@ impl<'a> Analyzer<'a> {
                     }
                 };
 
-                let insts = translate::field(loc, should_deref, comp_expr, offset);
+                let insts = translate::field(loc.map(|loc| self.relative_loc(&loc)), should_deref, comp_expr, offset);
                 let ty = field_ty.clone();
                 return Some(ExprInfo::new_lvalue(insts, ty, expr.span, is_mutable));
             },
@@ -688,7 +732,7 @@ impl<'a> Analyzer<'a> {
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
-                    Some(self.new_var_in_current_func(code, id, expr.ty.clone(), false))
+                    Some(self.new_var_in_current_func(code, id, expr.ty.clone(), false, false))
                 } else {
                     None
                 };
@@ -718,7 +762,7 @@ impl<'a> Analyzer<'a> {
                 let is_lvalue = expr.is_lvalue;
                 let is_mutable = expr.is_mutable;
                 let insts = translate::subscript(
-                    loc,
+                    loc.map(|loc| self.relative_loc(&loc)),
                     should_deref,
                     expr,
                     subscript_expr,
@@ -732,7 +776,7 @@ impl<'a> Analyzer<'a> {
                     is_mutable,
                 });
             },
-            Expr::Variable(name, is_escaped) => {
+            Expr::Variable(name, _) => {
                 let entry = match self.find_var(name) {
                     Some(v) => v,
                     None => {
@@ -742,7 +786,7 @@ impl<'a> Analyzer<'a> {
                 };
 
                 let (insts, ty, is_mutable) = match entry {
-                    Entry::Variable(var) => (translate::variable(var.loc), var.ty.clone(), var.is_mutable),
+                    Entry::Variable(var) => (translate::variable(&self.relative_loc(&var.loc)), var.ty.clone(), var.is_mutable),
                     Entry::Function(fh) => {
                         // Get code id of the function
                         let code_id = match fh.get_module_id() {
@@ -864,9 +908,9 @@ impl<'a> Analyzer<'a> {
 
                 if !expr.is_lvalue {
                     let temp = self.gen_temp_id();
-                    let loc = self.new_var_in_current_func(code, temp, expr.ty.clone(), is_mutable);
+                    let loc = self.new_var_in_current_func(code, temp, expr.ty.clone(), is_mutable, false);
 
-                    let insts = translate::address_no_lvalue(expr, loc);
+                    let insts = translate::address_no_lvalue(expr, &self.relative_loc(&loc));
                     (insts, ty)
                 } else {
                     let insts = translate::address(expr);
@@ -1012,9 +1056,9 @@ impl<'a> Analyzer<'a> {
                     None => self.walk_expr(code, expr)?,
                 };
 
-                let loc = self.new_var_in_current_func(code, name, expr.ty.clone(), is_mutable);
+                let loc = self.new_var_in_current_func(code, name, expr.ty.clone(), is_mutable, is_escaped);
 
-                translate::bind_stmt(loc, expr)
+                translate::bind_stmt(&self.relative_loc(&loc), expr)
             },
             Stmt::Assign(lhs, rhs) => {
                 let lhs = self.walk_expr(code, lhs)?;
@@ -1043,20 +1087,19 @@ impl<'a> Analyzer<'a> {
                     return None;
                 }
 
-                let return_var = self.get_return_var();
-                let ty = return_var.ty.clone();
-                let loc = return_var.loc;
+                let return_var_ty = self.get_return_var().ty.clone();
 
                 let expr = match expr {
-                    Some(expr) => Some(self.walk_expr_with_conversion(code, expr, &ty)?),
+                    Some(expr) => Some(self.walk_expr_with_conversion(code, expr, &return_var_ty)?),
                     None => None,
                 };
 
                 // Check type
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
-                unify(&mut self.errors, &stmt.span, &ty, return_ty);
+                unify(&mut self.errors, &stmt.span, &return_var_ty, return_ty);
 
-                translate::return_stmt(loc, expr, &ty)
+                let return_var = self.get_return_var();
+                translate::return_stmt(&self.relative_loc(&return_var.loc), expr, &return_var.ty)
             },
             Stmt::Import(_) => InstList::new(),
             Stmt::FnDef(_) => InstList::new(),
@@ -1301,6 +1344,7 @@ impl<'a> Analyzer<'a> {
 
         self.push_scope();
         self.push_type_scope();
+        self.var_level += 1;
 
         let header = match self.variables.get(&func.name) {
             Some(Entry::Function(h)) => &h.header,
@@ -1321,11 +1365,15 @@ impl<'a> Analyzer<'a> {
                 name: ap.name,
                 ty: ty.clone(),
                 is_mutable: ap.is_mutable,
+                is_escaped: ap.is_escaped,
             })
             .collect();
-        if self.insert_params(params, &return_ty).is_none() {
-            return;
-        }
+        let code_func = code.get_function_mut(func.name).unwrap();
+
+        let param_insts = match self.insert_params(code_func, params, &return_ty) {
+            Some(insts) => insts,
+            None => return,
+        };
 
         let body = match self.walk_expr(code, func.body) {
             Some(e) => e,
@@ -1335,10 +1383,14 @@ impl<'a> Analyzer<'a> {
         unify(&mut self.errors, &body.span, &return_ty, &body.ty);
 
         let return_var = self.get_return_var();
-        let insts = translate::return_stmt(return_var.loc, Some(body), &return_ty);
+        let body_insts = translate::return_stmt(&self.relative_loc(&return_var.loc), Some(body), &return_ty);
+
+        let mut insts = param_insts;
+        insts.append(body_insts);
 
         self.function_insts.push_back((func.name, insts));
 
+        self.var_level -= 1;
         self.pop_type_scope();
         self.pop_scope();
     }

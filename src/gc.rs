@@ -8,7 +8,7 @@ use crate::value::Value;
 
 #[repr(C)]
 pub struct GcRegion {
-    bits: u8,
+    bits: u64,
     pub size: usize,
     data: [c_void; 0],
 }
@@ -42,8 +42,8 @@ impl Drop for GcRegion {
 }
 
 impl GcRegion {
-    const IS_MARKED: u8 = 1;
-    const CONSISTS_OF_VALUE: u8 = 1 << 1;
+    const IS_MARKED: u64 = 1;
+    const CONSISTS_OF_VALUE: u64 = 1 << 1;
 
     fn new(size: usize, consists_of_value: bool) -> NonNull<Self> {
         let ptr = unsafe {

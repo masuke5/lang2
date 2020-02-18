@@ -113,6 +113,7 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
         false
     }
 
+    #[allow(dead_code)]
     pub fn last_scope(&self) -> Option<&FxHashMap<K, V>> {
         self.maps.front()
     }

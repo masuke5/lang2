@@ -88,6 +88,19 @@ test_eq "early return" 1000 (early_return 3);
 test_eq "fibonacci" 55 (fib 10);
 no_return 51633;
 
+let xxx = 3000;
+
+fn add1(x: int): int = {
+    let z = 30;
+    fn add2(y: int): int = {
+        fn add3(): int = x + y + z + xxx;
+        add3 ()
+    }
+    add2 5
+}
+
+test_eq "escaped variable and parameter" 3038 (add1 3);
+
 fn add(a: int, b: int,): int = {
     a + b
 }

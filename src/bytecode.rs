@@ -50,6 +50,8 @@ pub mod opcode {
     pub const CONST_OFFSET: u8 = 0x27;
     pub const CALL_POS: u8 = 0x28;
     pub const CALL_EXTERN_POS: u8 = 0x29;
+    pub const LOAD_HEAP: u8 = 0x2a;
+    pub const LOAD_HEAP_TRACE: u8 = 0x2b;
 
     pub const END: u8 = 0x50;
 }
@@ -73,6 +75,8 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::DUPLICATE => "DUPLICATE",
         opcode::LOAD_REF => "LOAD_REF",
         opcode::LOAD_COPY => "LOAD_COPY",
+        opcode::LOAD_HEAP => "LOAD_HEAP",
+        opcode::LOAD_HEAP_TRACE => "LOAD_HEAP_TRACE",
         opcode::STORE => "STORE",
         opcode::BINOP_ADD => "BINOP_ADD",
         opcode::BINOP_SUB => "BINOP_SUB",
@@ -111,8 +115,9 @@ pub const POS_FUNC_MAP_START: usize = 6;
 pub const POS_STRING_MAP_START: usize = 8;
 pub const POS_MODULE_MAP_START: usize = 10;
 
-pub const FUNC_OFFSET_STACK_SIZE: usize = 2;
-pub const FUNC_OFFSET_PARAM_SIZE: usize = 3;
+pub const FUNC_OFFSET_STACK_IN_HEAP_SIZE: usize = 0;
+pub const FUNC_OFFSET_STACK_SIZE: usize = 1;
+pub const FUNC_OFFSET_PARAM_SIZE: usize = 2;
 pub const FUNC_OFFSET_POS: usize = 4;
 pub const FUNC_OFFSET_REF_START: usize = 6;
 
@@ -303,6 +308,8 @@ impl Bytecode {
                 let size = arg & 0b00000111;
                 println!("{} size={}", loc, size);
             },
+            opcode::LOAD_HEAP => println!("{}", i8::from_le_bytes([arg])),
+            opcode::LOAD_HEAP_TRACE => println!("{}", i8::from_le_bytes([arg])),
             opcode::STORE => println!("size={}", arg),
             opcode::BINOP_ADD => println!(),
             opcode::BINOP_SUB => println!(),
@@ -399,7 +406,8 @@ impl Bytecode {
 
         for j in 0..func_count {
             let loc = func_map_start + j * 8;
-            let func_id = self.read_u16(loc);
+            let func_id = j as u16;
+            let stack_in_heap_size = self.read_u8(loc + FUNC_OFFSET_STACK_IN_HEAP_SIZE);
             let stack_size = self.read_u8(loc + FUNC_OFFSET_STACK_SIZE);
             let param_size = self.read_u8(loc + FUNC_OFFSET_PARAM_SIZE);
             let pos = self.read_u16(loc + FUNC_OFFSET_POS) as usize;
@@ -407,6 +415,7 @@ impl Bytecode {
 
             println!("{:<width$}", loc, width = index_len);
             println!("  id: {}", func_id);
+            println!("  stack_in_heap_size: {}", stack_in_heap_size);
             println!("  stack_size: {}", stack_size);
             println!("  param_size: {}", param_size);
             println!("  pos: {}", pos);
@@ -440,6 +449,7 @@ impl Bytecode {
 pub struct Function {
     pub name: Id,
     pub code_id: u16,
+    pub stack_in_heap_size: u8,
     pub stack_size: u8,
     pub param_size: u8,
     pub pos: u16,
@@ -452,6 +462,7 @@ impl Function {
             name,
             code_id: 0,
             param_size: param_size as u8,
+            stack_in_heap_size: 0,
             stack_size: 0,
             pos: 0,
             ref_start: 0,
@@ -667,11 +678,13 @@ impl BytecodeBuilder {
         functions.sort_by_key(|f| f.code_id);
 
         for func in &functions {
-            self.code.push_u16(func.code_id);
-            self.code.push_u8(func.stack_size);
-            self.code.push_u8(func.param_size);
-            self.code.push_u16(func.pos);
-            self.code.push_u16(func.ref_start);
+            let base = self.code.len();
+            self.code.reserve(8);
+            self.code.write_u8(base + FUNC_OFFSET_STACK_IN_HEAP_SIZE, func.stack_in_heap_size);
+            self.code.write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
+            self.code.write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
+            self.code.write_u16(base + FUNC_OFFSET_POS, func.pos);
+            self.code.write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
         }
     }
 

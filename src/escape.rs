@@ -60,14 +60,10 @@ impl<'a> Finder<'a> {
                 Expr::Alloc(expr, _) |
                 Expr::App(expr, _) => self.find_expr(&mut expr.kind),
             Expr::Block(stmts, expr) => {
-                self.push_scope();
-
                 for stmt in stmts {
                     self.find_stmt(&mut stmt.kind);
                 }
                 self.find_expr(&mut expr.kind);
-
-                self.pop_scope();
             },
             Expr::If(cond, then, els) => {
                 self.find_expr(&mut cond.kind);
