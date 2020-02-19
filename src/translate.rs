@@ -298,6 +298,10 @@ pub fn func_pos(module_id: Option<u16>, func_id: u16) -> InstList {
     };
     insts.push_inst_ref(opcode::INT, arg);
 
+    // Push the pointer to stack in heap
+    insts.push_inst(opcode::LOAD_HEAP, 0);
+    insts.push_inst_noarg(opcode::POINTER);
+
     insts
 }
 
@@ -383,11 +387,31 @@ pub fn arg(insts: &mut InstList, arg_expr: ExprInfo) {
     push_copy_inst(insts, &arg_expr.ty);
 }
 
-pub fn call_expr(
+pub fn call_expr(func: ExprInfo) -> InstList {
+    let mut insts = func.insts;
+    push_copy_inst(&mut insts, &func.ty);
+    insts.push_inst_noarg(opcode::CALL_POS);
+    insts
+}
+
+pub fn call_func_id(module_id: Option<u16>, func_id: u16) -> InstList {
+    let mut insts = InstList::new();
+
+    if let Some(module_id) = module_id {
+        let arg = ((module_id as u8) << 4) | func_id as u8;
+        insts.push_inst(opcode::CALL_EXTERN, arg);
+    } else {
+        insts.push_inst(opcode::CALL, func_id as u8);
+    }
+
+    insts
+}
+
+pub fn call(
     return_ty: &Type,
     func_ty: &Type,
     args_insts: InstList,
-    func_insts: InstList,
+    call_insts: InstList,
 ) -> InstList {
     let mut insts = InstList::new();
 
@@ -397,10 +421,9 @@ pub fn call_expr(
     }
 
     insts.append(args_insts);
-    insts.append(func_insts);
     push_copy_inst(&mut insts, func_ty);
 
-    insts.push_inst_noarg(opcode::CALL_POS);
+    insts.append(call_insts);
     insts
 }
 

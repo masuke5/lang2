@@ -237,6 +237,7 @@ impl<'a> Lexer<'a> {
             c if is_identifier_char(c) => Some(self.lex_identifier(c)),
             '"' => self.lex_string(),
             '+' => Some(Token::Add),
+            '-' if self.next_is('>') => self.two_char(Token::Arrow),
             '-' => Some(Token::Sub),
             '*' => Some(Token::Asterisk),
             '/' => Some(Token::Div),

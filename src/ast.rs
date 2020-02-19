@@ -301,6 +301,7 @@ pub enum AstType {
     Tuple(Vec<Spanned<AstType>>),
     Struct(Vec<(Spanned<Id>, Spanned<AstType>)>),
     App(Spanned<Id>, Vec<Spanned<AstType>>),
+    Arrow(Box<Spanned<AstType>>, Box<Spanned<AstType>>),
 }
 
 impl fmt::Display for AstType {
@@ -328,6 +329,9 @@ impl fmt::Display for AstType {
                 write_iter!(f, types.iter().map(|t| &t.kind))?;
                 write!(f, ">")
             },
+            AstType::Arrow(arg, ret) => {
+                write!(f, "{} -> {}", arg.kind, ret.kind)
+            }
         }
     }
 }
@@ -488,7 +492,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
 
                 func.return_ty.kind,
             );
-            dump_expr(&func.body, strings, 1);
+            dump_expr(&func.body, strings, depth + 1);
         },
         Stmt::TypeDef(ty) => {
             println!("type {}<{}> {}",

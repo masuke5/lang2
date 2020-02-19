@@ -445,9 +445,32 @@ impl<'a> Analyzer<'a> {
             Expr::Call(func_expr, arg_expr) => {
                 self.walk_call(code, *func_expr, *arg_expr, map)?
             },
+            Expr::Variable(name, _) => match self.variables.get(&name) {
+                Some(Entry::Function(fh)) => {
+                    let ty = generate_func_type(&fh.header.params, &fh.header.return_ty, &fh.header.ty_params);
+
+                    let func_name = fh.original_name.unwrap_or(name);
+                    let (module_id, func_id) = match fh.get_module_id() {
+                        Some(module_id) => {
+                            let (_, (_, module)) = self.module_headers.iter().find(|(_, (id, _))| *id == module_id).unwrap();
+                            let func_id = module.functions[&func_name].0;
+                            (Some(module_id), func_id)
+                        },
+                        None => {
+                            (None, code.get_function(func_name).unwrap().code_id)
+                        },
+                    };
+
+                    (ty.clone(), ty, InstList::new(), translate::call_func_id(module_id, func_id))
+                },
+                _ => {
+                    let expr = self.walk_expr(code, func_expr)?;
+                    (expr.ty.clone(), expr.ty.clone(), InstList::new(), translate::call_expr(expr))
+                },
+            },
             _ => {
                 let expr = self.walk_expr(code, func_expr)?;
-                (expr.ty.clone(), expr.ty, InstList::new(), expr.insts)
+                (expr.ty.clone(), expr.ty.clone(), InstList::new(), translate::call_expr(expr))
             },
         };
 
@@ -889,11 +912,11 @@ impl<'a> Analyzer<'a> {
             },
             Expr::Call(func_expr, arg_expr) => {
                 let mut map = FxHashMap::default();
-                let (ty, func_ty, args_insts, func_insts) = self.walk_call(code, *func_expr, *arg_expr, &mut map)?;
+                let (ty, func_ty, args_insts, call_insts) = self.walk_call(code, *func_expr, *arg_expr, &mut map)?;
 
                 let func_ty = subst(func_ty, &map);
 
-                let insts = translate::call_expr(&ty, &func_ty, args_insts, func_insts);
+                let insts = translate::call(&ty, &func_ty, args_insts, call_insts);
                 (insts, ty)
             },
             Expr::Address(expr, is_mutable) => {
@@ -1304,6 +1327,13 @@ impl<'a> Analyzer<'a> {
                 self.pop_type_scope();
 
                 Some(Type::App(TypeCon::Named(name.kind, *self.type_sizes.get(&name.kind).unwrap_or(&245)), new_types))
+            },
+            AstType::Arrow(arg, ret) => {
+                let arg = self.walk_type(*arg);
+                let ret = self.walk_type(*ret);
+                try_some!(arg, ret);
+
+                Some(Type::App(TypeCon::Arrow, vec![arg, ret]))
             },
         }
     }

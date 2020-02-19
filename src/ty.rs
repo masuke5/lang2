@@ -291,7 +291,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::App(TypeCon::Named(_, size), _) => {
             Some(*size)
         },
-        Type::App(TypeCon::Arrow, _) => Some(1),
+        Type::App(TypeCon::Arrow, _) => Some(2),
         ty @ Type::App(TypeCon::Unique(_, _), _) => {
             let ty = expand_unique(ty.clone());
             type_size(&ty)

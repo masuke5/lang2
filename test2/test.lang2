@@ -88,6 +88,9 @@ test_eq "early return" 1000 (early_return 3);
 test_eq "fibonacci" 55 (fib 10);
 no_return 51633;
 
+let func = mul 11;
+test_eq "closure" 33 (func 3); 
+
 let xxx = 3000;
 
 fn add1(x: int): int = {
@@ -100,6 +103,11 @@ fn add1(x: int): int = {
 }
 
 test_eq "escaped variable and parameter" 3038 (add1 3);
+
+fn mul(a: int): int -> int = {
+    fn mul2(b: int): int = a * b;
+    mul2
+}
 
 fn add(a: int, b: int,): int = {
     a + b

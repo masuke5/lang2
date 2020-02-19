@@ -5,7 +5,7 @@ use std::slice;
 use std::str;
 use std::ptr;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bytecode;
 use crate::bytecode::{Bytecode, opcode, opcode_name};
@@ -159,7 +159,7 @@ impl VM {
     fn dump_value(value: &Value, depth: usize) {
         print!("{}{:x}", "  ".repeat(depth), value.as_u64());
         if value.is_heap_ptr() {
-            println!(" (HEAP)");
+            println!(" (HEAP {:p})", value.as_ptr::<Value>());
         } else {
             println!();
         }
@@ -215,14 +215,24 @@ impl VM {
     }
 
     #[allow(dead_code)]
-    fn dump_stack_in_heap(&self) {
+    fn dump_stack_in_heap(&self, hfp: *const Value) {
         use crate::gc::GcRegion;
 
+        println!("####### HEAP DUMP #######");
+
         unsafe {
-            let mut hfp = self.hfp;
+            let mut dumped_hfp = FxHashSet::default();
+            let mut hfp = hfp;
             let mut i = 0;
             while hfp != ptr::null() {
-                println!("------ HEAP STACK {} ------", i);
+                if dumped_hfp.contains(&hfp) {
+                    println!("\x1b[91m{:p} is already dumped\x1b[0m", hfp);
+                    break;
+                }
+
+                dumped_hfp.insert(hfp);
+
+                println!("\x1b[96m{} ({:p})\x1b[0m", i, hfp);
 
                 let region = &*(hfp as *const GcRegion).sub(1);
                 let count = region.size / mem::size_of::<Value>();
@@ -236,12 +246,12 @@ impl VM {
                     Self::dump_value(value, 0);
                 }
 
-                println!("---- END HEAP STACK {} ----", i);
-
                 hfp = (*hfp).as_ptr();
                 i += 1;
             }
         }
+
+        println!("####### END DUMP #######");
     }
 
     fn read_functions(&mut self, bytecode: &Bytecode, module_id: usize) {
@@ -298,29 +308,32 @@ impl VM {
         &self.functions[0][0]
     }
 
-    fn alloc_stack_frame_in_heap(&mut self, size: usize) -> *const Value {
+    fn alloc_stack_frame_in_heap(&mut self, size: usize, parent: *const Value) -> *const Value {
         let mut region = self.gc.alloc::<Value>(size + 1, true, &mut self.stack[..=self.sp]);
         // Write the pointer to the parent stack frame
         unsafe {
             let value: *mut Value = region.as_mut().as_mut_ptr();
-            if self.hfp != ptr::null() {
-                *value = Value::new_ptr_to_heap(self.hfp);
+            if parent != ptr::null() {
+                *value = Value::new_ptr_to_heap(parent);
             } else {
-                *value = Value::new_ptr(self.hfp);
+                *value = Value::new_ptr(parent);
             }
         }
 
         unsafe { region.as_mut().as_ptr() as *const _ }
     }
 
-    fn call(&mut self, global_module_id: usize, func_id: usize) {
+    #[inline]
+    fn call(&mut self, global_module_id: usize, func_id: usize, closure_hfp: Option<*const Value>) {
         assert_ne!(self.hfp, ptr::null());
 
         // Allocate stack frame in heap
         push!(self, Value::new_ptr_to_heap(self.hfp));
 
         let stack_in_heap_size = self.functions[global_module_id][func_id].stack_in_heap_size;
-        let new_hfp = self.alloc_stack_frame_in_heap(stack_in_heap_size);
+
+        let parent_hfp = closure_hfp.unwrap_or(self.hfp);
+        let new_hfp = self.alloc_stack_frame_in_heap(stack_in_heap_size, parent_hfp);
         self.hfp = new_hfp;
 
         let func = &self.functions[global_module_id][func_id];
@@ -446,7 +459,7 @@ impl VM {
         self.current_func = 0;
 
         let func = self.main_func().clone();
-        self.hfp = self.alloc_stack_frame_in_heap(func.stack_in_heap_size);
+        self.hfp = self.alloc_stack_frame_in_heap(func.stack_in_heap_size, self.hfp);
         self.stack[0] = Value::new_ptr_to_heap(self.hfp);
 
         self.ip = func.pos;
@@ -536,8 +549,7 @@ impl VM {
                     push!(self, Value::new_ptr(nullptr));
                 },
                 opcode::POINTER => {
-                    let value = pop!(self);
-                    push!(self, Value::new_ptr(value.as_ptr::<Value>()));
+                    // Does nothing
                 },
                 opcode::DEREFERENCE => {
                     // Does nothing
@@ -553,7 +565,6 @@ impl VM {
                     }
 
                     let value_ref = pop!(self);
-                    // TODO: check pointer
 
                     unsafe {
                         let value_ref = value_ref.as_ptr();
@@ -735,16 +746,17 @@ impl VM {
                     push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
                 },
                 opcode::CALL => {
-                    self.call(self.current_module, arg as usize);
+                    self.call(self.current_module, arg as usize, None);
                 },
                 opcode::CALL_POS => {
+                    let closure_hfp = pop!(self).as_ptr();
                     let pos = pop!(self).as_u64();
 
                     let module_local_id = (pos >> 32) as usize;
                     let func_id = pos as u32 as usize;
 
                     if module_local_id == SELF_MODULE_ID {
-                        self.call(self.current_module, func_id);
+                        self.call(self.current_module, func_id, Some(closure_hfp));
                     } else {
                         let module_global_id = modules[self.current_module].as_ref().unwrap()[module_local_id];
                         let module = &mut all_modules[module_global_id];
@@ -752,7 +764,7 @@ impl VM {
                         match module {
                             Module::Normal => {
                                 current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
-                                self.call(module_global_id, func_id);
+                                self.call(module_global_id, func_id, Some(closure_hfp));
                             },
                             Module::Native(funcs) => {
                                 let (param_size, func) = &funcs[func_id];
@@ -778,7 +790,7 @@ impl VM {
                     match module {
                         Module::Normal => {
                             current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
-                            self.call(module_global_id, func_id);
+                            self.call(module_global_id, func_id, None);
                         },
                         Module::Native(funcs) => {
                             let (param_size, func) = &funcs[func_id];

@@ -52,6 +52,7 @@ pub enum Token {
     Assign,
     Ampersand,
     Scope,
+    Arrow,
 }
 
 impl fmt::Display for Token {
@@ -105,6 +106,7 @@ impl fmt::Display for Token {
             Token::Assign => write!(f, ":="),
             Token::Ampersand => write!(f, "&"),
             Token::Scope => write!(f, "::"),
+            Token::Arrow => write!(f, "->"),
         }
     }
 }

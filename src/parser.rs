@@ -1109,9 +1109,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_type_arrow(&mut self, ty: Spanned<AstType>) -> Option<Spanned<AstType>> {
+        if self.consume(&Token::Arrow) {
+            let new_ty = self.parse_type()?;
+            let span = Span::merge(&ty.span, &new_ty.span);
+            Some(spanned(AstType::Arrow(Box::new(ty), Box::new(new_ty)), span))
+        } else {
+            Some(ty)
+        }
+    }
+
     fn parse_type(&mut self) -> Option<Spanned<AstType>> {
         let first_span = self.peek().span.clone();
-        match self.peek().kind {
+        let ty = match self.peek().kind {
             Token::Int => self.next_and(Some(spanned(AstType::Int, first_span))),
             Token::Bool => self.next_and(Some(spanned(AstType::Bool, first_span))),
             Token::StringType => self.next_and(Some(spanned(AstType::String, first_span))),
@@ -1133,7 +1143,11 @@ impl<'a> Parser<'a> {
                 self.next();
                 None
             },
-        }
+        }?;
+
+        let ty = self.parse_type_arrow(ty)?;
+
+        Some(ty)
     }
 
     fn parse_param(&mut self) -> Option<Param> {
