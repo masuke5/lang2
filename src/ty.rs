@@ -11,13 +11,31 @@ use crate::id::{Id, IdMap};
 use crate::span::Span;
 use crate::utils::{format_bool, HashMapWithScope};
 
+macro_rules! _ltype_arrow {
+    ($arg:expr, -> $($ret:tt)*) => {
+        Type::App(TypeCon::Arrow, vec![$arg, ltype!($($ret)*)])
+    };
+    ($arg:expr,) => { $arg };
+}
+
+macro_rules! _ltype_term {
+    (int $($rest:tt)*) => { _ltype_arrow!(Type::Int, $($rest)*) };
+    (unit $($rest:tt)*) => { _ltype_arrow!(Type::Unit, $($rest)*) };
+    (bool $($rest:tt)*) => { _ltype_arrow!(Type::Bool, $($rest)*) };
+    (string $($rest:tt)*) => { _ltype_arrow!(Type::String, $($rest)*) };
+    () => { compile_error!("invalid type name") }
+}
+
+macro_rules! _ltype_pointer {
+    (*mut $($rest:tt)*) => { Type::App(TypeCon::Pointer(true), vec![_ltype_pointer!($($rest)*)]) };
+    (*$($rest:tt)*) => { Type::App(TypeCon::Pointer(false), vec![_ltype_pointer!($($rest)*)]) };
+    ($($ty:tt)*) => { _ltype_term!($($ty)*) }
+}
+
 macro_rules! ltype {
-    (int) => { Type::Int };
-    (unit) => { Type::Unit };
-    (bool) => { Type::Bool };
-    (string) => { Type::String };
-    (*$($rest:tt)*) => { Type::App(TypeCon::Pointer(false), vec![ltype!($($rest)*)]) };
-    () => { compile_error!("expected type or invalid type name") }
+    ($($ty:tt)*) => {
+        _ltype_pointer!($($ty)*)
+    };
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -424,5 +442,43 @@ pub fn generate_func_type(
     } else {
         let tyvars = ty_params.iter().map(|(_, var)| *var).collect();
         Type::Poly(tyvars, Box::new(result_ty))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ltype() {
+        assert_eq!(ltype!(int), Type::Int);
+        assert_eq!(ltype!(string), Type::String);
+        assert_eq!(ltype!(unit), Type::Unit);
+        assert_eq!(ltype!(bool), Type::Bool);
+        assert_eq!(
+            ltype!(*int),
+            Type::App(TypeCon::Pointer(false), vec![Type::Int])
+        );
+        assert_eq!(
+            ltype!(*mut int),
+            Type::App(TypeCon::Pointer(true), vec![Type::Int])
+        );
+        assert_eq!(
+            ltype!(**int),
+            Type::App(
+                TypeCon::Pointer(false),
+                vec![Type::App(TypeCon::Pointer(false), vec![Type::Int])]
+            )
+        );
+        assert_eq!(
+            ltype!(int -> *int),
+            Type::App(
+                TypeCon::Arrow,
+                vec![
+                    Type::Int,
+                    Type::App(TypeCon::Pointer(false), vec![Type::Int]),
+                ],
+            )
+        );
     }
 }
