@@ -1,7 +1,7 @@
-use std::fmt;
-use std::sync::RwLock;
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
+use std::fmt;
+use std::sync::RwLock;
 
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct Id(u32);
@@ -16,13 +16,8 @@ impl fmt::Debug for Id {
 pub struct IdMap {}
 
 lazy_static! {
-    static ref ID_MAP: RwLock<FxHashMap<Id, String>> = {
-        RwLock::new(FxHashMap::default())
-    };
-
-    static ref STR_MAP: RwLock<FxHashMap<String, Id>> = {
-        RwLock::new(FxHashMap::default())
-    };
+    static ref ID_MAP: RwLock<FxHashMap<Id, String>> = { RwLock::new(FxHashMap::default()) };
+    static ref STR_MAP: RwLock<FxHashMap<String, Id>> = { RwLock::new(FxHashMap::default()) };
 }
 
 impl IdMap {
@@ -54,8 +49,8 @@ impl IdMap {
 }
 
 pub mod reserved_id {
-    use lazy_static::lazy_static;
     use super::{Id, IdMap};
+    use lazy_static::lazy_static;
 
     // Basically use "$" that cannot use for identifiers
     lazy_static! {

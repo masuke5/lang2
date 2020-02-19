@@ -5,42 +5,42 @@ mod utils;
 #[macro_use]
 mod ty;
 
-mod span;
-mod error;
-mod token;
-mod lexer;
 mod ast;
+mod bytecode;
+mod error;
+mod escape;
+mod gc;
+mod id;
+mod lexer;
+mod module;
 mod parser;
 mod sema;
-mod id;
-mod bytecode;
-mod vm;
-mod value;
+mod span;
 mod stdlib;
-mod gc;
-mod module;
+mod token;
 mod translate;
-mod escape;
+mod value;
+mod vm;
 
-use std::process::exit;
+use std::borrow::Cow;
+use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::Read;
-use std::borrow::Cow;
 use std::path::PathBuf;
-use std::env;
+use std::process::exit;
 
-use lexer::Lexer;
-use token::dump_token;
-use error::Error;
-use parser::Parser;
 use ast::*;
-use id::{Id, IdMap, reserved_id};
-use vm::VM;
+use error::Error;
+use id::{reserved_id, Id, IdMap};
+use lexer::Lexer;
 use module::ModuleContainer;
+use parser::Parser;
 use sema::ModuleBody;
+use token::dump_token;
+use vm::VM;
 
-use clap::{Arg, App, ArgMatches};
+use clap::{App, Arg, ArgMatches};
 use rustc_hash::FxHashMap;
 
 fn print_errors(errors: Vec<Error>) {
@@ -53,9 +53,12 @@ fn print_errors(errors: Vec<Error>) {
             Some(input) => input,
             None => {
                 let contents = fs::read_to_string(&IdMap::name(es.file)).unwrap();
-                file_cache.insert(es.file, contents.split("\n").map(|c| c.to_string()).collect());
+                file_cache.insert(
+                    es.file,
+                    contents.split("\n").map(|c| c.to_string()).collect(),
+                );
                 &file_cache[&es.file]
-            },
+            }
         };
 
         // Print the error position and message
@@ -66,22 +69,37 @@ fn print_errors(errors: Vec<Error>) {
             es.start_col,
             es.end_line + 1,
             es.end_col,
-            error.msg);
+            error.msg
+        );
 
         // Print the lines
         let line_count = es.end_line - es.start_line + 1;
         for i in 0..line_count {
             let line = (es.start_line + i) as usize;
-            let line_len = if line >= input.len() as usize { 0 } else { input[line].len() as u32 };
-            println!("{}", if line >= input.len() as usize { "" } else { &input[line] });
+            let line_len = if line >= input.len() as usize {
+                0
+            } else {
+                input[line].len() as u32
+            };
+            println!(
+                "{}",
+                if line >= input.len() as usize {
+                    ""
+                } else {
+                    &input[line]
+                }
+            );
 
             let indent = input[line]
                 .chars()
                 .take_while(|c| *c == ' ' || *c == '\t')
-                .fold(0, |indent, c| indent + match c {
-                    ' ' => 1,
-                    '\t' => 4,
-                    _ => unreachable!(),
+                .fold(0, |indent, c| {
+                    indent
+                        + match c {
+                            ' ' => 1,
+                            '\t' => 4,
+                            _ => unreachable!(),
+                        }
                 }) as u32;
 
             // Print the error span
@@ -102,7 +120,13 @@ fn print_errors(errors: Vec<Error>) {
     }
 }
 
-fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, file_path: Option<PathBuf>) -> Result<(), Vec<Error>> {
+fn execute(
+    matches: &ArgMatches,
+    input: &str,
+    file: Id,
+    main_module_name: Id,
+    file_path: Option<PathBuf>,
+) -> Result<(), Vec<Error>> {
     fn ok_if_empty(errors: Vec<Error>) -> Result<(), Vec<Error>> {
         if errors.is_empty() {
             Ok(())
@@ -134,14 +158,19 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     }
 
     // Parse
-    let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default(), &container);
+    let parser = Parser::new(
+        &root_path,
+        tokens,
+        rustc_hash::FxHashSet::default(),
+        &container,
+    );
     let main_module_path = SymbolPath::from_path(&root_path, &file_path);
     let mut module_buffers = match parser.parse(&main_module_path) {
         Ok(p) => p,
         Err(mut perrors) => {
             errors.append(&mut perrors);
             return Err(errors);
-        },
+        }
     };
 
     for (_, program) in &mut module_buffers {
@@ -177,7 +206,9 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     }
 
     let mut new_module_bodies = Vec::with_capacity(module_bodies.len());
-    let main_body = module_bodies.remove(&IdMap::name(main_module_name)).unwrap();
+    let main_body = module_bodies
+        .remove(&IdMap::name(main_module_name))
+        .unwrap();
 
     // After push the main bytecode, push the other bytecodes
     new_module_bodies.push((IdMap::name(main_module_name), main_body));
@@ -192,11 +223,14 @@ fn execute(matches: &ArgMatches, input: &str, file: Id, main_module_name: Id, fi
     Ok(())
 }
 
-fn get_input<'a>(matches: &'a ArgMatches) -> Result<(Id, Cow<'a, str>, Id, Option<PathBuf>), String> {
+fn get_input<'a>(
+    matches: &'a ArgMatches,
+) -> Result<(Id, Cow<'a, str>, Id, Option<PathBuf>), String> {
     if let Some(filepath_str) = matches.value_of("file") {
         let mut file = File::open(filepath_str).map_err(|err| format!("{}", err))?;
         let mut input = String::new();
-        file.read_to_string(&mut input).map_err(|err| format!("{}", err))?;
+        file.read_to_string(&mut input)
+            .map_err(|err| format!("{}", err))?;
 
         let filepath_id = IdMap::new_id(&filepath_str);
         let filepath = PathBuf::from(filepath_str);
@@ -218,31 +252,45 @@ fn main() {
         .version("0.0")
         .author("masuke5 <s.zerogoichi@gmail.com>")
         .about("lang2 interpreter")
-        .arg(Arg::with_name("file")
-            .help("Runs file")
-            .index(1)
-            .required(false))
-        .arg(Arg::with_name("cmd")
-             .short("c")
-             .long("cmd")
-             .help("Runs string")
-             .takes_value(true)
-             .required(false))
-        .arg(Arg::with_name("dump-token")
-             .long("dump-token")
-             .help("Dumps tokens"))
-        .arg(Arg::with_name("dump-ast")
-             .long("dump-ast")
-             .help("Dumps AST"))
-        .arg(Arg::with_name("dump-insts")
-             .long("dump-insts")
-             .help("Dumps instructions"))
-        .arg(Arg::with_name("trace")
-             .long("trace")
-             .help("Traces instructions"))
-        .arg(Arg::with_name("measure")
-             .long("measure")
-             .help("Measures the performance"))
+        .arg(
+            Arg::with_name("file")
+                .help("Runs file")
+                .index(1)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("cmd")
+                .short("c")
+                .long("cmd")
+                .help("Runs string")
+                .takes_value(true)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("dump-token")
+                .long("dump-token")
+                .help("Dumps tokens"),
+        )
+        .arg(
+            Arg::with_name("dump-ast")
+                .long("dump-ast")
+                .help("Dumps AST"),
+        )
+        .arg(
+            Arg::with_name("dump-insts")
+                .long("dump-insts")
+                .help("Dumps instructions"),
+        )
+        .arg(
+            Arg::with_name("trace")
+                .long("trace")
+                .help("Traces instructions"),
+        )
+        .arg(
+            Arg::with_name("measure")
+                .long("measure")
+                .help("Measures the performance"),
+        )
         .get_matches();
 
     let (file, input, module_name, file_path) = match get_input(&matches) {
@@ -250,7 +298,7 @@ fn main() {
         Err(err) => {
             eprintln!("Unable to load input: {}", err);
             exit(1);
-        },
+        }
     };
 
     if let Err(errors) = execute(&matches, &input, file, module_name, file_path) {

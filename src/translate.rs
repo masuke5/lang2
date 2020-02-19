@@ -1,10 +1,10 @@
+use crate::ast::BinOp;
+use crate::bytecode::{opcode, InstList};
+use crate::sema::ExprInfo;
+use crate::ty::{type_size_nocheck, Type, TypeCon};
+use crate::vm::SELF_MODULE_ID;
 use std::convert::TryInto;
 use std::mem;
-use crate::bytecode::{opcode, InstList};
-use crate::ast::BinOp;
-use crate::ty::{Type, TypeCon, type_size_nocheck};
-use crate::sema::ExprInfo;
-use crate::vm::SELF_MODULE_ID;
 
 #[derive(Debug)]
 pub enum RelativeVariableLoc {
@@ -81,17 +81,20 @@ fn push_copy_inst_with_size(insts: &mut InstList, size: usize) {
         opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
             let arg = (loc << 3) | size as i8;
             insts.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
-        },
+        }
         opcode::DEREFERENCE => {
             insts.replace_last_inst_with(opcode::COPY, size as u8);
-        },
-        opcode::LOAD_REF | opcode::LOAD_HEAP | opcode::LOAD_HEAP_TRACE | opcode::OFFSET | opcode::CONST_OFFSET => {
+        }
+        opcode::LOAD_REF
+        | opcode::LOAD_HEAP
+        | opcode::LOAD_HEAP_TRACE
+        | opcode::OFFSET
+        | opcode::CONST_OFFSET => {
             insts.push_inst(opcode::COPY, size as u8);
-        },
-        _ => {},
+        }
+        _ => {}
     }
 }
-
 
 fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     let size = type_size_nocheck(ty);
@@ -108,7 +111,7 @@ fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
     match loc {
         RelativeVariableLoc::Stack(loc) => {
             insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
-        },
+        }
         RelativeVariableLoc::StackInHeap(loc, level) => {
             if *level == 0 {
                 insts.push_inst(opcode::LOAD_HEAP, loc.to_le_bytes()[0]);
@@ -116,7 +119,7 @@ fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
                 push_u64_insts(insts, *level as u64);
                 insts.push_inst(opcode::LOAD_HEAP_TRACE, loc.to_le_bytes()[0]);
             }
-        },
+        }
     }
 }
 
@@ -140,7 +143,11 @@ pub fn push_u64_insts(insts: &mut InstList, n: u64) {
 
 pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
     // Don't allow to wrap doubly
-    assert!(if let Type::App(TypeCon::Wrapped, _) = ty { false } else { true });
+    assert!(if let Type::App(TypeCon::Wrapped, _) = ty {
+        false
+    } else {
+        true
+    });
 
     push_copy_inst(&mut insts, ty);
 
@@ -174,7 +181,11 @@ pub fn escaped_param(ty: &Type, loc: isize, heap_loc: usize) -> InstList {
 
     push_load_insts(&mut insts, &RelativeVariableLoc::Stack(loc));
     push_copy_inst(&mut insts, ty);
-    push_store_insts(&mut insts, &RelativeVariableLoc::StackInHeap(heap_loc, 0), &ty);
+    push_store_insts(
+        &mut insts,
+        &RelativeVariableLoc::StackInHeap(heap_loc, 0),
+        &ty,
+    );
 
     insts
 }
@@ -237,7 +248,12 @@ pub fn literal_tuple(expr: ExprInfo) -> InstList {
     insts
 }
 
-pub fn field(loc: Option<RelativeVariableLoc>, should_deref: bool, comp_expr: ExprInfo, offset: usize) -> InstList {
+pub fn field(
+    loc: Option<RelativeVariableLoc>,
+    should_deref: bool,
+    comp_expr: ExprInfo,
+    offset: usize,
+) -> InstList {
     let mut insts = comp_expr.insts;
 
     if let Some(loc) = loc {
@@ -249,7 +265,7 @@ pub fn field(loc: Option<RelativeVariableLoc>, should_deref: bool, comp_expr: Ex
         push_copy_inst(&mut insts, &comp_expr.ty);
         insts.push_inst_noarg(opcode::DEREFERENCE);
     }
-    
+
     if let Type::App(TypeCon::Wrapped, _) = &comp_expr.ty {
         push_copy_inst(&mut insts, &comp_expr.ty);
         insts.push_inst_noarg(opcode::DEREFERENCE);
@@ -262,7 +278,12 @@ pub fn field(loc: Option<RelativeVariableLoc>, should_deref: bool, comp_expr: Ex
     insts
 }
 
-pub fn subscript(loc: Option<RelativeVariableLoc>, should_deref: bool, expr: ExprInfo, subscript_expr: ExprInfo) -> InstList {
+pub fn subscript(
+    loc: Option<RelativeVariableLoc>,
+    should_deref: bool,
+    expr: ExprInfo,
+    subscript_expr: ExprInfo,
+) -> InstList {
     let mut insts = expr.insts;
 
     if let Some(loc) = loc {
@@ -535,7 +556,11 @@ pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
     insts
 }
 
-pub fn return_stmt(loc: &RelativeVariableLoc, expr: Option<ExprInfo>, return_ty: &Type) -> InstList {
+pub fn return_stmt(
+    loc: &RelativeVariableLoc,
+    expr: Option<ExprInfo>,
+    return_ty: &Type,
+) -> InstList {
     let mut insts = InstList::new();
 
     if let Some(expr) = expr {

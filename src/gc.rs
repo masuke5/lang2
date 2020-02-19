@@ -1,10 +1,10 @@
-use std::collections::{HashMap, LinkedList, hash_map::Entry};
-use std::mem;
-use std::fmt;
-use std::ptr::NonNull;
-use std::ffi::c_void;
-use libc;
 use crate::value::Value;
+use libc;
+use std::collections::{hash_map::Entry, HashMap, LinkedList};
+use std::ffi::c_void;
+use std::fmt;
+use std::mem;
+use std::ptr::NonNull;
 
 #[repr(C)]
 pub struct GcRegion {
@@ -15,7 +15,8 @@ pub struct GcRegion {
 
 impl fmt::Debug for GcRegion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
+        write!(
+            f,
             "GcRegion {{ is_marked: {}, consists_of_value: {}, size: {}, data: {:p} }}",
             self.is_marked(),
             self.consists_of_value(),
@@ -27,9 +28,9 @@ impl fmt::Debug for GcRegion {
 
 impl PartialEq for GcRegion {
     fn eq(&self, other: &Self) -> bool {
-        self.size == other.size &&
-            self.is_marked() == other.is_marked() &&
-            self.data.as_ptr() == other.data.as_ptr()
+        self.size == other.size
+            && self.is_marked() == other.is_marked()
+            && self.data.as_ptr() == other.data.as_ptr()
     }
 }
 
@@ -110,12 +111,17 @@ impl Gc {
             Some(freelist) if !freelist.is_empty() => {
                 let region = freelist.pop_front().unwrap();
                 Some(region)
-            },
+            }
             Some(_) | None => None,
         }
     }
 
-    pub fn alloc<T>(&mut self, count: usize, consists_of_value: bool, stack: &mut [Value]) -> NonNull<GcRegion> {
+    pub fn alloc<T>(
+        &mut self,
+        count: usize,
+        consists_of_value: bool,
+        stack: &mut [Value],
+    ) -> NonNull<GcRegion> {
         let size = count * mem::size_of::<T>();
 
         // Search from freelist
@@ -128,7 +134,7 @@ impl Gc {
                     Some(region) => region,
                     None => GcRegion::new(size, consists_of_value),
                 }
-            },
+            }
         };
 
         self.values.push_front(region);
@@ -194,7 +200,7 @@ impl Gc {
 
 impl Drop for Gc {
     fn drop(&mut self) {
-        fn free(region: &NonNull<GcRegion>){ 
+        fn free(region: &NonNull<GcRegion>) {
             unsafe { libc::free(region.as_ptr() as *mut _) };
         }
 
@@ -212,15 +218,15 @@ impl Drop for Gc {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::size_of;
     use super::*;
+    use std::mem::size_of;
 
     fn write(mut region: NonNull<GcRegion>, values: &[Value]) {
         let region = unsafe { region.as_mut() };
         if size_of::<Value>() * values.len() != region.size {
             panic!("value size != region size");
         }
-        
+
         unsafe {
             let ptr = region.as_mut_ptr::<Value>();
             for i in 0..values.len() {
@@ -237,10 +243,21 @@ mod tests {
             let mut region1 = gc.alloc::<Value>(2, true, &mut []);
             write(region1, &[Value::new_i64(1), Value::new_i64(2)]);
 
-            let mut region2 = gc.alloc::<Value>(2, true, &mut [Value::new_ptr_to_heap(region1.as_mut())]);
-            write(region2, &[Value::new_i64(3), Value::new_ptr_to_heap(region1.as_mut())]);
+            let mut region2 =
+                gc.alloc::<Value>(2, true, &mut [Value::new_ptr_to_heap(region1.as_mut())]);
+            write(
+                region2,
+                &[Value::new_i64(3), Value::new_ptr_to_heap(region1.as_mut())],
+            );
 
-            let region3 = gc.alloc::<Value>(1, true, &mut [Value::new_ptr_to_heap(region1.as_mut()), Value::new_ptr_to_heap(region2.as_mut())]);
+            let region3 = gc.alloc::<Value>(
+                1,
+                true,
+                &mut [
+                    Value::new_ptr_to_heap(region1.as_mut()),
+                    Value::new_ptr_to_heap(region2.as_mut()),
+                ],
+            );
             write(region3, &[Value::new_i64(190419041)]);
 
             let mut stack = vec![
@@ -251,7 +268,15 @@ mod tests {
 
             gc.gc(&mut stack);
 
-            assert_eq!(region3.as_ref(), gc.freelist_map.get_mut(&8).unwrap().pop_front().unwrap().as_ref());
+            assert_eq!(
+                region3.as_ref(),
+                gc.freelist_map
+                    .get_mut(&8)
+                    .unwrap()
+                    .pop_front()
+                    .unwrap()
+                    .as_ref()
+            );
             assert_eq!(None, gc.freelist_map.get(&2));
         }
     }

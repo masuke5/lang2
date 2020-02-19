@@ -1,9 +1,9 @@
-use std::str::Chars;
-use std::iter::Peekable;
 use crate::error::Error;
+use crate::id::{Id, IdMap};
 use crate::span::{Span, Spanned};
 use crate::token::*;
-use crate::id::{Id, IdMap};
+use std::iter::Peekable;
+use std::str::Chars;
 
 fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
@@ -38,13 +38,16 @@ impl<'a> Lexer<'a> {
     }
 
     fn error(&mut self, msg: &str) {
-        let error = Error::new(msg, Span {
-            file: self.file,
-            start_line: self.start_line,
-            start_col: self.start_col,
-            end_line: self.line,
-            end_col: self.col,
-        });
+        let error = Error::new(
+            msg,
+            Span {
+                file: self.file,
+                start_line: self.start_line,
+                start_col: self.start_col,
+                end_line: self.line,
+                end_col: self.col,
+            },
+        );
         self.errors.push(error);
     }
 
@@ -54,11 +57,11 @@ impl<'a> Lexer<'a> {
                 self.line += 1;
                 self.col = 0;
                 '\n'
-            },
+            }
             Some(ch) => {
                 self.col += 1;
                 ch
-            },
+            }
             None => '\0',
         };
 
@@ -103,7 +106,7 @@ impl<'a> Lexer<'a> {
                 c if c.is_digit(radix) => {
                     n = n * radix as i64 + i64::from(c.to_digit(radix).unwrap());
                     self.read_char();
-                },
+                }
                 _ => {
                     break;
                 }
@@ -118,11 +121,11 @@ impl<'a> Lexer<'a> {
             '0' if self.next_is('x') => {
                 self.read_char();
                 self.lex_number_with_radix(0, 16)
-            },
+            }
             '0' if self.next_is('b') => {
                 self.read_char();
                 self.lex_number_with_radix(0, 2)
-            },
+            }
             '0' => self.lex_number_with_radix(0, 8),
             ch => self.lex_number_with_radix(ch.to_digit(10).unwrap() as i64, 10),
         }
@@ -170,7 +173,7 @@ impl<'a> Lexer<'a> {
         while self.peek() != '"' && self.peek() != '\0' {
             if self.peek() == '\\' {
                 self.read_char();
-                match self.read_char(){
+                match self.read_char() {
                     '"' => s.push('"'),
                     '\\' => s.push('\\'),
                     'n' => s.push('\n'),
@@ -191,11 +194,11 @@ impl<'a> Lexer<'a> {
                         } else {
                             self.error(&format!("invalid character code '{:x}'", n));
                         }
-                    },
+                    }
                     ch => {
                         self.error(&format!("unknown escape sequence '\\{}'", ch));
                         return None;
-                    },
+                    }
                 };
             } else {
                 s.push(self.peek());
@@ -266,11 +269,11 @@ impl<'a> Lexer<'a> {
             '#' => {
                 self.skip_comment();
                 None
-            },
+            }
             c => {
                 self.error(&format!("Invalid character `{}`", c));
                 None
-            },
+            }
         }
     }
 
@@ -284,25 +287,31 @@ impl<'a> Lexer<'a> {
             self.start_col = self.col;
 
             if let Some(token) = self.next_token() {
-                tokens.push(Spanned::<Token>::new(token, Span {
-                    file: self.file,
-                    start_line: self.start_line,
-                    end_line: self.line,
-                    start_col: self.start_col,
-                    end_col: self.col,
-                }));
+                tokens.push(Spanned::<Token>::new(
+                    token,
+                    Span {
+                        file: self.file,
+                        start_line: self.start_line,
+                        end_line: self.line,
+                        start_col: self.start_col,
+                        end_col: self.col,
+                    },
+                ));
             }
 
             self.skip_whitespace();
         }
 
-        tokens.push(Spanned::<Token>::new(Token::EOF, Span {
-            file: self.file,
-            start_line: 0,
-            end_line: 0,
-            start_col: 0,
-            end_col: 0,
-        }));
+        tokens.push(Spanned::<Token>::new(
+            Token::EOF,
+            Span {
+                file: self.file,
+                start_line: 0,
+                end_line: 0,
+                start_col: 0,
+                end_col: 0,
+            },
+        ));
 
         (tokens, self.errors)
     }
@@ -319,20 +328,26 @@ mod tests {
         let lexer = Lexer::new("あ あ", file);
         let (_, errors) = lexer.lex();
         let expected = vec![
-            Error::new("Invalid character `あ`", Span {
-                file,
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 1,
-            }),
-            Error::new("Invalid character `あ`", Span {
-                file,
-                start_line: 0,
-                start_col: 2,
-                end_line: 0,
-                end_col: 3,
-            }),
+            Error::new(
+                "Invalid character `あ`",
+                Span {
+                    file,
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 1,
+                },
+            ),
+            Error::new(
+                "Invalid character `あ`",
+                Span {
+                    file,
+                    start_line: 0,
+                    start_col: 2,
+                    end_line: 0,
+                    end_col: 3,
+                },
+            ),
         ];
 
         for (error, expected) in errors.into_iter().zip(expected.into_iter()) {
@@ -342,42 +357,60 @@ mod tests {
 
     #[test]
     fn lex() {
-        fn new(kind: Token, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> Spanned<Token> {
-            Spanned::<Token>::new(kind, Span {
-                file: IdMap::new_id("test.lang2"),
-                start_line,
-                start_col,
-                end_line,
-                end_col,
-            })
+        fn new(
+            kind: Token,
+            start_line: u32,
+            start_col: u32,
+            end_line: u32,
+            end_col: u32,
+        ) -> Spanned<Token> {
+            Spanned::<Token>::new(
+                kind,
+                Span {
+                    file: IdMap::new_id("test.lang2"),
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                },
+            )
         }
 
-        let lexer = Lexer::new(r#"let b = 1 + 2
+        let lexer = Lexer::new(
+            r#"let b = 1 + 2
 678 * (345 - 10005) /123 + abc
-"abcあいうえお\n\t""#, IdMap::new_id("test.lang2"));
+"abcあいうえお\n\t""#,
+            IdMap::new_id("test.lang2"),
+        );
         let (tokens, errors) = lexer.lex();
         assert!(errors.is_empty());
 
         let expected = vec![
-            new(Token::Let,                 0,  0, 0,  3),
-            new(Token::Identifier(IdMap::new_id("b")), 0,  4, 0,  5),
-            new(Token::Assign,              0,  6, 0,  7),
-            new(Token::Number(1),           0,  8, 0,  9),
-            new(Token::Add,                 0, 10, 0, 11),
-            new(Token::Number(2),           0, 12, 0, 13),
-            new(Token::Number(678),         1,  0, 1,  3),
-            new(Token::Asterisk,            1,  4, 1,  5),
-            new(Token::Lparen,              1,  6, 1,  7),
-            new(Token::Number(345),         1,  7, 1, 10),
-            new(Token::Sub,                 1, 11, 1, 12),
-            new(Token::Number(10005),       1, 13, 1, 18),
-            new(Token::Rparen,              1, 18, 1, 19),
-            new(Token::Div,                 1, 20, 1, 21),
-            new(Token::Number(123),         1, 21, 1, 24),
-            new(Token::Add,                 1, 25, 1, 26),
+            new(Token::Let, 0, 0, 0, 3),
+            new(Token::Identifier(IdMap::new_id("b")), 0, 4, 0, 5),
+            new(Token::Assign, 0, 6, 0, 7),
+            new(Token::Number(1), 0, 8, 0, 9),
+            new(Token::Add, 0, 10, 0, 11),
+            new(Token::Number(2), 0, 12, 0, 13),
+            new(Token::Number(678), 1, 0, 1, 3),
+            new(Token::Asterisk, 1, 4, 1, 5),
+            new(Token::Lparen, 1, 6, 1, 7),
+            new(Token::Number(345), 1, 7, 1, 10),
+            new(Token::Sub, 1, 11, 1, 12),
+            new(Token::Number(10005), 1, 13, 1, 18),
+            new(Token::Rparen, 1, 18, 1, 19),
+            new(Token::Div, 1, 20, 1, 21),
+            new(Token::Number(123), 1, 21, 1, 24),
+            new(Token::Add, 1, 25, 1, 26),
             new(Token::Identifier(IdMap::new_id("abc")), 1, 27, 1, 30),
-            new(Token::String(String::from("abcあいうえお\n\t")), 2, 0, 2, 14),
-            new(Token::EOF,                 0, 0, 0, 0),
+            new(
+                Token::String(String::from("abcあいうえお\n\t")),
+                2,
+                0,
+                2,
+                14,
+            ),
+            new(Token::EOF, 0, 0, 0, 0),
         ];
 
         for (token, expected) in tokens.into_iter().zip(expected.into_iter()) {

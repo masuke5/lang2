@@ -1,25 +1,24 @@
 use std::collections::LinkedList;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::iter::Iterator;
-use std::fmt::Display;
 
 use rustc_hash::FxHashMap;
 
 use crate::span::Span;
 
 macro_rules! write_iter {
-    ($f:expr, $iter:expr) => {
-        {
-            use crate::utils;
+    ($f:expr, $iter:expr) => {{
+        use crate::utils;
 
-            let s = utils::format_iter($iter);
-            write!($f, "{}", s)
-        }
-    }
+        let s = utils::format_iter($iter);
+        write!($f, "{}", s)
+    }};
 }
 
 pub fn format_iter<I: Iterator>(mut iter: I) -> String
-    where <I as Iterator>::Item: Display
+where
+    <I as Iterator>::Item: Display,
 {
     let mut s = String::new();
 
@@ -143,7 +142,10 @@ pub fn escape_string(raw: &str) -> String {
 }
 
 pub fn span_to_string(span: &Span) -> String {
-    format!("\x1b[33m{}:{}-{}:{}\x1b[0m", span.start_line, span.start_col, span.end_line, span.end_col)
+    format!(
+        "\x1b[33m{}:{}-{}:{}\x1b[0m",
+        span.start_line, span.start_col, span.end_line, span.end_col
+    )
 }
 
 pub fn align(x: usize, n: usize) -> usize {

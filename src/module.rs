@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use rustc_hash::FxHashMap;
 
-use crate::vm::VM;
-use crate::ty::{Type, TypeVar, type_size};
-use crate::id::{Id, IdMap};
 use crate::ast::SymbolPath;
+use crate::id::{Id, IdMap};
+use crate::ty::{type_size, Type, TypeVar};
+use crate::vm::VM;
 
 pub const MODULE_EXTENSION: &str = "lang2";
 pub const ROOT_MODULE_FILE: &str = "mod.lang2";
@@ -69,7 +69,7 @@ impl ModuleContainer {
     pub fn get(&self, path: &SymbolPath) -> Option<&ModuleWithChild> {
         let mut iter = path.segments.iter();
 
-        let mut module = self.modules.get(&iter.next()?.id)?; 
+        let mut module = self.modules.get(&iter.next()?.id)?;
         for segment in iter {
             module = module.child_modules.get(&segment.id)?;
         }
@@ -111,19 +111,23 @@ impl ModuleBuilder {
         body: fn(&mut VM),
     ) {
         let name = IdMap::new_id(name);
-        let param_size = params
-            .iter()
-            .fold(0, |size, ty| size + type_size(ty).expect("Param size couldn't be calculated"));
+        let param_size = params.iter().fold(0, |size, ty| {
+            size + type_size(ty).expect("Param size couldn't be calculated")
+        });
 
-        self.func_bodies.push((param_size, NativeFunctionBody(body)));
-        self.func_headers.insert(name, (
-            self.func_headers.len() as u16,
-            FunctionHeader {
-                params,
-                return_ty,
-                ty_params,
-            },
-        ));
+        self.func_bodies
+            .push((param_size, NativeFunctionBody(body)));
+        self.func_headers.insert(
+            name,
+            (
+                self.func_headers.len() as u16,
+                FunctionHeader {
+                    params,
+                    return_ty,
+                    ty_params,
+                },
+            ),
+        );
     }
 
     pub fn build(self, path: SymbolPath) -> ModuleWithChild {
@@ -141,7 +145,6 @@ impl ModuleBuilder {
     }
 }
 
-
 pub fn find_module_file(root_path: &Path, module_path: &SymbolPath) -> Option<PathBuf> {
     // example: std::collections::vec -> name: vec, dir: std/collection
     let mut module_dir = PathBuf::from(root_path);
@@ -149,8 +152,11 @@ pub fn find_module_file(root_path: &Path, module_path: &SymbolPath) -> Option<Pa
         module_dir = module_dir.join(&IdMap::name(segment.id));
     }
 
-
-    let module_name = module_dir.file_stem().unwrap().to_string_lossy().to_string();
+    let module_name = module_dir
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let module_dir = module_dir.parent().unwrap();
 
     let path = module_dir.join(&format!("{}.{}", module_name, MODULE_EXTENSION));

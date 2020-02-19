@@ -1,17 +1,17 @@
 use std::convert::TryFrom;
-use std::path::{Path, PathBuf};
-use std::io;
 use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::span::{Span, Spanned};
-use crate::error::Error;
-use crate::token::*;
 use crate::ast::*;
-use crate::id::{Id, IdMap, reserved_id};
+use crate::error::Error;
+use crate::id::{reserved_id, Id, IdMap};
 use crate::module;
 use crate::module::ModuleContainer;
+use crate::span::{Span, Spanned};
+use crate::token::*;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
@@ -60,7 +60,7 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
         Err(mut errors) => {
             errors_when_lex.append(&mut errors);
             Ok(Err(errors_when_lex))
-        },
+        }
     }
 }
 
@@ -79,7 +79,12 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(root_path: &Path, tokens: Vec<Spanned<Token>>, loaded_modules: FxHashSet<SymbolPath>, native_modules: &'a ModuleContainer) -> Parser<'a> {
+    pub fn new(
+        root_path: &Path,
+        tokens: Vec<Spanned<Token>>,
+        loaded_modules: FxHashSet<SymbolPath>,
+        native_modules: &'a ModuleContainer,
+    ) -> Parser<'a> {
         Self {
             root_path: root_path.to_path_buf(),
             tokens,
@@ -129,7 +134,10 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, expected: &Token, skip: &[Token]) -> Option<()> {
         if !self.consume(&expected) {
             let token = self.peek().clone();
-            error!(self, token.span, "expected `{}` but got `{}`", expected, token.kind);
+            error!(
+                self,
+                token.span, "expected `{}` but got `{}`", expected, token.kind
+            );
 
             self.skip_to(skip);
             if self.peek().kind == *expected {
@@ -150,7 +158,10 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let token = self.peek().clone();
-                error!(self, token.span, "expected `identifier` but got `{}`", token.kind);
+                error!(
+                    self,
+                    token.span, "expected `identifier` but got `{}`", token.kind
+                );
 
                 self.skip_to(skip);
                 if let Token::Identifier(_) = self.peek().kind {
@@ -158,7 +169,7 @@ impl<'a> Parser<'a> {
                 }
 
                 None
-            },
+            }
         }
     }
 
@@ -171,7 +182,8 @@ impl<'a> Parser<'a> {
 
     // Parse something using `func`. skip to `tokens` if fail.
     fn parse_skip<T, F>(&mut self, mut func: F, tokens: &[Token]) -> Option<T>
-        where F: FnMut(&mut Self,) -> Option<T>
+    where
+        F: FnMut(&mut Self) -> Option<T>,
     {
         let res = func(self);
         if res.is_none() {
@@ -181,8 +193,14 @@ impl<'a> Parser<'a> {
         res
     }
 
-    fn parse_path_with_first_segment(&mut self, first: Option<SymbolPathSegment>, first_span: Span) -> Option<Spanned<SymbolPath>> {
-        let mut path = SymbolPath { segments: Vec::new() };
+    fn parse_path_with_first_segment(
+        &mut self,
+        first: Option<SymbolPathSegment>,
+        first_span: Span,
+    ) -> Option<Spanned<SymbolPath>> {
+        let mut path = SymbolPath {
+            segments: Vec::new(),
+        };
 
         if let Some(first) = first {
             path.segments.push(first);
@@ -207,8 +225,14 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn parse_binop<F>(&mut self, allow_join: bool, mut func: F, rules: &[(&Token, &BinOp)]) -> Option<Spanned<Expr>>
-        where F: FnMut(&mut Self) -> Option<Spanned<Expr>>
+    fn parse_binop<F>(
+        &mut self,
+        allow_join: bool,
+        mut func: F,
+        rules: &[(&Token, &BinOp)],
+    ) -> Option<Spanned<Expr>>
+    where
+        F: FnMut(&mut Self) -> Option<Spanned<Expr>>,
     {
         let mut expr = func(self)?;
 
@@ -219,7 +243,10 @@ impl<'a> Parser<'a> {
                         let rhs = func(self)?;
                         let span = Span::merge(&expr.span, &rhs.span);
 
-                        expr = spanned(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
+                        expr = spanned(
+                            Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)),
+                            span,
+                        );
                         continue 'outer;
                     }
                 }
@@ -232,7 +259,10 @@ impl<'a> Parser<'a> {
                     let rhs = func(self)?;
                     let span = Span::merge(&expr.span, &rhs.span);
 
-                    expr = spanned(Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)), span);
+                    expr = spanned(
+                        Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)),
+                        span,
+                    );
                     break;
                 }
             }
@@ -282,7 +312,6 @@ impl<'a> Parser<'a> {
             }
 
             self.expect(&Token::Rbrace, &[Token::Rbrace])?;
-            
 
             let span = Span::merge(&name_span, &self.prev().span);
             Some(spanned(Expr::Struct(ty, fields), span))
@@ -294,16 +323,17 @@ impl<'a> Parser<'a> {
 
         match &self.peek().kind {
             Token::Scope => {
-                let path = self.parse_path_with_first_segment(Some(SymbolPathSegment::new(ident)), ident_span.clone())?;
+                let path = self.parse_path_with_first_segment(
+                    Some(SymbolPathSegment::new(ident)),
+                    ident_span.clone(),
+                )?;
                 Some(spanned(Expr::Path(path.kind), path.span))
-            },
+            }
             Token::Colon => {
                 self.next();
                 self.parse_struct(ident, ident_span)
-            },
-            _ => {
-                Some(spanned(Expr::Variable(ident, false), ident_span.clone()))
-            },
+            }
+            _ => Some(spanned(Expr::Variable(ident, false), ident_span.clone())),
         }
     }
 
@@ -341,7 +371,7 @@ impl<'a> Parser<'a> {
                 Err(_) => {
                     error!(self, self.peek().span.clone(), "too large");
                     0
-                },
+                }
             },
             _ => return None,
         };
@@ -360,25 +390,28 @@ impl<'a> Parser<'a> {
             Token::Number(n) => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::Number(n)), token.span))
-            },
+            }
             Token::String(s) => {
                 self.next();
                 self.strings.push(s);
-                Some(spanned(Expr::Literal(Literal::String(self.strings.len() - 1)), token.span))
-            },
+                Some(spanned(
+                    Expr::Literal(Literal::String(self.strings.len() - 1)),
+                    token.span,
+                ))
+            }
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::True), token.span))
-            },
+            }
             Token::False => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::False), token.span))
-            },
+            }
             Token::Null => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::Null), token.span))
-            },
+            }
             Token::Lbracket => self.parse_array(),
             Token::Lparen => {
                 let lparen_span = self.peek().span.clone();
@@ -402,11 +435,16 @@ impl<'a> Parser<'a> {
                         Some(expr)
                     }
                 }
-            },
+            }
             Token::Lbrace => self.parse_block_expr(),
             Token::If => self.parse_if_expr(),
             _ => {
-                error!(self, token.span, "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`", self.peek().kind);
+                error!(
+                    self,
+                    token.span,
+                    "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`",
+                    self.peek().kind
+                );
                 None
             }
         }
@@ -428,15 +466,21 @@ impl<'a> Parser<'a> {
                         }
 
                         let span = Span::merge(&expr.span, &self.prev().span);
-                        expr = spanned(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
-                    },
+                        expr =
+                            spanned(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
+                    }
                     Token::Identifier(id) => {
                         self.next();
                         let span = Span::merge(&expr.span, &self.prev().span);
                         expr = spanned(Expr::Field(Box::new(expr), Field::Id(id)), span);
-                    },
+                    }
                     _ => {
-                        error!(self, self.peek().span.clone(), "expected `number` but got `{}`", self.peek().kind);
+                        error!(
+                            self,
+                            self.peek().span.clone(),
+                            "expected `number` but got `{}`",
+                            self.peek().kind
+                        );
                     }
                 }
             } else {
@@ -472,7 +516,7 @@ impl<'a> Parser<'a> {
                 let subscript = parse(self)?;
 
                 self.expect(&Token::Rbracket, &[Token::Rbracket])?;
-                
+
                 let span = Span::merge(&expr.span, &self.prev().span);
                 expr = spanned(Expr::Subscript(Box::new(expr), Box::new(subscript)), span);
             } else {
@@ -485,8 +529,13 @@ impl<'a> Parser<'a> {
 
     fn next_is_arg(&self) -> bool {
         match &self.peek().kind {
-            Token::Number(_) | Token::String(_) | Token::Identifier(_) | Token::True | Token::False
-                | Token::Null | Token::Lparen => true,
+            Token::Number(_)
+            | Token::String(_)
+            | Token::Identifier(_)
+            | Token::True
+            | Token::False
+            | Token::Null
+            | Token::Lparen => true,
             _ => false,
         }
     }
@@ -507,8 +556,9 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn parse_unary_op<P, F>(&mut self, mut parse: P, f: F) -> Option<Spanned<Expr>>
-        where P: FnMut(&mut Self) -> Option<Spanned<Expr>>,
-              F: Fn(Box<Spanned<Expr>>) -> Expr
+    where
+        P: FnMut(&mut Self) -> Option<Spanned<Expr>>,
+        F: Fn(Box<Spanned<Expr>>) -> Expr,
     {
         let symbol_span = self.peek().span.clone();
         self.next();
@@ -533,7 +583,7 @@ impl<'a> Parser<'a> {
 
                 let span = Span::merge(&symbol_span, &expr.span);
                 Some(spanned(Expr::Address(Box::new(expr), is_mutable), span))
-            },
+            }
             Token::New => {
                 let symbol_span = self.peek().span.clone();
                 self.next();
@@ -543,51 +593,57 @@ impl<'a> Parser<'a> {
 
                 let span = Span::merge(&symbol_span, &expr.span);
                 Some(spanned(Expr::Alloc(Box::new(expr), is_mutable), span))
-            },
+            }
             _ => parse(self),
         }
     }
 
     fn parse_mul(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(true, Self::parse_unary, &[
-            (&Token::Asterisk, &BinOp::Mul),
-            (&Token::Div, &BinOp::Div),
-        ])
+        self.parse_binop(
+            true,
+            Self::parse_unary,
+            &[(&Token::Asterisk, &BinOp::Mul), (&Token::Div, &BinOp::Div)],
+        )
     }
 
     fn parse_add(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(true, Self::parse_mul, &[
-            (&Token::Add, &BinOp::Add),
-            (&Token::Sub, &BinOp::Sub),
-        ])
+        self.parse_binop(
+            true,
+            Self::parse_mul,
+            &[(&Token::Add, &BinOp::Add), (&Token::Sub, &BinOp::Sub)],
+        )
     }
 
     fn parse_relational(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(false, Self::parse_add, &[
-            (&Token::LessThan, &BinOp::LessThan),
-            (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),
-            (&Token::GreaterThan, &BinOp::GreaterThan),
-            (&Token::GreaterThanOrEqual, &BinOp::GreaterThanOrEqual),
-        ])
+        self.parse_binop(
+            false,
+            Self::parse_add,
+            &[
+                (&Token::LessThan, &BinOp::LessThan),
+                (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),
+                (&Token::GreaterThan, &BinOp::GreaterThan),
+                (&Token::GreaterThanOrEqual, &BinOp::GreaterThanOrEqual),
+            ],
+        )
     }
 
     fn parse_equality(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(false, Self::parse_relational, &[
-            (&Token::Equal, &BinOp::Equal),
-            (&Token::NotEqual, &BinOp::NotEqual),
-        ])
+        self.parse_binop(
+            false,
+            Self::parse_relational,
+            &[
+                (&Token::Equal, &BinOp::Equal),
+                (&Token::NotEqual, &BinOp::NotEqual),
+            ],
+        )
     }
 
     fn parse_and(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(true, Self::parse_equality, &[
-            (&Token::And, &BinOp::And),
-        ])
+        self.parse_binop(true, Self::parse_equality, &[(&Token::And, &BinOp::And)])
     }
 
     fn parse_or(&mut self) -> Option<Spanned<Expr>> {
-        self.parse_binop(true, Self::parse_and, &[
-            (&Token::Or, &BinOp::Or),
-        ])
+        self.parse_binop(true, Self::parse_and, &[(&Token::Or, &BinOp::Or)])
     }
 
     fn parse_expr(&mut self) -> Option<Spanned<Expr>> {
@@ -619,7 +675,7 @@ impl<'a> Parser<'a> {
             None => {
                 self.skip_to(&[Token::Semicolon]);
                 return None;
-            },
+            }
         };
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
@@ -672,13 +728,15 @@ impl<'a> Parser<'a> {
         let span = Span::merge(&lbrace_span, &self.prev().span);
 
         // Push literal unit if there is no result expression
-        let result_expr = result_expr.unwrap_or_else(|| {
-            spanned(Expr::Literal(Literal::Unit), span.clone())
-        });
+        let result_expr =
+            result_expr.unwrap_or_else(|| spanned(Expr::Literal(Literal::Unit), span.clone()));
 
-        Some(spanned(Expr::Block(stmts, Box::new(result_expr)), span.clone()))
+        Some(spanned(
+            Expr::Block(stmts, Box::new(result_expr)),
+            span.clone(),
+        ))
     }
-    
+
     fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
         if self.peek().kind != Token::Lbrace {
             error!(self, self.peek().span.clone(), "expected block");
@@ -743,10 +801,20 @@ impl<'a> Parser<'a> {
             }
         } else {
             None
-        }.map(Box::new);
+        }
+        .map(Box::new);
 
-        let span = Span::merge(&if_token_span, else_expr.as_ref().map(|e| &e.span).unwrap_or(&then_expr.span));
-        Some(spanned(Expr::If(Box::new(expr?), Box::new(then_expr), else_expr), span))
+        let span = Span::merge(
+            &if_token_span,
+            else_expr
+                .as_ref()
+                .map(|e| &e.span)
+                .unwrap_or(&then_expr.span),
+        );
+        Some(spanned(
+            Expr::If(Box::new(expr?), Box::new(then_expr), else_expr),
+            span,
+        ))
     }
 
     fn parse_while_stmt(&mut self) -> Option<Spanned<Stmt>> {
@@ -791,13 +859,15 @@ impl<'a> Parser<'a> {
                     } else {
                         stack.push(id);
                     }
-                },
+                }
                 Token::Lbrace => {
                     self.next();
 
                     let mut ranges = Vec::new();
 
-                    if let Some(first) = self.parse_skip(Self::parse_import_range, &[Token::Rbrace, Token::Comma]) {
+                    if let Some(first) =
+                        self.parse_skip(Self::parse_import_range, &[Token::Rbrace, Token::Comma])
+                    {
                         ranges.push(first.kind);
                     }
 
@@ -806,7 +876,9 @@ impl<'a> Parser<'a> {
                             break;
                         }
 
-                        if let Some(range) = self.parse_skip(Self::parse_import_range, &[Token::Rbrace, Token::Comma]) {
+                        if let Some(range) = self
+                            .parse_skip(Self::parse_import_range, &[Token::Rbrace, Token::Comma])
+                        {
                             ranges.push(range.kind);
                         }
                     }
@@ -816,12 +888,12 @@ impl<'a> Parser<'a> {
                     top = Some(ImportRange::Multiple(ranges));
 
                     break;
-                },
+                }
                 Token::Asterisk => {
                     self.next();
                     top = Some(ImportRange::All);
                     break;
-                },
+                }
                 _ => break,
             }
         }
@@ -836,25 +908,37 @@ impl<'a> Parser<'a> {
         let span = Span::merge(&first_span, &end_span);
         Some(spanned(range, span))
     }
-    
+
     fn load_module(&mut self, module_path: &SymbolPath, span: &Span, load_parent: bool) -> bool {
         // Parse the module file if the module is not loaded already
         if let Some(module_file) = module::find_module_file(&self.root_path, &module_path) {
             if !self.loaded_modules.contains(&module_path) {
                 self.loaded_modules.insert(module_path.clone());
-                match parse_module(&self.root_path, &module_file, &module_path, self.loaded_modules.clone(), &self.native_modules) {
+                match parse_module(
+                    &self.root_path,
+                    &module_file,
+                    &module_path,
+                    self.loaded_modules.clone(),
+                    &self.native_modules,
+                ) {
                     Ok(Ok(module_buffers)) => {
                         // Merge module buffers
                         for (module_path, program) in module_buffers {
                             self.module_buffers.insert(module_path.clone(), program);
                             self.loaded_modules.insert(module_path.clone());
                         }
-                    },
+                    }
                     Ok(Err(mut errors)) => self.errors.append(&mut errors),
                     Err(err) => {
-                        error!(self, span.clone(), "Unable to load module {}: {}", module_path, err);
+                        error!(
+                            self,
+                            span.clone(),
+                            "Unable to load module {}: {}",
+                            module_path,
+                            err
+                        );
                         return false;
-                    },
+                    }
                 }
             }
         } else if self.native_modules.contains(module_path) {
@@ -864,11 +948,11 @@ impl<'a> Parser<'a> {
             match module_path.parent() {
                 Some(path) if load_parent => {
                     return self.load_module(&path, span, false);
-                },
+                }
                 _ => {
                     error!(self, span.clone(), "Cannot find module `{}`", module_path);
                     return false;
-                },
+                }
             }
         }
 
@@ -913,13 +997,13 @@ impl<'a> Parser<'a> {
                 let func = self.parse_fn_decl();
                 let span = Span::merge(&fn_span, &self.prev().span);
                 func.map(|func| spanned(Stmt::FnDef(Box::new(func)), span))
-            },
+            }
             Token::Type => {
                 let type_span = token.span.clone();
                 let tydef = self.parse_def_type();
                 let span = Span::merge(&type_span, &self.prev().span);
                 tydef.map(|tydef| spanned(Stmt::TypeDef(tydef), span))
-            },
+            }
             _ => return (true, None),
         };
 
@@ -1055,7 +1139,7 @@ impl<'a> Parser<'a> {
                 Err(_) => {
                     error!(self, self.peek().span.clone(), "too large");
                     0
-                },
+                }
             },
             _ => return None,
         };
@@ -1083,7 +1167,9 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
-                if let Some(ty) = self.parse_skip(Self::parse_type, &[Token::GreaterThan, Token::Comma]) {
+                if let Some(ty) =
+                    self.parse_skip(Self::parse_type, &[Token::GreaterThan, Token::Comma])
+                {
                     types.push(ty);
                 }
             }
@@ -1113,7 +1199,10 @@ impl<'a> Parser<'a> {
         if self.consume(&Token::Arrow) {
             let new_ty = self.parse_type()?;
             let span = Span::merge(&ty.span, &new_ty.span);
-            Some(spanned(AstType::Arrow(Box::new(ty), Box::new(new_ty)), span))
+            Some(spanned(
+                AstType::Arrow(Box::new(ty), Box::new(new_ty)),
+                span,
+            ))
         } else {
             Some(ty)
         }
@@ -1129,7 +1218,7 @@ impl<'a> Parser<'a> {
                 let id = self.next_and(spanned(name, first_span));
                 let ty = self.parse_type_app(id);
                 Some(ty)
-            },
+            }
             Token::Asterisk => self.parse_type_pointer(),
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
@@ -1142,7 +1231,7 @@ impl<'a> Parser<'a> {
                 );
                 self.next();
                 None
-            },
+            }
         }?;
 
         let ty = self.parse_type_arrow(ty)?;
@@ -1286,15 +1375,15 @@ impl<'a> Parser<'a> {
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
-        Some(AstTypeDef {
-            name,
-            ty,
-            var_ids,
-        })
+        Some(AstTypeDef { name, ty, var_ids })
     }
 
-    pub fn parse(mut self, module_path: &SymbolPath) -> Result<FxHashMap<SymbolPath, Program>, Vec<Error>> {
-        self.imported_modules.push(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
+    pub fn parse(
+        mut self,
+        module_path: &SymbolPath,
+    ) -> Result<FxHashMap<SymbolPath, Program>, Vec<Error>> {
+        self.imported_modules
+            .push(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
 
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
@@ -1306,11 +1395,14 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.module_buffers.insert(module_path.clone(), Program {
-            main_stmts: self.main_stmts,
-            strings: self.strings,
-            imported_modules: self.imported_modules,
-        });
+        self.module_buffers.insert(
+            module_path.clone(),
+            Program {
+                main_stmts: self.main_stmts,
+                strings: self.strings,
+                imported_modules: self.imported_modules,
+            },
+        );
 
         if !self.errors.is_empty() {
             Err(self.errors)

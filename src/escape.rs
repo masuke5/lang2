@@ -1,6 +1,6 @@
 use crate::ast::*;
-use crate::utils::HashMapWithScope;
 use crate::id::Id;
+use crate::utils::HashMapWithScope;
 
 struct Finder<'a> {
     variables: HashMapWithScope<Id, &'a mut bool>,
@@ -27,17 +27,17 @@ impl<'a> Finder<'a> {
                 for expr in exprs {
                     self.find_expr(&mut expr.kind);
                 }
-            },
+            }
             Expr::Struct(_, fields) => {
                 for (_, expr) in fields {
                     self.find_expr(&mut expr.kind);
                 }
-            },
+            }
             Expr::Array(expr, _) => self.find_expr(&mut expr.kind),
             Expr::Subscript(array_expr, index_expr) => {
                 self.find_expr(&mut array_expr.kind);
                 self.find_expr(&mut index_expr.kind);
-            },
+            }
             Expr::BinOp(_, lhs, rhs) => {
                 self.find_expr(&mut lhs.kind);
                 self.find_expr(&mut rhs.kind);
@@ -50,29 +50,29 @@ impl<'a> Finder<'a> {
                         *is_escaped = true;
                     }
                 }
-            },
+            }
             Expr::Call(func_expr, arg_expr) => {
                 self.find_expr(&mut func_expr.kind);
                 self.find_expr(&mut arg_expr.kind);
-            },
-            Expr::Dereference(expr) |
-                Expr::Negative(expr) |
-                Expr::Alloc(expr, _) |
-                Expr::App(expr, _) => self.find_expr(&mut expr.kind),
+            }
+            Expr::Dereference(expr)
+            | Expr::Negative(expr)
+            | Expr::Alloc(expr, _)
+            | Expr::App(expr, _) => self.find_expr(&mut expr.kind),
             Expr::Block(stmts, expr) => {
                 for stmt in stmts {
                     self.find_stmt(&mut stmt.kind);
                 }
                 self.find_expr(&mut expr.kind);
-            },
+            }
             Expr::If(cond, then, els) => {
                 self.find_expr(&mut cond.kind);
                 self.find_expr(&mut then.kind);
                 if let Some(els) = els {
                     self.find_expr(&mut els.kind);
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -82,18 +82,18 @@ impl<'a> Finder<'a> {
             Stmt::Bind(name, _, expr, _, is_escaped) => {
                 self.find_expr(&mut expr.kind);
                 self.variables.insert(*name, is_escaped);
-            },
+            }
             Stmt::Return(Some(expr)) => {
                 self.find_expr(&mut expr.kind);
-            },
+            }
             Stmt::While(expr, stmt) => {
                 self.find_expr(&mut expr.kind);
                 self.find_stmt(&mut stmt.kind);
-            },
+            }
             Stmt::Assign(lhs, rhs) => {
                 self.find_expr(&mut lhs.kind);
                 self.find_expr(&mut rhs.kind);
-            },
+            }
             Stmt::FnDef(func) => {
                 self.push_scope();
 
@@ -103,8 +103,8 @@ impl<'a> Finder<'a> {
                 self.find_expr(&mut func.body.kind);
 
                 self.pop_scope();
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 

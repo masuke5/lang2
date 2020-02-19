@@ -1,6 +1,6 @@
-use std::fmt;
 use crate::id::{Id, IdMap};
 use crate::span::Spanned;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -124,7 +124,13 @@ impl Token {
 
 pub fn dump_token(tokens: Vec<Spanned<Token>>) {
     for token in tokens {
-        println!("{} {}:{}-{}:{}", token.kind.detail(), token.span.start_line, token.span.start_col, token.span.end_line, token.span.end_col);
+        println!(
+            "{} {}:{}-{}:{}",
+            token.kind.detail(),
+            token.span.start_line,
+            token.span.start_col,
+            token.span.end_line,
+            token.span.end_col
+        );
     }
 }
-

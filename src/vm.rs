@@ -1,31 +1,29 @@
-use std::time::Instant;
 use std::mem;
 use std::mem::size_of;
+use std::ptr;
 use std::slice;
 use std::str;
-use std::ptr;
+use std::time::Instant;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bytecode;
-use crate::bytecode::{Bytecode, opcode, opcode_name};
-use crate::value::{Value, Lang2String};
+use crate::bytecode::{opcode, opcode_name, Bytecode};
 use crate::gc::Gc;
 use crate::module::Module;
 use crate::sema::ModuleBody;
+use crate::value::{Lang2String, Value};
 
 pub const SELF_MODULE_ID: usize = 0x7fffffff;
 
 const STACK_SIZE: usize = 10000;
 
 macro_rules! pop {
-    ($self:ident) => {
-        {
-            let v = $self.stack[$self.sp];
-            $self.sp -= 1;
-            v
-        }
-    };
+    ($self:ident) => {{
+        let v = $self.stack[$self.sp];
+        $self.sp -= 1;
+        v
+    }};
 }
 
 macro_rules! push {
@@ -89,7 +87,10 @@ impl Performance {
         let elapsed = now - self.started_time;
         let elapsed = elapsed.as_nanos() as f32;
 
-        let p = self.insts.entry(self.current_opcode).or_insert(InstPerformance::new());
+        let p = self
+            .insts
+            .entry(self.current_opcode)
+            .or_insert(InstPerformance::new());
         let count = p.count as f32;
 
         p.average = 1.0 / (count + 1.0) * (count * p.average + elapsed);
@@ -102,7 +103,7 @@ impl Performance {
 
 pub struct VM {
     performance: Performance,
-    
+
     // garbage collector
     gc: Gc,
 
@@ -167,11 +168,31 @@ impl VM {
 
     fn dump_stack(&self, stop: usize) {
         let current_is_main = self.current_func == 0;
-        let saved_hfp = if !current_is_main { Some(self.fp - 5) } else { None };
-        let saved_module_id = if !current_is_main { Some(self.fp - 4) } else { None };
-        let saved_func_id = if !current_is_main { Some(self.fp - 3) } else { None };
-        let saved_ip = if !current_is_main { Some(self.fp - 2) } else { None };
-        let saved_fp = if !current_is_main { Some(self.fp - 1) } else { None };
+        let saved_hfp = if !current_is_main {
+            Some(self.fp - 5)
+        } else {
+            None
+        };
+        let saved_module_id = if !current_is_main {
+            Some(self.fp - 4)
+        } else {
+            None
+        };
+        let saved_func_id = if !current_is_main {
+            Some(self.fp - 3)
+        } else {
+            None
+        };
+        let saved_ip = if !current_is_main {
+            Some(self.fp - 2)
+        } else {
+            None
+        };
+        let saved_fp = if !current_is_main {
+            Some(self.fp - 1)
+        } else {
+            None
+        };
 
         println!("-------- STACK DUMP --------");
         for (i, value) in self.stack.iter().enumerate() {
@@ -207,7 +228,6 @@ impl VM {
                 println!("-- {} --", i);
                 break;
             }
-
 
             Self::dump_value(value, 0);
         }
@@ -262,7 +282,8 @@ impl VM {
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
-            let stack_in_heap_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_IN_HEAP_SIZE) as usize;
+            let stack_in_heap_size =
+                bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_IN_HEAP_SIZE) as usize;
             let stack_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE) as usize;
             let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE) as usize;
             let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as usize;
@@ -278,7 +299,11 @@ impl VM {
         }
     }
 
-    fn read_modules(&mut self, bytecode: &Bytecode, all_global_ids: &FxHashMap<String, usize>) -> Vec<usize> {
+    fn read_modules(
+        &mut self,
+        bytecode: &Bytecode,
+        all_global_ids: &FxHashMap<String, usize>,
+    ) -> Vec<usize> {
         let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START) as usize;
         let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT) as usize;
 
@@ -309,7 +334,9 @@ impl VM {
     }
 
     fn alloc_stack_frame_in_heap(&mut self, size: usize, parent: *const Value) -> *const Value {
-        let mut region = self.gc.alloc::<Value>(size + 1, true, &mut self.stack[..=self.sp]);
+        let mut region = self
+            .gc
+            .alloc::<Value>(size + 1, true, &mut self.stack[..=self.sp]);
         // Write the pointer to the parent stack frame
         unsafe {
             let value: *mut Value = region.as_mut().as_mut_ptr();
@@ -379,8 +406,13 @@ impl VM {
         let ref_start = self.current_func().ref_start;
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
-    
-    pub fn run(&mut self, module_bodies: Vec<(String, ModuleBody)>, enable_trace: bool, enable_measure: bool) {
+
+    pub fn run(
+        &mut self,
+        module_bodies: Vec<(String, ModuleBody)>,
+        enable_trace: bool,
+        enable_measure: bool,
+    ) {
         #[inline]
         fn ip_after_jump_to(ip: usize, loc: u8) -> usize {
             let loc = i8::from_le_bytes([loc]) as isize;
@@ -482,7 +514,7 @@ impl VM {
                     arg,
                     self.ip - 2,
                     func.ref_start,
-                    string_map_start[self.current_module].unwrap()
+                    string_map_start[self.current_module].unwrap(),
                 );
             }
 
@@ -491,7 +523,7 @@ impl VM {
             }
 
             match opcode {
-                opcode::NOP => {},
+                opcode::NOP => {}
                 opcode::ZERO => {
                     let count = arg as usize;
 
@@ -501,24 +533,27 @@ impl VM {
                     }
 
                     self.sp += count;
-                },
+                }
                 opcode::INT => {
                     let value = self.get_ref_value_i64(current_bytecode, arg);
                     push!(self, Value::new_i64(value));
-                },
+                }
                 opcode::TINY_INT => {
                     let n = i8::from_le_bytes([arg]);
                     push!(self, Value::new_i64(n as i64));
-                },
+                }
                 opcode::STRING => {
                     let string_map_start = string_map_start[self.current_module].unwrap();
-                    let loc = current_bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
+                    let loc =
+                        current_bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 
                     // Read the string length
                     let len = current_bytecode.read_u64(loc) as usize;
 
                     let size = len + size_of::<u64>();
-                    let mut region = self.gc.alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
+                    let mut region = self
+                        .gc
+                        .alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
 
                     // Read the string bytes
                     unsafe {
@@ -535,29 +570,32 @@ impl VM {
                     }
 
                     unsafe {
-                        push!(self, Value::new_ptr_to_heap(region.as_mut().as_ptr::<Value>()));
+                        push!(
+                            self,
+                            Value::new_ptr_to_heap(region.as_mut().as_ptr::<Value>())
+                        );
                     }
-                },
+                }
                 opcode::TRUE => {
                     push!(self, Value::new_true());
-                },
+                }
                 opcode::FALSE => {
                     push!(self, Value::new_false());
-                },
+                }
                 opcode::NULL => {
                     let nullptr = ptr::null_mut::<Value>();
                     push!(self, Value::new_ptr(nullptr));
-                },
+                }
                 opcode::POINTER => {
                     // Does nothing
-                },
+                }
                 opcode::DEREFERENCE => {
                     // Does nothing
-                },
+                }
                 opcode::NEGATIVE => {
                     let tos = &mut self.stack[self.sp];
                     *tos = Value::new_i64(-tos.as_i64());
-                },
+                }
                 opcode::COPY => {
                     let size = arg as usize;
                     if self.sp + size >= STACK_SIZE {
@@ -573,7 +611,7 @@ impl VM {
                     }
 
                     self.sp += size;
-                },
+                }
                 opcode::OFFSET => {
                     let offset = pop!(self).as_i64();
                     if offset < 0 {
@@ -583,14 +621,14 @@ impl VM {
                     let ptr = self.stack[self.sp].as_ptr::<Value>();
                     let new_ptr = unsafe { ptr.add(offset as usize) };
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
-                },
+                }
                 opcode::CONST_OFFSET => {
                     let offset = arg as usize;
 
                     let ptr = self.stack[self.sp].as_ptr::<Value>();
                     let new_ptr = unsafe { ptr.add(offset as usize) };
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
-                },
+                }
                 opcode::DUPLICATE => {
                     let value = self.get_ref_value_u64(current_bytecode, arg);
                     let size = (value >> 32) as usize; // upper 32 bits
@@ -606,7 +644,7 @@ impl VM {
                     }
 
                     self.sp += size * count;
-                },
+                }
                 opcode::LOAD_REF => {
                     let loc = (self.fp as isize + i8::from_le_bytes([arg]) as isize) as usize;
                     if loc >= STACK_SIZE {
@@ -615,13 +653,13 @@ impl VM {
 
                     let value = &mut self.stack[loc];
                     push!(self, Value::new_ptr(value as *mut Value));
-                },
+                }
                 opcode::LOAD_HEAP => {
                     let loc = arg as usize;
 
                     let value = unsafe { self.hfp.add(loc) };
                     push!(self, Value::new_ptr(value));
-                },
+                }
                 opcode::LOAD_HEAP_TRACE => {
                     let loc = arg as usize;
                     let count = pop!(self).as_u64();
@@ -636,7 +674,7 @@ impl VM {
                     };
 
                     push!(self, Value::new_ptr(value));
-                },
+                }
                 opcode::LOAD_COPY => {
                     let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
                     let size = (arg & 0b00000111) as usize;
@@ -653,7 +691,7 @@ impl VM {
                     }
 
                     self.sp += size;
-                },
+                }
                 opcode::STORE => {
                     let size = arg as usize;
 
@@ -667,11 +705,13 @@ impl VM {
                     }
 
                     self.sp -= size;
-                },
+                }
                 opcode::WRAP => {
                     let size = arg as usize;
                     if size != 1 {
-                        let mut region = self.gc.alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
+                        let mut region =
+                            self.gc
+                                .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                         unsafe {
                             let dst = region.as_mut().as_mut_ptr::<Value>();
@@ -684,7 +724,7 @@ impl VM {
                         let region = unsafe { region.as_mut() };
                         push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
                     }
-                },
+                }
                 opcode::UNWRAP => {
                     let size = arg as usize;
                     if size != 1 {
@@ -696,7 +736,7 @@ impl VM {
 
                         self.sp += size - 1;
                     }
-                },
+                }
                 opcode::BINOP_ADD..=opcode::BINOP_NEQ => {
                     let result = unsafe {
                         let rhs = pop!(self).raw_i64();
@@ -709,10 +749,8 @@ impl VM {
                                 let lhs = lhs >> 1;
                                 let rhs = rhs >> 1;
                                 Value::from_raw_i64((lhs * rhs) << 1)
-                            },
-                            opcode::BINOP_DIV => {
-                                Value::new_i64(lhs / rhs)
-                            },
+                            }
+                            opcode::BINOP_DIV => Value::new_i64(lhs / rhs),
                             opcode::BINOP_MOD => Value::from_raw_i64(lhs % rhs),
                             opcode::BINOP_LT => Value::new_bool(lhs < rhs),
                             opcode::BINOP_LE => Value::new_bool(lhs <= rhs),
@@ -725,14 +763,16 @@ impl VM {
                     };
 
                     push!(self, result);
-                },
+                }
                 opcode::POP => {
                     self.sp -= 1;
-                },
+                }
                 opcode::ALLOC => {
                     let size = arg as usize;
 
-                    let mut region = self.gc.alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
+                    let mut region =
+                        self.gc
+                            .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                     unsafe {
                         let dst = region.as_mut().as_mut_ptr::<Value>();
@@ -744,10 +784,10 @@ impl VM {
 
                     let region = unsafe { region.as_mut() };
                     push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
-                },
+                }
                 opcode::CALL => {
                     self.call(self.current_module, arg as usize, None);
-                },
+                }
                 opcode::CALL_POS => {
                     let closure_hfp = pop!(self).as_ptr();
                     let pos = pop!(self).as_u64();
@@ -758,14 +798,15 @@ impl VM {
                     if module_local_id == SELF_MODULE_ID {
                         self.call(self.current_module, func_id, Some(closure_hfp));
                     } else {
-                        let module_global_id = modules[self.current_module].as_ref().unwrap()[module_local_id];
+                        let module_global_id =
+                            modules[self.current_module].as_ref().unwrap()[module_local_id];
                         let module = &mut all_modules[module_global_id];
 
                         match module {
                             Module::Normal => {
                                 current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
                                 self.call(module_global_id, func_id, Some(closure_hfp));
-                            },
+                            }
                             Module::Native(funcs) => {
                                 let (param_size, func) = &funcs[func_id];
 
@@ -776,22 +817,23 @@ impl VM {
 
                                 self.fp = fp;
                                 self.sp -= param_size;
-                            },
+                            }
                         }
                     }
-                },
+                }
                 opcode::CALL_EXTERN => {
                     let module_local_id = ((arg & 0b11110000) >> 4) as usize;
                     let func_id = (arg & 0b00001111) as usize;
 
-                    let module_global_id = modules[self.current_module].as_ref().unwrap()[module_local_id];
+                    let module_global_id =
+                        modules[self.current_module].as_ref().unwrap()[module_local_id];
                     let module = &mut all_modules[module_global_id];
 
                     match module {
                         Module::Normal => {
                             current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
                             self.call(module_global_id, func_id, None);
-                        },
+                        }
                         Module::Native(funcs) => {
                             let (param_size, func) = &funcs[func_id];
 
@@ -802,9 +844,9 @@ impl VM {
 
                             self.fp = fp;
                             self.sp -= param_size;
-                        },
+                        }
                     }
-                },
+                }
                 opcode::RETURN => {
                     self.sp = self.fp - 1;
 
@@ -813,7 +855,7 @@ impl VM {
 
                     self.ip = pop!(self).as_u64() as usize;
                     let prev_func = pop!(self).as_u64() as usize;
-                    let prev_module =  pop!(self).as_u64() as usize;
+                    let prev_module = pop!(self).as_u64() as usize;
 
                     self.hfp = pop!(self).as_ptr();
 
@@ -823,28 +865,28 @@ impl VM {
                     self.current_func = prev_func;
                     self.current_module = prev_module;
                     current_bytecode = &bytecodes[self.current_module].as_ref().unwrap();
-                },
+                }
                 opcode::CALL_NATIVE => {
                     unimplemented!();
-                },
+                }
                 opcode::JUMP => {
                     self.ip = ip_after_jump_to(self.ip, arg);
-                },
+                }
                 opcode::JUMP_IF_FALSE => {
                     let cond = pop!(self);
                     if cond.is_false() {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
-                },
+                }
                 opcode::JUMP_IF_TRUE => {
                     let cond = pop!(self);
                     if cond.is_true() {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
-                },
+                }
                 _ => {
                     panic!("Unknown opcode (0x{:x})", opcode);
-                },
+                }
             }
 
             if cfg!(debug_assertions) && enable_measure {

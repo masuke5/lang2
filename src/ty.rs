@@ -6,10 +6,10 @@ use std::sync::RwLock;
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
-use crate::id::{Id, IdMap};
-use crate::utils::{HashMapWithScope, format_bool};
 use crate::error::Error;
+use crate::id::{Id, IdMap};
 use crate::span::Span;
+use crate::utils::{format_bool, HashMapWithScope};
 
 macro_rules! ltype {
     (int) => { Type::Int };
@@ -24,9 +24,7 @@ macro_rules! ltype {
 pub struct TypeVar(u32);
 
 lazy_static! {
-    static ref VAR_ID_MAP: RwLock<FxHashMap<TypeVar, Id>> = {
-        RwLock::new(FxHashMap::default())
-    };
+    static ref VAR_ID_MAP: RwLock<FxHashMap<TypeVar, Id>> = { RwLock::new(FxHashMap::default()) };
 }
 
 static NEXT_VAR: AtomicU32 = AtomicU32::new(0);
@@ -82,30 +80,37 @@ impl fmt::Display for Type {
             Self::String => write!(f, "string"),
             Self::Unit => write!(f, "()"),
             Self::Null => write!(f, "null"),
-            Self::App(TypeCon::Pointer(is_mutable), types) => write!(f, "*{}{}", format_bool(*is_mutable, "mut "), types[0]),
+            Self::App(TypeCon::Pointer(is_mutable), types) => {
+                write!(f, "*{}{}", format_bool(*is_mutable, "mut "), types[0])
+            }
             Self::App(TypeCon::Tuple, types) => {
                 write!(f, "(")?;
                 write_iter!(f, types.iter())?;
                 write!(f, ")")
-            },
+            }
             Self::App(TypeCon::Struct(fields), types) => {
                 write!(f, "{{")?;
-                write_iter!(f, fields
-                    .iter()
-                    .zip(types.iter())
-                    .map(|(name, ty)| format!("{}: {}", IdMap::name(*name), ty))
+                write_iter!(
+                    f,
+                    fields.iter().zip(types.iter()).map(|(name, ty)| format!(
+                        "{}: {}",
+                        IdMap::name(*name),
+                        ty
+                    ))
                 )?;
                 write!(f, "}}")
-            },
+            }
             Self::App(TypeCon::Arrow, types) => write!(f, "{} -> {}", types[0], types[1]),
             Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
-            Self::App(TypeCon::Unique(tycon, uniq), types) => write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq),
+            Self::App(TypeCon::Unique(tycon, uniq), types) => {
+                write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq)
+            }
             Self::App(TypeCon::Wrapped, types) => write!(f, "'{}", types[0]),
             Self::App(tycon, tys) => {
                 write!(f, "{}(", tycon)?;
                 write_iter!(f, tys.iter())?;
                 write!(f, ")")
-            },
+            }
             Self::Var(var) => write!(f, "{}", var),
             Self::Poly(vars, ty) => {
                 if !cfg!(debug_assertions) {
@@ -115,7 +120,7 @@ impl fmt::Display for Type {
                     write_iter!(f, vars.iter())?;
                     write!(f, "): {}", ty)
                 }
-            },
+            }
         }
     }
 }
@@ -143,13 +148,13 @@ impl fmt::Display for TypeCon {
                 write!(f, "{{")?;
                 write_iter!(f, fields.iter().map(|id| IdMap::name(*id)))?;
                 write!(f, "}}")
-            },
+            }
             Self::Array(size) => write!(f, "array({})", size),
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
                 write_iter!(f, params.iter().map(|a| format!("{}", a)))?;
                 write!(f, ") {}", body)
-            },
+            }
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
             Self::Named(name, size) => write!(f, "{}{{size={}}}", IdMap::name(*name), size),
             Self::Wrapped => write!(f, "wrapped"),
@@ -164,11 +169,9 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
         Type::String => Type::String,
         Type::Unit => Type::Unit,
         Type::Null => Type::Null,
-        Type::Var(var) => {
-            match map.iter().find(|(v, _)| var == **v) {
-                Some((_, ty)) => ty.clone(),
-                None => Type::Var(var),
-            }
+        Type::Var(var) => match map.iter().find(|(v, _)| var == **v) {
+            Some((_, ty)) => ty.clone(),
+            None => Type::Var(var),
         },
         Type::App(TypeCon::Fun(params, body), tys) => {
             let mut map_in_func = FxHashMap::default();
@@ -178,7 +181,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 
             let body = subst(*body, &map_in_func);
             subst(body, map)
-        },
+        }
         Type::App(tycon, tys) => {
             let mut new_tys = Vec::with_capacity(tys.len());
             for ty in tys {
@@ -186,7 +189,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
             }
 
             Type::App(tycon, new_tys)
-        },
+        }
         Type::Poly(vars, ty) => {
             let mut new_map = FxHashMap::default();
             let mut new_vars = Vec::with_capacity(vars.len());
@@ -198,7 +201,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
             let ty = subst(*ty, &new_map);
             let ty = subst(ty, map);
             Type::Poly(new_vars, Box::new(ty))
-        },
+        }
     }
 }
 
@@ -221,13 +224,13 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
 
                 return Some(());
             }
-
-        },
-        _ => {},
+        }
+        _ => {}
     };
 
     match (a, b) {
-        (Type::App(TypeCon::Fun(params, body), tys), b) | (b, Type::App(TypeCon::Fun(params, body), tys)) => {
+        (Type::App(TypeCon::Fun(params, body), tys), b)
+        | (b, Type::App(TypeCon::Fun(params, body), tys)) => {
             let mut map = FxHashMap::default();
             for (param, ty) in params.iter().zip(tys.iter()) {
                 map.insert(param.clone(), ty.clone());
@@ -235,8 +238,11 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
 
             unify(errors, span, &subst(*body.clone(), &map), b)?;
             Some(())
-        },
-        (Type::App(TypeCon::Unique(_, uniq1), tys1), Type::App(TypeCon::Unique(_, uniq2), tys2)) => {
+        }
+        (
+            Type::App(TypeCon::Unique(_, uniq1), tys1),
+            Type::App(TypeCon::Unique(_, uniq2), tys2),
+        ) => {
             if uniq1 != uniq2 {
                 return None;
             }
@@ -246,7 +252,7 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
             }
 
             Some(())
-        },
+        }
         (Type::Poly(vars1, ty1), Type::Poly(vars2, ty2)) => {
             let mut map = FxHashMap::default();
             for (var1, var2) in vars1.iter().zip(vars2.iter()) {
@@ -255,7 +261,7 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
 
             unify(errors, span, ty1, &subst(*ty2.clone(), &map))?;
             Some(())
-        },
+        }
         (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Some(()),
         (Type::Int, Type::Int) => Some(()),
         (Type::Bool, Type::Bool) => Some(()),
@@ -264,9 +270,12 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
         (a, b) => {
-            errors.push(Error::new(&format!("`{}` and `{}` are not equivalent", a, b), span.clone()));
+            errors.push(Error::new(
+                &format!("`{}` and `{}` are not equivalent", a, b),
+                span.clone(),
+            ));
             None
-        },
+        }
     }
 }
 
@@ -281,21 +290,19 @@ pub fn type_size(ty: &Type) -> Option<usize> {
 
             let body = subst(*body.clone(), &map);
             type_size(&body)
-        },
+        }
         Type::App(TypeCon::Pointer(_), _) => Some(1),
         Type::App(TypeCon::Wrapped, _) => Some(1),
         Type::App(TypeCon::Array(size), types) => {
             let elem_size = type_size(&types[0])?;
             Some(elem_size * size)
-        },
-        Type::App(TypeCon::Named(_, size), _) => {
-            Some(*size)
-        },
+        }
+        Type::App(TypeCon::Named(_, size), _) => Some(*size),
         Type::App(TypeCon::Arrow, _) => Some(2),
         ty @ Type::App(TypeCon::Unique(_, _), _) => {
             let ty = expand_unique(ty.clone());
             type_size(&ty)
-        },
+        }
         Type::App(_, tys) => {
             let mut size = 0;
             for ty in tys {
@@ -321,10 +328,8 @@ pub fn expand_unique(ty: Type) -> Type {
             // { params_i -> args_i }
             let map: FxHashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
             expand_unique(subst(*body, &map))
-        },
-        Type::App(TypeCon::Unique(tycon, _), tys) => {
-            expand_unique(Type::App(*tycon, tys))
-        },
+        }
+        Type::App(TypeCon::Unique(tycon, _), tys) => expand_unique(Type::App(*tycon, tys)),
         ty => ty,
     }
 }
@@ -335,25 +340,25 @@ pub fn expand_wrap(ty: Type) -> Type {
             // { params_i -> args_i }
             let map: FxHashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
             expand_wrap(subst(*body, &map))
-        },
-        Type::App(TypeCon::Wrapped, types) => {
-            expand_wrap(types[0].clone())
-        },
+        }
+        Type::App(TypeCon::Wrapped, types) => expand_wrap(types[0].clone()),
         ty => ty,
     }
 }
 
-pub fn resolve_type_sizes_in_tycon(type_sizes: &HashMapWithScope<Id, usize>, tycon: TypeCon) -> TypeCon {
+pub fn resolve_type_sizes_in_tycon(
+    type_sizes: &HashMapWithScope<Id, usize>,
+    tycon: TypeCon,
+) -> TypeCon {
     match tycon {
-        TypeCon::Named(name, _) => {
-            TypeCon::Named(name, *type_sizes.get(&name).unwrap())
-        },
+        TypeCon::Named(name, _) => TypeCon::Named(name, *type_sizes.get(&name).unwrap()),
         TypeCon::Fun(params, ty) => {
             TypeCon::Fun(params, Box::new(resolve_type_sizes(type_sizes, *ty)))
-        },
-        TypeCon::Unique(tycon, uniq) => {
-            TypeCon::Unique(Box::new(resolve_type_sizes_in_tycon(type_sizes, *tycon)), uniq)
-        },
+        }
+        TypeCon::Unique(tycon, uniq) => TypeCon::Unique(
+            Box::new(resolve_type_sizes_in_tycon(type_sizes, *tycon)),
+            uniq,
+        ),
         tycon => tycon,
     }
 }
@@ -362,9 +367,12 @@ pub fn resolve_type_sizes(type_sizes: &HashMapWithScope<Id, usize>, ty: Type) ->
     match ty {
         Type::App(tycon, types) => {
             let tycon = resolve_type_sizes_in_tycon(type_sizes, tycon);
-            let types = types.into_iter().map(|ty| resolve_type_sizes(type_sizes, ty)).collect();
+            let types = types
+                .into_iter()
+                .map(|ty| resolve_type_sizes(type_sizes, ty))
+                .collect();
             Type::App(tycon, types)
-        },
+        }
         ty => ty,
     }
 }
@@ -378,19 +386,23 @@ pub fn wrap_typevar(ty: &mut Type) {
                     for ty in types {
                         wrap_typevar(ty);
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             };
-        },
+        }
         vty @ Type::Var(_) => {
             let tyvar = mem::replace(vty, Type::Int);
             *vty = Type::App(TypeCon::Wrapped, vec![tyvar]);
-        },
-        _ => {},
+        }
+        _ => {}
     }
 }
 
-pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type, ty_params: &Vec<(Id, TypeVar)>) -> Type {
+pub fn generate_func_type(
+    params: &Vec<Type>,
+    return_ty: &Type,
+    ty_params: &Vec<(Id, TypeVar)>,
+) -> Type {
     assert!(!params.is_empty());
 
     // Generate type
@@ -399,7 +411,10 @@ pub fn generate_func_type(params: &Vec<Type>, return_ty: &Type, ty_params: &Vec<
         stack.push(param);
     }
 
-    let mut result_ty = Type::App(TypeCon::Arrow, vec![stack.pop().unwrap().clone(), return_ty.clone()]);
+    let mut result_ty = Type::App(
+        TypeCon::Arrow,
+        vec![stack.pop().unwrap().clone(), return_ty.clone()],
+    );
     while let Some(ty) = stack.pop() {
         result_ty = Type::App(TypeCon::Arrow, vec![ty.clone(), result_ty]);
     }

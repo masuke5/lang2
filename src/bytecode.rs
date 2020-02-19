@@ -1,7 +1,7 @@
+use std::collections::{HashMap, LinkedList};
 use std::mem;
 use std::ptr;
 use std::str;
-use std::collections::{LinkedList, HashMap};
 
 use crate::id::Id;
 use crate::utils;
@@ -160,9 +160,7 @@ pub struct Bytecode {
 
 impl Bytecode {
     pub fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
-        }
+        Self { bytes: Vec::new() }
     }
 
     pub fn push_header(&mut self) {
@@ -175,15 +173,9 @@ impl Bytecode {
             0, // the number of function
             0, // the number of string
             0, // funcmap_start (2byte)
-            0,
-            0, // string_map_start (2byte)
-            0,
-            0, // the number of module
-            0,
-            0,
-            0,
-            0,
-            0,
+            0, 0, // string_map_start (2byte)
+            0, 0, // the number of module
+            0, 0, 0, 0, 0,
         ]);
     }
 
@@ -256,7 +248,14 @@ impl Bytecode {
         }
     }
 
-    pub fn dump_inst(&self, opcode: u8, arg: u8, ip: usize, ref_start: usize, string_map_start: usize) {
+    pub fn dump_inst(
+        &self,
+        opcode: u8,
+        arg: u8,
+        ip: usize,
+        ref_start: usize,
+        string_map_start: usize,
+    ) {
         print!("{} ", opcode_name(opcode));
 
         match opcode {
@@ -264,10 +263,10 @@ impl Bytecode {
             opcode::INT => {
                 let value = self.read_i64(ref_start + arg as usize * 8);
                 println!("{} ({:x})", arg, value);
-            },
+            }
             opcode::TINY_INT => {
                 println!("{}", arg);
-            },
+            }
             opcode::STRING => {
                 let string_id = arg as usize;
                 // Read string location from string map
@@ -285,7 +284,7 @@ impl Bytecode {
 
                 let escaped_string = utils::escape_string(&raw);
                 println!("{} (\"{}\") ({})", string_id, escaped_string, loc);
-            },
+            }
             opcode::TRUE => println!(),
             opcode::FALSE => println!(),
             opcode::NULL => println!(),
@@ -301,13 +300,13 @@ impl Bytecode {
                 let count = (value as u32) as usize; // lower 32 bits
 
                 println!("{} (size={} count={})", arg, size, count);
-            },
+            }
             opcode::LOAD_REF => println!("{}", i8::from_le_bytes([arg])),
             opcode::LOAD_COPY => {
                 let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
                 let size = arg & 0b00000111;
                 println!("{} size={}", loc, size);
-            },
+            }
             opcode::LOAD_HEAP => println!("{}", i8::from_le_bytes([arg])),
             opcode::LOAD_HEAP_TRACE => println!("{}", i8::from_le_bytes([arg])),
             opcode::STORE => println!("size={}", arg),
@@ -332,11 +331,11 @@ impl Bytecode {
                 let module = (arg & 0b11110000) >> 4;
                 let func = arg & 0b00001111;
                 println!("{} module={}", func, module);
-            },
+            }
             opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
                 let loc = i8::from_le_bytes([arg]);
                 println!("{} ({})", loc, ip as isize + loc as isize * 2);
-            },
+            }
             opcode::RETURN => println!(),
             opcode::ZERO => println!("count={}", arg),
             opcode::WRAP => println!("size={}", arg),
@@ -348,7 +347,10 @@ impl Bytecode {
     pub fn dump(&self) {
         // Check header
         if self.bytes.len() < HEADER.len() || self.bytes[..HEADER.len()] != HEADER {
-            println!("Invalid header `{}`", str::from_utf8(&self.bytes[..HEADER.len()]).unwrap_or(""));
+            println!(
+                "Invalid header `{}`",
+                str::from_utf8(&self.bytes[..HEADER.len()]).unwrap_or("")
+            );
             return;
         }
 
@@ -373,7 +375,12 @@ impl Bytecode {
 
             let raw = str::from_utf8(&buf).unwrap();
 
-            println!("{:<width$} \"{}\"", i, utils::escape_string(raw), width = count_len);
+            println!(
+                "{:<width$} \"{}\"",
+                i,
+                utils::escape_string(raw),
+                width = count_len
+            );
         }
 
         // Module map
@@ -394,7 +401,12 @@ impl Bytecode {
 
             let raw = str::from_utf8(&buf).unwrap();
 
-            println!("{:<width$} import {}", i, utils::escape_string(raw), width = count_len);
+            println!(
+                "{:<width$} import {}",
+                i,
+                utils::escape_string(raw),
+                width = count_len
+            );
         }
 
         // Function map
@@ -515,8 +527,8 @@ impl InstList {
             match *opcode {
                 opcode::INT | opcode::DUPLICATE => {
                     *arg += self.refs.len() as u8;
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
 
@@ -532,8 +544,8 @@ impl InstList {
             match *opcode {
                 opcode::INT | opcode::DUPLICATE => {
                     *arg += self.refs.len() as u8;
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
 
@@ -616,19 +628,24 @@ impl BytecodeBuilder {
         self.code.write_u8(POS_STRING_COUNT, strings.len() as u8);
 
         let string_map_start = self.code.len();
-        self.code.write_u16(POS_STRING_MAP_START, string_map_start as u16);
+        self.code
+            .write_u16(POS_STRING_MAP_START, string_map_start as u16);
 
         type StringId = u16;
 
         // Reserve for string map
-        self.code.reserve(strings.len() * mem::size_of::<StringId>());
+        self.code
+            .reserve(strings.len() * mem::size_of::<StringId>());
 
         // Write strings
         self.code.align(8);
 
         for (i, string) in strings.iter().enumerate() {
             // Write the string location to string map
-            self.code.write_u16(string_map_start + i * mem::size_of::<StringId>(), self.code.len() as u16);
+            self.code.write_u16(
+                string_map_start + i * mem::size_of::<StringId>(),
+                self.code.len() as u16,
+            );
 
             // Write the string length and bytes
             self.code.push_u64(string.len() as u64);
@@ -644,20 +661,26 @@ impl BytecodeBuilder {
             panic!("too many modules");
         }
 
-        self.code.write_u8(POS_MODULE_COUNT, self.modules.len() as u8);
+        self.code
+            .write_u8(POS_MODULE_COUNT, self.modules.len() as u8);
 
         self.code.align(8);
 
         let module_map_start = self.code.len();
-        self.code.write_u16(POS_MODULE_MAP_START, module_map_start as u16);
+        self.code
+            .write_u16(POS_MODULE_MAP_START, module_map_start as u16);
 
         type ModuleId = u16;
 
-        self.code.reserve(self.modules.len() * mem::size_of::<ModuleId>());
+        self.code
+            .reserve(self.modules.len() * mem::size_of::<ModuleId>());
         self.code.align(8);
 
         for (id, name) in self.modules.iter().enumerate() {
-            self.code.write_u16(module_map_start + id * mem::size_of::<ModuleId>(), self.code.len() as u16);
+            self.code.write_u16(
+                module_map_start + id * mem::size_of::<ModuleId>(),
+                self.code.len() as u16,
+            );
 
             self.code.push_u16(name.len() as u16);
             self.code.push_bytes(name.as_bytes());
@@ -670,7 +693,8 @@ impl BytecodeBuilder {
         self.code.align(8);
 
         // Write function map start
-        self.code.write_u16(POS_FUNC_MAP_START, self.code.len() as u16);
+        self.code
+            .write_u16(POS_FUNC_MAP_START, self.code.len() as u16);
         // Write the number of functions
         self.code.write_u8(POS_FUNC_COUNT, self.func_count as u8);
 
@@ -680,11 +704,17 @@ impl BytecodeBuilder {
         for func in &functions {
             let base = self.code.len();
             self.code.reserve(8);
-            self.code.write_u8(base + FUNC_OFFSET_STACK_IN_HEAP_SIZE, func.stack_in_heap_size);
-            self.code.write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
-            self.code.write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
+            self.code.write_u8(
+                base + FUNC_OFFSET_STACK_IN_HEAP_SIZE,
+                func.stack_in_heap_size,
+            );
+            self.code
+                .write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
+            self.code
+                .write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
             self.code.write_u16(base + FUNC_OFFSET_POS, func.pos);
-            self.code.write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
+            self.code
+                .write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
         }
     }
 
@@ -707,7 +737,10 @@ impl BytecodeBuilder {
     pub fn push_function_body(&mut self, func_id: Id, mut insts: InstList) {
         insts.push_inst_noarg(opcode::END);
 
-        let func = self.functions.get_mut(&func_id).expect("the function header must be added");
+        let func = self
+            .functions
+            .get_mut(&func_id)
+            .expect("the function header must be added");
         func.pos = self.code.len() as u16;
 
         // Write instruction bytes
@@ -784,7 +817,9 @@ mod tests {
             [opcode::BINOP_ADD, 0],
             [opcode::INT, 1],
             [opcode::BINOP_MUL, 0],
-        ].into_iter().collect();
+        ]
+        .into_iter()
+        .collect();
 
         assert_eq!(expected, insts.insts);
         assert_eq!(vec![505050, 606060], insts.refs);
@@ -809,7 +844,9 @@ mod tests {
             [opcode::BINOP_ADD, 0],
             [opcode::INT, 0],
             [opcode::BINOP_MUL, 0],
-        ].into_iter().collect();
+        ]
+        .into_iter()
+        .collect();
 
         assert_eq!(expected, insts.insts);
         assert_eq!(vec![606060, 505050], insts.refs);

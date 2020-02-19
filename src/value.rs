@@ -1,8 +1,8 @@
-use std::str;
 use std::fmt;
-use std::slice;
-use std::ptr;
 use std::mem;
+use std::ptr;
+use std::slice;
+use std::str;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Value(u64);

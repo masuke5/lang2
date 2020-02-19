@@ -1,9 +1,9 @@
 use std::fmt;
 use std::mem;
 
-use crate::span::Spanned;
 use crate::id::{Id, IdMap};
-use crate::utils::{escape_string, span_to_string, format_iter, format_bool};
+use crate::span::Spanned;
+use crate::utils::{escape_string, format_bool, format_iter, span_to_string};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BinOp {
@@ -63,9 +63,14 @@ pub struct SymbolPath {
 
 impl fmt::Display for SymbolPath {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.segments
-            .iter()
-            .fold(String::new(), |acc, seg| format!("{}::{}", acc, IdMap::name(seg.id)))
+        write!(
+            f,
+            "{}",
+            self.segments.iter().fold(String::new(), |acc, seg| format!(
+                "{}::{}",
+                acc,
+                IdMap::name(seg.id)
+            ))
         )
     }
 }
@@ -86,7 +91,9 @@ impl SymbolPath {
         let path = path.canonicalize().unwrap();
         let mut path = path.as_path();
 
-        let mut spath = Self { segments: Vec::new() };
+        let mut spath = Self {
+            segments: Vec::new(),
+        };
         if root == path {
             return spath;
         }
@@ -144,9 +151,7 @@ pub struct SymbolPathSegment {
 
 impl SymbolPathSegment {
     pub fn new(id: Id) -> Self {
-        Self {
-            id,
-        }
+        Self { id }
     }
 }
 
@@ -163,13 +168,15 @@ impl fmt::Display for ImportRange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Symbol(id) => write!(f, "{}", IdMap::name(*id)),
-            Self::Renamed(id, renamed) => write!(f, "{} as {}", IdMap::name(*id), IdMap::name(*renamed)),
+            Self::Renamed(id, renamed) => {
+                write!(f, "{} as {}", IdMap::name(*id), IdMap::name(*renamed))
+            }
             Self::All => write!(f, "*"),
             Self::Multiple(symbols) => {
                 write!(f, "{{")?;
                 write_iter!(f, symbols.iter())?;
                 write!(f, "}}")
-            },
+            }
             Self::Scope(module, rest) => write!(f, "{}::{}", IdMap::name(*module), rest),
         }
     }
@@ -197,23 +204,23 @@ impl ImportRange {
                 ImportRange::Symbol(id) => {
                     let path = path.clone().append_id(*id);
                     paths.push(ImportRangePath::Path(path));
-                },
+                }
                 ImportRange::Renamed(id, renamed) => {
                     let path = path.clone().append_id(*id);
                     paths.push(ImportRangePath::Renamed(path, *renamed));
                 }
                 ImportRange::All => {
                     paths.push(ImportRangePath::All(path.clone()));
-                },
+                }
                 ImportRange::Multiple(ranges) => {
                     for range in ranges {
                         convert(range, path, paths);
                     }
-                },
+                }
                 ImportRange::Scope(id, rest) => {
                     *path = mem::replace(path, SymbolPath::new()).append_id(*id);
                     convert(rest, path, paths);
-                },
+                }
             }
         }
 
@@ -241,7 +248,11 @@ pub enum Expr {
     Negative(Box<Spanned<Expr>>),
     Alloc(Box<Spanned<Expr>>, bool),
     Block(Vec<Spanned<Stmt>>, Box<Spanned<Expr>>),
-    If(Box<Spanned<Expr>>, Box<Spanned<Expr>>, Option<Box<Spanned<Expr>>>),
+    If(
+        Box<Spanned<Expr>>,
+        Box<Spanned<Expr>>,
+        Option<Box<Spanned<Expr>>>,
+    ),
     App(Box<Spanned<Expr>>, Vec<Spanned<AstType>>),
 }
 
@@ -312,26 +323,31 @@ impl fmt::Display for AstType {
             AstType::Bool => write!(f, "bool"),
             AstType::Unit => write!(f, "unit"),
             AstType::Named(id) => write!(f, "{}", IdMap::name(*id)),
-            AstType::Pointer(ty, is_mutable) => write!(f, "*{}{}", format_bool(*is_mutable, "mut "), ty.kind),
+            AstType::Pointer(ty, is_mutable) => {
+                write!(f, "*{}{}", format_bool(*is_mutable, "mut "), ty.kind)
+            }
             AstType::Array(ty, size) => write!(f, "[{}; {}]", ty.kind, size),
             AstType::Tuple(types) => {
                 write!(f, "(")?;
                 write_iter!(f, types.iter().map(|t| &t.kind))?;
                 write!(f, ")")
-            },
+            }
             AstType::Struct(fields) => {
                 write!(f, "struct {{ ")?;
-                write_iter!(f, fields.iter().map(|(id, ty)| format!("{}: {}", IdMap::name(id.kind), ty.kind)))?;
+                write_iter!(
+                    f,
+                    fields
+                        .iter()
+                        .map(|(id, ty)| format!("{}: {}", IdMap::name(id.kind), ty.kind))
+                )?;
                 write!(f, " }}")
             }
             AstType::App(name, types) => {
                 write!(f, "{}<", IdMap::name(name.kind))?;
                 write_iter!(f, types.iter().map(|t| &t.kind))?;
                 write!(f, ">")
-            },
-            AstType::Arrow(arg, ret) => {
-                write!(f, "{} -> {}", arg.kind, ret.kind)
             }
+            AstType::Arrow(arg, ret) => write!(f, "{} -> {}", arg.kind, ret.kind),
         }
     }
 }
@@ -342,7 +358,11 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
 
     match &expr.kind {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
-        Expr::Literal(Literal::String(i)) => println!("\"{}\" {}", escape_string(&strings[*i]), span_to_string(&expr.span)),
+        Expr::Literal(Literal::String(i)) => println!(
+            "\"{}\" {}",
+            escape_string(&strings[*i]),
+            span_to_string(&expr.span)
+        ),
         Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
@@ -352,7 +372,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             for expr in exprs {
                 dump_expr(&expr, strings, depth + 1);
             }
-        },
+        }
         Expr::Struct(ty, fields) => {
             println!("struct {} {}", ty.kind, span_to_string(&expr.span));
             for (name, expr) in fields {
@@ -360,11 +380,11 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
                 println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
                 dump_expr(expr, strings, depth + 2);
             }
-        },
+        }
         Expr::Array(init_expr, size) => {
             println!("[{}] {}", size, span_to_string(&expr.span));
             dump_expr(init_expr, strings, depth + 1);
-        },
+        }
         Expr::Field(expr, field) => {
             match field {
                 Field::Number(i) => println!(".{} {}", i, span_to_string(&expr.span)),
@@ -372,45 +392,58 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             };
 
             dump_expr(&expr, strings, depth + 1);
-        },
+        }
         Expr::Subscript(expr, subscript) => {
             println!("subscript {}", span_to_string(&expr.span));
             dump_expr(&expr, strings, depth + 1);
             dump_expr(&subscript, strings, depth + 1);
-        },
+        }
         Expr::Variable(name, is_escaped) => {
-            println!("{}{} {}", IdMap::name(*name), format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"), span_to_string(&expr.span));
-        },
+            println!(
+                "{}{} {}",
+                IdMap::name(*name),
+                format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"),
+                span_to_string(&expr.span)
+            );
+        }
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
             dump_expr(&lhs, strings, depth + 1);
             dump_expr(&rhs, strings, depth + 1);
-        },
+        }
         Expr::Call(func_expr, arg) => {
             println!("call {}", span_to_string(&expr.span));
 
             dump_expr(func_expr, strings, depth + 1);
             dump_expr(&arg, strings, depth + 1);
-        },
+        }
         Expr::Path(path) => {
             println!("path {} {}", path, span_to_string(&expr.span));
-        },
+        }
         Expr::Address(expr_, is_mutable) => {
-            println!("&{} {}", format_bool(*is_mutable, "mut"), span_to_string(&expr.span));
+            println!(
+                "&{} {}",
+                format_bool(*is_mutable, "mut"),
+                span_to_string(&expr.span)
+            );
             dump_expr(&expr_, strings, depth + 1);
-        },
+        }
         Expr::Dereference(expr_) => {
             println!("* {}", span_to_string(&expr.span));
             dump_expr(&expr_, strings, depth + 1);
-        },
+        }
         Expr::Negative(expr_) => {
             println!("neg {}", span_to_string(&expr.span));
             dump_expr(&expr_, strings, depth + 1);
-        },
+        }
         Expr::Alloc(expr_, is_mutable) => {
-            println!("new{} {}", format_bool(*is_mutable, " mut"), span_to_string(&expr.span));
+            println!(
+                "new{} {}",
+                format_bool(*is_mutable, " mut"),
+                span_to_string(&expr.span)
+            );
             dump_expr(&expr_, strings, depth + 1);
-        },
+        }
         Expr::Block(stmts, expr) => {
             println!("block {}", span_to_string(&expr.span));
             for stmt in stmts {
@@ -418,7 +451,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             }
 
             dump_expr(expr, strings, depth + 1);
-        },
+        }
         Expr::If(cond, body, else_expr) => {
             println!("if {}", span_to_string(&expr.span));
             dump_expr(&cond, strings, depth + 1);
@@ -426,7 +459,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             if let Some(else_stmt) = else_expr {
                 dump_expr(&else_stmt, strings, depth + 1);
             }
-        },
+        }
         Expr::App(expr, tyargs) => {
             println!("app <{}>", format_iter(tyargs.iter().map(|a| &a.kind)));
             dump_expr(expr, strings, depth + 1);
@@ -440,7 +473,11 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
 
     match &stmt.kind {
         Stmt::Bind(name, ty, expr, is_mutable, is_escaped) => {
-            print!("let{}{} ", format_bool(*is_mutable, " mut"), format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"));
+            print!(
+                "let{}{} ",
+                format_bool(*is_mutable, " mut"),
+                format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m")
+            );
             print!("{}", IdMap::name(*name));
             if let Some(ty) = ty {
                 print!(": {}", ty.kind);
@@ -448,65 +485,63 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
 
             println!(" =");
             dump_expr(&expr, strings, depth + 1);
-        },
+        }
         Stmt::Assign(lhs, rhs) => {
             println!(":= {}", span_to_string(&stmt.span));
             dump_expr(&lhs, strings, depth + 1);
             dump_expr(&rhs, strings, depth + 1);
-        },
+        }
         Stmt::Expr(expr) => {
             print!("\r");
             dump_expr(&expr, strings, depth);
-        },
+        }
         Stmt::Return(expr) => {
             println!("return {}", span_to_string(&stmt.span));
             if let Some(expr) = expr {
                 dump_expr(&expr, strings, depth + 1);
             }
-        },
+        }
         Stmt::While(cond, body) => {
             println!("while {}", span_to_string(&stmt.span));
             dump_expr(&cond, strings, depth + 1);
             dump_stmt(&body, strings, depth + 1);
-        },
+        }
         Stmt::FnDef(func) => {
             print!("fn {}", IdMap::name(func.name));
 
             if !func.ty_params.is_empty() {
                 print!("<");
-                print!("{}", format_iter(func.ty_params.iter().map(|id| IdMap::name(id.kind))));
+                print!(
+                    "{}",
+                    format_iter(func.ty_params.iter().map(|id| IdMap::name(id.kind)))
+                );
                 print!(">");
             }
 
-            println!("({}): {}",
-                format_iter(func.params
-                    .iter()
-                    .map(|p| format!(
-                        "{}{}{}: {}",
-                        format_bool(p.is_mutable, "mut "),
-                        IdMap::name(p.name),
-                        format_bool(p.is_escaped, " \x1b[32mescaped\x1b[0m"),
-                        p.ty.kind
-                    ))
-                ),
-
+            println!(
+                "({}): {}",
+                format_iter(func.params.iter().map(|p| format!(
+                    "{}{}{}: {}",
+                    format_bool(p.is_mutable, "mut "),
+                    IdMap::name(p.name),
+                    format_bool(p.is_escaped, " \x1b[32mescaped\x1b[0m"),
+                    p.ty.kind
+                ))),
                 func.return_ty.kind,
             );
             dump_expr(&func.body, strings, depth + 1);
-        },
+        }
         Stmt::TypeDef(ty) => {
-            println!("type {}<{}> {}",
-                IdMap::name(ty.name), 
-                format_iter(ty.var_ids
-                    .iter()
-                    .map(|id| IdMap::name(id.kind))
-                ),
+            println!(
+                "type {}<{}> {}",
+                IdMap::name(ty.name),
+                format_iter(ty.var_ids.iter().map(|id| IdMap::name(id.kind))),
                 ty.ty.kind,
             );
-        },
+        }
         Stmt::Import(name) => {
             println!("import {} {}", name.kind, span_to_string(&stmt.span));
-        },
+        }
     }
 }
 
@@ -530,8 +565,8 @@ pub fn dump_ast(program: &Program) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::env;
+    use std::path::PathBuf;
 
     #[test]
     fn test_symbol_path_from_path() {
@@ -539,9 +574,7 @@ mod tests {
         let path = PathBuf::from("test2/test.lang2");
         let actual = SymbolPath::from_path(&root, &path);
 
-        let expected = SymbolPath::new()
-            .append_str("test2")
-            .append_str("test");
+        let expected = SymbolPath::new().append_str("test2").append_str("test");
         assert_eq!(expected, actual);
     }
 
@@ -553,21 +586,20 @@ mod tests {
         // m1::m2::{m3, m4 as m5, m6::m7, m8::*};
         let range = IR::Scope(
             id("m1"),
-            Box::new(IR::Scope(id("m2"),
+            Box::new(IR::Scope(
+                id("m2"),
                 Box::new(IR::Multiple(vec![
                     IR::Symbol(id("m3")),
                     IR::Renamed(id("m4"), id("m5")),
                     IR::Scope(id("m6"), Box::new(IR::Symbol(id("m7")))),
                     IR::Scope(id("m8"), Box::new(IR::All)),
-                ]))
-            ))
+                ])),
+            )),
         );
 
         let paths = range.to_paths();
 
-        let base_path = SymbolPath::new()
-            .append_str("m1")
-            .append_str("m2");
+        let base_path = SymbolPath::new().append_str("m1").append_str("m2");
         let expected = vec![
             // m1::m2::m3
             ImportRangePath::Path(base_path.clone().append_str("m3")),

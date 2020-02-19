@@ -1,6 +1,6 @@
+use crate::span::Span;
 use std::error;
 use std::fmt;
-use crate::span::Span;
 
 #[derive(Debug, PartialEq)]
 pub struct Error {
@@ -19,11 +19,15 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {}:{}-{}:{}", self.msg,
-               self.span.start_line,
-               self.span.start_col,
-               self.span.end_line,
-               self.span.end_col)
+        write!(
+            f,
+            "{} at {}:{}-{}:{}",
+            self.msg,
+            self.span.start_line,
+            self.span.start_col,
+            self.span.end_line,
+            self.span.end_col
+        )
     }
 }
 
