@@ -51,6 +51,12 @@ fn_to_expect! {
 }
 
 #[derive(Debug)]
+pub enum ImportedEntry {
+    Function(Id, FunctionHeaderWithId),
+    // Type
+}
+
+#[derive(Debug)]
 pub struct ExprInfo {
     pub ty: Type,
     pub span: Span,
@@ -115,45 +121,48 @@ impl Variable {
 #[derive(Debug)]
 enum Entry {
     Variable(Variable),
-    Function(NewFunctionHeader),
+    Function(FunctionHeaderWithId),
 }
 
 #[derive(Debug, Clone)]
-pub struct NewFunctionHeader {
-    module_id: u16,
+pub struct FunctionHeaderWithId {
+    module_id: Option<u16>,
     original_name: Option<Id>,
+    func_id: u16,
     header: FunctionHeader,
 }
 
-impl NewFunctionHeader {
-    const SELF_MODULE_ID: u16 = std::u16::MAX;
-
-    fn new(module_id: u16, header: FunctionHeader) -> Self {
+impl FunctionHeaderWithId {
+    fn new(module_id: u16, func_id: u16, header: FunctionHeader) -> Self {
         Self {
-            module_id,
+            module_id: Some(module_id),
             original_name: None,
+            func_id,
             header,
         }
     }
 
-    fn new_renamed(module_id: u16, header: FunctionHeader, original_name: Id) -> Self {
+    fn new_renamed(
+        module_id: u16,
+        func_id: u16,
+        header: FunctionHeader,
+        original_name: Id,
+    ) -> Self {
         Self {
-            module_id,
+            module_id: Some(module_id),
             original_name: Some(original_name),
+            func_id,
             header,
         }
     }
 
-    fn get_module_id(&self) -> Option<u16> {
-        if self.module_id == Self::SELF_MODULE_ID {
-            None
-        } else {
-            Some(self.module_id)
+    fn new_self(header: FunctionHeader, func_id: u16) -> Self {
+        Self {
+            module_id: None,
+            original_name: None,
+            func_id,
+            header,
         }
-    }
-
-    fn new_self(header: FunctionHeader) -> Self {
-        Self::new(Self::SELF_MODULE_ID, header)
     }
 }
 
@@ -221,63 +230,9 @@ impl<'a> Analyzer<'a> {
         self.types.pop_scope();
     }
 
-    // Insert parameters and return value as variables to `self.variables`
-    fn insert_params(
-        &mut self,
-        func: &mut Function,
-        params: Vec<Param>,
-        return_ty: &Type,
-    ) -> Option<InstList> {
-        let mut insts = InstList::new();
-
-        let mut loc = -5isize; // fp, ip, mid, fid, hfp
-        for Param {
-            name,
-            ty,
-            is_mutable,
-            is_escaped,
-        } in params.into_iter().rev()
-        {
-            loc -= type_size_nocheck(&ty) as isize;
-
-            let loc = if is_escaped {
-                let heap_loc = func.stack_in_heap_size as usize + 1;
-
-                // If the parameter is escaped, store to stack in heap
-                insts.append(translate::escaped_param(&ty, loc, heap_loc));
-                func.stack_in_heap_size += type_size_nocheck(&ty) as u8;
-
-                VariableLoc::StackInHeap(heap_loc, self.var_level)
-            } else {
-                VariableLoc::Stack(loc)
-            };
-
-            // Insert the parameter as a variable to the current scope
-            let var = Entry::Variable(Variable::new(ty.clone(), is_mutable, loc));
-            self.variables.insert(name, var);
-        }
-
-        // The variable that is stored a return value
-        loc -= type_size_nocheck(return_ty) as isize;
-
-        self.variables.insert(
-            *reserved_id::RETURN_VALUE,
-            Entry::Variable(Variable::new(
-                return_ty.clone(),
-                false,
-                VariableLoc::Stack(loc),
-            )),
-        );
-
-        Some(insts)
-    }
-
-    fn get_return_var(&self) -> &Variable {
-        match self.find_var(*reserved_id::RETURN_VALUE).unwrap() {
-            Entry::Variable(var) => var,
-            Entry::Function(..) => panic!("the return variable should not be a function entry"),
-        }
-    }
+    // =====================================
+    // Type
+    // =====================================
 
     fn expand_name(&self, ty: Type) -> Option<Type> {
         match ty {
@@ -375,6 +330,14 @@ impl<'a> Analyzer<'a> {
         id
     }
 
+    fn get_return_var(&self) -> &Variable {
+        match self.find_var(*reserved_id::RETURN_VALUE).unwrap() {
+            Entry::Variable(var) => var,
+            Entry::Function(..) => panic!("the return variable should not be a function entry"),
+        }
+    }
+
+    // Convert from VariableLoc to RelativeVariableLoc
     fn relative_loc(&self, loc: &VariableLoc) -> RelativeVariableLoc {
         match loc {
             VariableLoc::Stack(loc) => RelativeVariableLoc::Stack(*loc),
@@ -505,25 +468,11 @@ impl<'a> Analyzer<'a> {
                         &fh.header.ty_params,
                     );
 
-                    let func_name = fh.original_name.unwrap_or(name);
-                    let (module_id, func_id) = match fh.get_module_id() {
-                        Some(module_id) => {
-                            let (_, (_, module)) = self
-                                .module_headers
-                                .iter()
-                                .find(|(_, (id, _))| *id == module_id)
-                                .unwrap();
-                            let func_id = module.functions[&func_name].0;
-                            (Some(module_id), func_id)
-                        }
-                        None => (None, code.get_function(func_name).unwrap().code_id),
-                    };
-
                     (
                         ty.clone(),
                         ty,
                         InstList::new(),
-                        translate::call_func_id(module_id, func_id),
+                        translate::call_func_id(fh.module_id, fh.func_id),
                     )
                 }
                 _ => {
@@ -600,13 +549,22 @@ impl<'a> Analyzer<'a> {
                         _ => return None,
                     };
 
+                    // Check size of the tuples
                     if types.len() != exprs.len() {
-                        error!(self, expr.span, "error 1");
+                        error!(
+                            self,
+                            expr.span,
+                            "expected that tuple size will be `{}` but the number of expressions `{}`",
+                            types.len(),
+                            exprs.len()
+                        );
                         return None;
                     }
 
+                    // Walk each expression and join all instructions
                     let mut insts = InstList::new();
                     let mut tys = Vec::new();
+
                     for (expr, ty) in exprs.into_iter().zip(types.iter()) {
                         let expr = self.walk_expr_with_conversion(code, expr, ty);
                         if let Some(expr) = expr {
@@ -936,24 +894,7 @@ impl<'a> Analyzer<'a> {
                         var.is_mutable,
                     ),
                     Entry::Function(fh) => {
-                        // Get code id of the function
-                        let code_id = match fh.get_module_id() {
-                            Some(module_id) => {
-                                // Get the module from the ID
-                                let (_, (_, module)) = self
-                                    .module_headers
-                                    .iter()
-                                    .find(|(_, (id, _))| *id == module_id)
-                                    .unwrap();
-                                // Get the function original name
-                                let func_name = fh.original_name.unwrap_or(name);
-
-                                module.functions[&func_name].0
-                            }
-                            None => code.get_function(name).unwrap().code_id,
-                        };
-
-                        let insts = translate::func_pos(fh.get_module_id(), code_id);
+                        let insts = translate::func_pos(fh.module_id, fh.func_id);
                         let ty = generate_func_type(
                             &fh.header.params,
                             &fh.header.return_ty,
@@ -1224,6 +1165,10 @@ impl<'a> Analyzer<'a> {
         Some(ExprInfo::new(insts, ty, expr.span))
     }
 
+    // =====================================
+    // Statement
+    // =====================================
+
     fn walk_stmt(&mut self, code: &mut BytecodeBuilder, stmt: Spanned<Stmt>) -> Option<InstList> {
         let insts = match stmt.kind {
             Stmt::Expr(expr) => {
@@ -1315,72 +1260,117 @@ impl<'a> Analyzer<'a> {
         Some(insts)
     }
 
-    fn insert_func_headers_by_range(&mut self, range: &Spanned<ImportRange>) {
-        let paths = range.kind.to_paths();
-        for path in paths {
-            if let ImportRangePath::All(spath) = path {
-                match self.module_headers.get(&spath) {
-                    Some((module_id, module)) => {
-                        for (func_name, (_, func)) in &module.functions {
-                            let header = NewFunctionHeader::new(*module_id, func.clone());
-                            self.variables.insert(*func_name, Entry::Function(header));
-                        }
+    // =====================================
+    // Importing
+    // =====================================
+
+    fn generate_from_range_path(
+        &mut self,
+        range_span: &Span,
+        path: &ImportRangePath,
+    ) -> Option<Vec<ImportedEntry>> {
+        if let ImportRangePath::All(spath) = path {
+            // Import all functions if module `spath` exists
+            match self.module_headers.get(&spath) {
+                Some((module_id, module)) => {
+                    let mut entries = Vec::with_capacity(module.functions.len());
+                    for (func_name, (func_id, func)) in &module.functions {
+                        let header = FunctionHeaderWithId::new(*module_id, *func_id, func.clone());
+                        entries.push(ImportedEntry::Function(*func_name, header));
                     }
-                    _ => {
-                        error!(self, range.span.clone(), "undefined module `{}`", spath);
-                    }
+
+                    return Some(entries);
                 }
-                continue;
+                _ => {
+                    error!(self, range_span.clone(), "undefined module `{}`", spath);
+                    return None;
+                }
+            }
+        }
+
+        let spath = path.as_path();
+        if !self.module_headers.contains_key(spath) {
+            // If module `spath` doesn't exists
+
+            // Get the module path from `spath`
+            let parent = spath.parent();
+            if parent.is_none() {
+                error!(self, range_span.clone(), "undefined module `{}`", spath);
+                return None;
             }
 
-            let spath = path.as_path();
-            if !self.module_headers.contains_key(spath) {
-                // if path is not module
-                if let Some(parent) = spath.parent() {
-                    // if there is parent
-                    let symbol = spath.tail().unwrap();
-                    if let Some((module_id, module)) = self.module_headers.get(&parent) {
-                        match module.functions.get(&symbol.id) {
-                            Some((_, func)) => {
-                                let (name, header) = match &path {
-                                    ImportRangePath::Path(..) => (
-                                        symbol.id,
-                                        NewFunctionHeader::new(*module_id, func.clone()),
-                                    ),
-                                    ImportRangePath::Renamed(_, renamed) => (
-                                        *renamed,
-                                        NewFunctionHeader::new_renamed(
-                                            *module_id,
-                                            func.clone(),
-                                            symbol.id,
-                                        ),
-                                    ),
-                                    ImportRangePath::All(..) => unreachable!(),
-                                };
+            let parent = parent.unwrap();
+            let symbol = spath.tail().unwrap();
 
-                                self.variables.insert(name, Entry::Function(header.clone()));
-                            }
-                            None => {
-                                error!(
-                                    self,
-                                    range.span.clone(),
-                                    "undefined function `{}` in `{}`",
-                                    IdMap::name(symbol.id),
-                                    parent
-                                );
-                            }
-                        }
+            // Find the module
+            match self.module_headers.get(&parent) {
+                Some((module_id, module)) => match module.functions.get(&symbol.id) {
+                    Some((func_id, func)) => {
+                        let (name, header) = match &path {
+                            ImportRangePath::Path(..) => (
+                                symbol.id,
+                                FunctionHeaderWithId::new(*module_id, *func_id, func.clone()),
+                            ),
+                            ImportRangePath::Renamed(_, renamed) => (
+                                *renamed,
+                                FunctionHeaderWithId::new_renamed(
+                                    *module_id,
+                                    *func_id,
+                                    func.clone(),
+                                    symbol.id,
+                                ),
+                            ),
+                            ImportRangePath::All(..) => unreachable!(),
+                        };
+
+                        Some(vec![ImportedEntry::Function(name, header)])
                     }
-                } else {
-                    // if there is not parent
-                    error!(self, range.span.clone(), "undefined module `{}`", spath);
+                    None => {
+                        // If the module exists but the function doesn't exist
+                        error!(
+                            self,
+                            range_span.clone(),
+                            "undefined function `{}` in `{}`",
+                            IdMap::name(symbol.id),
+                            parent
+                        );
+                        None
+                    }
+                },
+                None => {
+                    error!(self, range_span.clone(), "undefined module `{}`", spath);
+                    None
                 }
-            } else {
-                // if path is module
-                self.visible_modules.insert(path.as_path().clone());
+            }
+        } else {
+            // if path is module
+            self.visible_modules.insert(path.as_path().clone());
+            None
+        }
+    }
+
+    fn insert_header_from_imported_entry(&mut self, entry: ImportedEntry) {
+        match entry {
+            ImportedEntry::Function(name, header) => {
+                self.variables.insert(name, Entry::Function(header));
             }
         }
     }
+
+    fn insert_func_headers_by_range(&mut self, range: &Spanned<ImportRange>) {
+        let paths = range.kind.to_paths();
+        for path in paths {
+            if let Some(entries) = self.generate_from_range_path(&range.span, &path) {
+                for entry in entries {
+                    self.insert_header_from_imported_entry(entry);
+                }
+            }
+        }
+    }
+
+    // ===================================
+    // Definition
+    // ===================================
 
     fn insert_extern_module_headers(&mut self, stmts: &Vec<Spanned<Stmt>>) {
         for stmt in stmts {
@@ -1426,10 +1416,12 @@ impl<'a> Analyzer<'a> {
                 }
 
                 if let Some((header, func)) = self.generate_function_header(&func) {
-                    let fh = NewFunctionHeader::new_self(header);
-                    self.variables.insert(func.name, Entry::Function(fh));
-
+                    let func_name = func.name;
                     code.insert_function_header(func);
+
+                    let func_id = code.get_function(func_name).unwrap().code_id;
+                    let fh = FunctionHeaderWithId::new_self(header, func_id);
+                    self.variables.insert(func_name, Entry::Function(fh));
                 }
             }
         }
@@ -1466,6 +1458,10 @@ impl<'a> Analyzer<'a> {
 
         insts
     }
+
+    // =======================================
+    // Type Definition
+    // =======================================
 
     fn resolve_type_sizes(&mut self) {
         for map in self.types.maps.iter_mut() {
@@ -1598,67 +1594,55 @@ impl<'a> Analyzer<'a> {
         self.type_sizes.insert(tydef.name, size);
     }
 
-    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
-        self.current_func = func.name;
+    // =================================
+    //  Function Definition
+    // =================================
 
-        self.push_scope();
-        self.push_type_scope();
-        self.var_level += 1;
+    // Insert parameters and return value as variables and return instructions that copy the
+    // parameters to heap
+    fn insert_params_as_variables(
+        &mut self,
+        func: &mut Function,
+        params: Vec<Param>,
+        return_ty: &Type,
+    ) -> Option<InstList> {
+        let mut insts = InstList::new();
 
-        let header = match self.variables.get(&func.name) {
-            Some(Entry::Function(h)) => &h.header,
-            _ => return, // the function headers may be not inserted by errors
-        };
+        let mut loc = -5isize; // fp, ip, mid, fid, ep
+        for param in params.into_iter().rev() {
+            loc -= type_size_nocheck(&param.ty) as isize;
 
-        let return_ty = header.return_ty.clone();
+            let loc = if param.is_escaped {
+                // Copy the parameter to heap if escaped
+                let heap_loc = func.stack_in_heap_size as usize + 1;
 
-        for (id, var) in &header.ty_params {
-            self.types.insert(*id, Type::Var(*var));
+                insts.append(translate::escaped_param(&param.ty, loc, heap_loc));
+                func.stack_in_heap_size += type_size_nocheck(&param.ty) as u8;
+
+                VariableLoc::StackInHeap(heap_loc, self.var_level)
+            } else {
+                VariableLoc::Stack(loc)
+            };
+
+            // Insert the parameter as a variable to the current scope
+            let var = Entry::Variable(Variable::new(param.ty.clone(), param.is_mutable, loc));
+            self.variables.insert(param.name, var);
         }
 
-        // params
-        let params: Vec<Param> = func
-            .params
-            .iter()
-            .zip(header.params.iter())
-            .map(|(ap, ty)| Param {
-                name: ap.name,
-                ty: ty.clone(),
-                is_mutable: ap.is_mutable,
-                is_escaped: ap.is_escaped,
-            })
-            .collect();
-        let code_func = code.get_function_mut(func.name).unwrap();
+        // Insert a variable that will be stored a return value
+        loc -= type_size_nocheck(return_ty) as isize;
 
-        let param_insts = match self.insert_params(code_func, params, &return_ty) {
-            Some(insts) => insts,
-            None => return,
-        };
+        self.variables.insert(
+            *reserved_id::RETURN_VALUE,
+            Entry::Variable(Variable::new(
+                return_ty.clone(),
+                false,
+                VariableLoc::Stack(loc),
+            )),
+        );
 
-        let body = match self.walk_expr(code, func.body) {
-            Some(e) => e,
-            None => return,
-        };
-
-        unify(&mut self.errors, &body.span, &return_ty, &body.ty);
-
-        let return_var = self.get_return_var();
-        let body_insts =
-            translate::return_stmt(&self.relative_loc(&return_var.loc), Some(body), &return_ty);
-
-        let mut insts = param_insts;
-        insts.append(body_insts);
-
-        self.function_insts.push_back((func.name, insts));
-
-        self.var_level -= 1;
-        self.pop_type_scope();
-        self.pop_scope();
+        Some(insts)
     }
-
-    // =================================
-    //  Header
-    // =================================
 
     fn generate_function_header(
         &mut self,
@@ -1711,6 +1695,69 @@ impl<'a> Analyzer<'a> {
 
         Some((header, bc_func))
     }
+
+    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
+        self.current_func = func.name;
+
+        self.push_scope();
+        self.push_type_scope();
+        self.var_level += 1;
+
+        let header = match self.variables.get(&func.name) {
+            Some(Entry::Function(h)) => &h.header,
+            // To reach there means the function header may be not inserted by errors
+            _ => return,
+        };
+
+        let return_ty = header.return_ty.clone();
+
+        for (id, var) in &header.ty_params {
+            self.types.insert(*id, Type::Var(*var));
+        }
+
+        // Convert AstParam to Param
+        let params: Vec<Param> = func
+            .params
+            .iter()
+            .zip(header.params.iter())
+            .map(|(ap, ty)| Param {
+                name: ap.name,
+                ty: ty.clone(),
+                is_mutable: ap.is_mutable,
+                is_escaped: ap.is_escaped,
+            })
+            .collect();
+
+        let code_func = code.get_function_mut(func.name).unwrap();
+        let param_insts = match self.insert_params_as_variables(code_func, params, &return_ty) {
+            Some(insts) => insts,
+            None => return,
+        };
+
+        let body = match self.walk_expr(code, func.body) {
+            Some(e) => e,
+            None => return,
+        };
+
+        unify(&mut self.errors, &body.span, &return_ty, &body.ty);
+
+        let return_var = self.get_return_var();
+        let body_insts =
+            translate::return_stmt(&self.relative_loc(&return_var.loc), Some(body), &return_ty);
+
+        let mut insts = param_insts;
+        insts.append(body_insts);
+
+        self.function_insts.push_back((func.name, insts));
+
+        self.var_level -= 1;
+        self.pop_type_scope();
+        self.pop_scope();
+    }
+
+    // =========================================
+    // Module
+    // =========================================
 
     pub fn load_modules(
         &mut self,

@@ -113,8 +113,8 @@ pub struct VM {
     fp: usize,
     // stack pointer
     sp: usize,
-    // heap frame pointer
-    hfp: *const Value,
+    // escaped variables pointer
+    ep: *const Value,
 
     stack: [Value; STACK_SIZE],
 
@@ -132,7 +132,7 @@ impl VM {
             ip: 0,
             fp: 0,
             sp: 0,
-            hfp: ptr::null(),
+            ep: ptr::null(),
             stack: unsafe { mem::zeroed() },
             functions: Vec::new(),
             current_func: 0,
@@ -168,7 +168,7 @@ impl VM {
 
     fn dump_stack(&self, stop: usize) {
         let current_is_main = self.current_func == 0;
-        let saved_hfp = if !current_is_main {
+        let saved_ep = if !current_is_main {
             Some(self.fp - 5)
         } else {
             None
@@ -220,8 +220,8 @@ impl VM {
                 print!("[fp] ");
             }
 
-            if Some(i) == saved_hfp {
-                print!("[hfp]");
+            if Some(i) == saved_ep {
+                print!("[ep]");
             }
 
             if i > stop {
@@ -235,26 +235,26 @@ impl VM {
     }
 
     #[allow(dead_code)]
-    fn dump_stack_in_heap(&self, hfp: *const Value) {
+    fn dump_stack_in_heap(&self, ep: *const Value) {
         use crate::gc::GcRegion;
 
         println!("####### HEAP DUMP #######");
 
         unsafe {
-            let mut dumped_hfp = FxHashSet::default();
-            let mut hfp = hfp;
+            let mut dumped_ep = FxHashSet::default();
+            let mut ep = ep;
             let mut i = 0;
-            while hfp != ptr::null() {
-                if dumped_hfp.contains(&hfp) {
-                    println!("\x1b[91m{:p} is already dumped\x1b[0m", hfp);
+            while ep != ptr::null() {
+                if dumped_ep.contains(&ep) {
+                    println!("\x1b[91m{:p} is already dumped\x1b[0m", ep);
                     break;
                 }
 
-                dumped_hfp.insert(hfp);
+                dumped_ep.insert(ep);
 
-                println!("\x1b[96m{} ({:p})\x1b[0m", i, hfp);
+                println!("\x1b[96m{} ({:p})\x1b[0m", i, ep);
 
-                let region = &*(hfp as *const GcRegion).sub(1);
+                let region = &*(ep as *const GcRegion).sub(1);
                 let count = region.size / mem::size_of::<Value>();
 
                 for i in 0..count {
@@ -262,11 +262,11 @@ impl VM {
                         print!("(parent) ");
                     }
 
-                    let value = &*hfp.add(i);
+                    let value = &*ep.add(i);
                     Self::dump_value(value, 0);
                 }
 
-                hfp = (*hfp).as_ptr();
+                ep = (*ep).as_ptr();
                 i += 1;
             }
         }
@@ -351,17 +351,17 @@ impl VM {
     }
 
     #[inline]
-    fn call(&mut self, global_module_id: usize, func_id: usize, closure_hfp: Option<*const Value>) {
-        assert_ne!(self.hfp, ptr::null());
+    fn call(&mut self, global_module_id: usize, func_id: usize, closure_ep: Option<*const Value>) {
+        assert_ne!(self.ep, ptr::null());
 
         // Allocate stack frame in heap
-        push!(self, Value::new_ptr_to_heap(self.hfp));
+        push!(self, Value::new_ptr_to_heap(self.ep));
 
         let stack_in_heap_size = self.functions[global_module_id][func_id].stack_in_heap_size;
 
-        let parent_hfp = closure_hfp.unwrap_or(self.hfp);
-        let new_hfp = self.alloc_stack_frame_in_heap(stack_in_heap_size, parent_hfp);
-        self.hfp = new_hfp;
+        let parent_ep = closure_ep.unwrap_or(self.ep);
+        let new_ep = self.alloc_stack_frame_in_heap(stack_in_heap_size, parent_ep);
+        self.ep = new_ep;
 
         let func = &self.functions[global_module_id][func_id];
 
@@ -491,8 +491,8 @@ impl VM {
         self.current_func = 0;
 
         let func = self.main_func().clone();
-        self.hfp = self.alloc_stack_frame_in_heap(func.stack_in_heap_size, self.hfp);
-        self.stack[0] = Value::new_ptr_to_heap(self.hfp);
+        self.ep = self.alloc_stack_frame_in_heap(func.stack_in_heap_size, self.ep);
+        self.stack[0] = Value::new_ptr_to_heap(self.ep);
 
         self.ip = func.pos;
         self.fp = 1;
@@ -657,7 +657,7 @@ impl VM {
                 opcode::LOAD_HEAP => {
                     let loc = arg as usize;
 
-                    let value = unsafe { self.hfp.add(loc) };
+                    let value = unsafe { self.ep.add(loc) };
                     push!(self, Value::new_ptr(value));
                 }
                 opcode::LOAD_HEAP_TRACE => {
@@ -665,12 +665,12 @@ impl VM {
                     let count = pop!(self).as_u64();
 
                     let value = unsafe {
-                        let mut hfp = self.hfp;
+                        let mut ep = self.ep;
                         for _ in 0..count {
-                            hfp = (*hfp).as_ptr();
+                            ep = (*ep).as_ptr();
                         }
 
-                        hfp.add(loc)
+                        ep.add(loc)
                     };
 
                     push!(self, Value::new_ptr(value));
@@ -789,14 +789,14 @@ impl VM {
                     self.call(self.current_module, arg as usize, None);
                 }
                 opcode::CALL_POS => {
-                    let closure_hfp = pop!(self).as_ptr();
+                    let closure_ep = pop!(self).as_ptr();
                     let pos = pop!(self).as_u64();
 
                     let module_local_id = (pos >> 32) as usize;
                     let func_id = pos as u32 as usize;
 
                     if module_local_id == SELF_MODULE_ID {
-                        self.call(self.current_module, func_id, Some(closure_hfp));
+                        self.call(self.current_module, func_id, Some(closure_ep));
                     } else {
                         let module_global_id =
                             modules[self.current_module].as_ref().unwrap()[module_local_id];
@@ -805,7 +805,7 @@ impl VM {
                         match module {
                             Module::Normal => {
                                 current_bytecode = &bytecodes[module_global_id].as_ref().unwrap();
-                                self.call(module_global_id, func_id, Some(closure_hfp));
+                                self.call(module_global_id, func_id, Some(closure_ep));
                             }
                             Module::Native(funcs) => {
                                 let (param_size, func) = &funcs[func_id];
@@ -857,7 +857,7 @@ impl VM {
                     let prev_func = pop!(self).as_u64() as usize;
                     let prev_module = pop!(self).as_u64() as usize;
 
-                    self.hfp = pop!(self).as_ptr();
+                    self.ep = pop!(self).as_ptr();
 
                     // Pop arguments
                     self.sp -= self.current_func().param_size as usize;

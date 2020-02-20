@@ -1,6 +1,9 @@
 #![feature(box_patterns, slice_concat_trait, drain_filter, seek_convenience)]
 
 #[macro_use]
+extern crate pretty_assertions;
+
+#[macro_use]
 mod utils;
 #[macro_use]
 mod ty;
