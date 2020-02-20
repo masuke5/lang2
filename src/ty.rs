@@ -330,6 +330,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
             Some(size)
         }
         Type::Poly(_, _) | Type::Var(_) => None,
+        Type::String => None,
         Type::Unit => Some(0),
         _ => Some(1),
     }
