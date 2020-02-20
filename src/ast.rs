@@ -1,5 +1,4 @@
 use std::fmt;
-use std::mem;
 
 use crate::id::{Id, IdMap};
 use crate::span::Spanned;
@@ -56,7 +55,7 @@ pub enum Field {
     Id(Id),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SymbolPath {
     pub segments: Vec<SymbolPathSegment>,
 }
@@ -75,6 +74,12 @@ impl fmt::Display for SymbolPath {
     }
 }
 
+impl fmt::Debug for SymbolPath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl SymbolPath {
     pub fn new() -> Self {
         Self {
@@ -83,12 +88,17 @@ impl SymbolPath {
     }
 
     pub fn from_path(root: &std::path::Path, path: &std::path::Path) -> Self {
-        // TODO: better conversion
-        // TODO: Avoid unwrap()
         // Convert paths for comparison
-        let root = root.canonicalize().unwrap();
+        let root = match root.canonicalize() {
+            Ok(root) => root,
+            Err(_) => return Self::new(),
+        };
         let root = root.as_path();
-        let path = path.canonicalize().unwrap();
+
+        let path = match path.canonicalize() {
+            Ok(path) => path,
+            Err(_) => return Self::new(),
+        };
         let mut path = path.as_path();
 
         let mut spath = Self {
@@ -199,35 +209,42 @@ impl ImportRangePath {
 
 impl ImportRange {
     pub fn to_paths(&self) -> Vec<ImportRangePath> {
-        fn convert(range: &ImportRange, path: &mut SymbolPath, paths: &mut Vec<ImportRangePath>) {
+        let mut result = Vec::new();
+        let mut path_stack = vec![SymbolPath::new()];
+        let mut range_stack: Vec<&ImportRange> = vec![self];
+
+        while let Some(range) = range_stack.pop() {
+            let path = path_stack.pop().unwrap();
+
             match range {
                 ImportRange::Symbol(id) => {
                     let path = path.clone().append_id(*id);
-                    paths.push(ImportRangePath::Path(path));
+                    result.push(ImportRangePath::Path(path));
                 }
                 ImportRange::Renamed(id, renamed) => {
                     let path = path.clone().append_id(*id);
-                    paths.push(ImportRangePath::Renamed(path, *renamed));
+                    result.push(ImportRangePath::Renamed(path, *renamed));
                 }
                 ImportRange::All => {
-                    paths.push(ImportRangePath::All(path.clone()));
+                    result.push(ImportRangePath::All(path.clone()));
                 }
                 ImportRange::Multiple(ranges) => {
+                    path_stack.push(path.clone());
+
                     for range in ranges {
-                        convert(range, path, paths);
+                        path_stack.push(path.clone());
+                        range_stack.push(range);
                     }
                 }
                 ImportRange::Scope(id, rest) => {
-                    *path = mem::replace(path, SymbolPath::new()).append_id(*id);
-                    convert(rest, path, paths);
+                    path_stack.push(path.append_id(*id));
+                    range_stack.push(rest);
                 }
             }
         }
 
-        let mut paths = Vec::new();
-        convert(self, &mut SymbolPath::new(), &mut paths);
-
-        paths
+        result.reverse();
+        result
     }
 }
 
