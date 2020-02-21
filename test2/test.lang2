@@ -76,6 +76,15 @@ test_eq "shadowing 2" 31413 (*y);
 b := 931;
 test_eq "assign" 931 b;
 
+b += 100;
+test_eq "+=" 1031 b;
+b -= 50;
+test_eq "-=" 981 b;
+b *= 2;
+test_eq "*=" 1962 b;
+b /= 3;
+test_eq "/=" 654 b;
+
 ## function ##
 
 test_eq "simple function" 30 (add 14 16);

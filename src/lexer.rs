@@ -9,6 +9,16 @@ fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
+fn make_compound_assignment_operator(c: char) -> Option<Token> {
+    match c {
+        '+' => Some(Token::AddAssign),
+        '-' => Some(Token::SubAssign),
+        '*' => Some(Token::MulAssign),
+        '/' => Some(Token::DivAssign),
+        _ => None,
+    }
+}
+
 pub struct Lexer<'a> {
     file: Id,
     raw: &'a str,
@@ -238,6 +248,9 @@ impl<'a> Lexer<'a> {
         match self.read_char() {
             c if c.is_digit(10) => Some(self.lex_number(c)),
             c if is_identifier_char(c) => Some(self.lex_identifier(c)),
+            c if self.next_is('=') && make_compound_assignment_operator(c).is_some() => {
+                self.two_char(make_compound_assignment_operator(c).unwrap())
+            },
             '"' => self.lex_string(),
             '+' => Some(Token::Add),
             '-' if self.next_is('>') => self.two_char(Token::Arrow),

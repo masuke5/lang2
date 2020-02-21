@@ -699,13 +699,15 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
                 // Assign statement
-                if self.consume(&Token::Assign) {
-                    if let Some(stmt) = self.parse_stmt_assign(expr) {
-                        stmts.push(stmt);
+                let expr = match self.parse_assign_operators(expr) {
+                    Ok(stmt) => {
+                        if let Some(stmt) = stmt {
+                            stmts.push(stmt);
+                        }
+                        continue;
                     }
-
-                    continue;
-                }
+                    Err(expr) => expr,
+                };
 
                 if self.consume(&Token::Rbrace) {
                     result_expr = Some(expr);
@@ -761,6 +763,46 @@ impl<'a> Parser<'a> {
 
         let span = Span::merge(&lhs.span, &self.prev().span);
         Some(spanned(Stmt::Assign(lhs, rhs), span))
+    }
+
+    fn parse_compound_assignment(
+        &mut self,
+        binop: BinOp,
+        lhs: Spanned<Expr>,
+    ) -> Option<Spanned<Stmt>> {
+        self.next();
+
+        let rhs = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
+        self.expect(&Token::Semicolon, &[Token::Semicolon]);
+
+        let span = Span::merge(&lhs.span, &self.prev().span);
+        Some(spanned(
+            Stmt::Assign(
+                lhs.clone(),
+                spanned(
+                    Expr::BinOp(binop, Box::new(lhs), Box::new(rhs)),
+                    span.clone(),
+                ),
+            ),
+            span,
+        ))
+    }
+
+    fn parse_assign_operators(
+        &mut self,
+        lhs: Spanned<Expr>,
+    ) -> Result<Option<Spanned<Stmt>>, Spanned<Expr>> {
+        match &self.peek().kind {
+            Token::Assign => {
+                self.next();
+                Ok(self.parse_stmt_assign(lhs))
+            }
+            Token::AddAssign => Ok(self.parse_compound_assignment(BinOp::Add, lhs)),
+            Token::SubAssign => Ok(self.parse_compound_assignment(BinOp::Sub, lhs)),
+            Token::MulAssign => Ok(self.parse_compound_assignment(BinOp::Mul, lhs)),
+            Token::DivAssign => Ok(self.parse_compound_assignment(BinOp::Div, lhs)),
+            _ => Err(lhs),
+        }
     }
 
     fn parse_return(&mut self) -> Option<Spanned<Stmt>> {
@@ -1015,9 +1057,10 @@ impl<'a> Parser<'a> {
         if is_expr {
             let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
-            if self.consume(&Token::Assign) {
-                return self.parse_stmt_assign(expr);
-            }
+            let expr = match self.parse_assign_operators(expr) {
+                Ok(stmt) => return stmt,
+                Err(expr) => expr,
+            };
 
             if needs_semicolon(&expr.kind) {
                 self.expect(&Token::Semicolon, &[Token::Semicolon])?;
