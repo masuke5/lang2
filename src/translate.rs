@@ -128,7 +128,7 @@ pub fn push_i64_insts(insts: &mut InstList, n: i64) {
         let [n] = i8::to_le_bytes(n);
         insts.push_inst(opcode::TINY_INT, n);
     } else {
-        insts.push_inst_ref(opcode::INT, n);
+        insts.push_inst_ref_i64(opcode::INT, n);
     }
 }
 
@@ -137,7 +137,7 @@ pub fn push_u64_insts(insts: &mut InstList, n: u64) {
         let [n] = i8::to_le_bytes(n);
         insts.push_inst(opcode::TINY_INT, n);
     } else {
-        insts.push_inst_ref(opcode::INT, n);
+        insts.push_inst_ref_u64(opcode::INT, n);
     }
 }
 
@@ -230,7 +230,7 @@ pub fn literal_array(expr: ExprInfo, arr_len: usize) -> InstList {
         let element_size = type_size_nocheck(&expr.ty);
         let count = (arr_len - 1) as u64;
         let arg: u64 = ((element_size as u64) << 32) | count;
-        insts.push_inst_ref(opcode::DUPLICATE, arg);
+        insts.push_inst_ref_u64(opcode::DUPLICATE, arg);
     }
 
     insts
@@ -317,7 +317,7 @@ pub fn func_pos(module_id: Option<u16>, func_id: u16) -> InstList {
         Some(module_id) => ((module_id as u64) << 32) | func_id as u64,
         None => ((SELF_MODULE_ID as u64) << 32) | func_id as u64,
     };
-    insts.push_inst_ref(opcode::INT, arg);
+    insts.push_inst_ref_u64(opcode::INT, arg);
 
     // Push the pointer to stack in heap
     insts.push_inst(opcode::LOAD_HEAP, 0);

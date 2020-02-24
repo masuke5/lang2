@@ -479,24 +479,6 @@ impl Function {
     }
 }
 
-macro_rules! impl_toref {
-    ($ty:ty) => {
-        impl ToRef for $ty {
-            fn convert(self) -> u64 {
-                if mem::size_of::<$ty>() > 8 {
-                    panic!("too big value");
-                }
-
-                unsafe { mem::transmute(self.to_le()) }
-            }
-        }
-    };
-}
-
-pub trait ToRef {
-    fn convert(self) -> u64;
-}
-
 #[derive(Debug)]
 pub struct InstList {
     pub insts: LinkedList<[u8; 2]>,
@@ -574,14 +556,26 @@ impl InstList {
     }
 
     #[inline]
-    pub fn push_inst_ref(&mut self, opcode: u8, arg: impl ToRef) {
-        let arg = self.new_ref(arg);
+    pub fn push_inst_ref_u64(&mut self, opcode: u8, arg: u64) {
+        let arg = self.new_ref_u64(arg);
         // TODO: Add support for values above u8
         self.push_inst(opcode, arg as u8);
     }
 
-    pub fn new_ref(&mut self, value: impl ToRef) -> usize {
-        self.refs.push(value.convert());
+    #[inline]
+    pub fn push_inst_ref_i64(&mut self, opcode: u8, arg: i64) {
+        let arg = self.new_ref_i64(arg);
+        // TODO: Add support for values above u8
+        self.push_inst(opcode, arg as u8);
+    }
+
+    pub fn new_ref_u64(&mut self, value: u64) -> usize {
+        self.refs.push(value);
+        self.refs.len() - 1
+    }
+
+    pub fn new_ref_i64(&mut self, value: i64) -> usize {
+        self.refs.push(unsafe { mem::transmute(value) });
         self.refs.len() - 1
     }
 
@@ -590,11 +584,6 @@ impl InstList {
         self.insts.len()
     }
 }
-
-impl_toref!(u64);
-impl_toref!(i64);
-impl_toref!(usize);
-impl_toref!(isize);
 
 pub struct BytecodeBuilder {
     pub code: Bytecode,
@@ -799,11 +788,11 @@ mod tests {
     fn instlist_append() {
         let mut insts = InstList::new();
         insts.push_inst(opcode::TINY_INT, 30);
-        insts.push_inst_ref(opcode::INT, 505050 as u64);
+        insts.push_inst_ref_u64(opcode::INT, 505050);
 
         let mut insts2 = InstList::new();
         insts2.push_inst_noarg(opcode::BINOP_ADD);
-        insts2.push_inst_ref(opcode::INT, 606060 as u64);
+        insts2.push_inst_ref_u64(opcode::INT, 606060);
         insts2.push_inst_noarg(opcode::BINOP_MUL);
 
         insts.append(insts2);
@@ -826,12 +815,12 @@ mod tests {
     fn instlist_prepend() {
         let mut insts = InstList::new();
         insts.push_inst_noarg(opcode::BINOP_ADD);
-        insts.push_inst_ref(opcode::INT, 606060 as u64);
+        insts.push_inst_ref_u64(opcode::INT, 606060);
         insts.push_inst_noarg(opcode::BINOP_MUL);
 
         let mut insts2 = InstList::new();
         insts2.push_inst(opcode::TINY_INT, 30);
-        insts2.push_inst_ref(opcode::INT, 505050 as u64);
+        insts2.push_inst_ref_u64(opcode::INT, 505050);
 
         insts.prepend(insts2);
 
