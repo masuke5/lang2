@@ -1,5 +1,4 @@
 use crate::value::Value;
-use libc;
 use std::collections::{hash_map::Entry, HashMap, LinkedList};
 use std::ffi::c_void;
 use std::fmt;
@@ -47,7 +46,7 @@ impl GcRegion {
     const CONSISTS_OF_VALUE: u64 = 1 << 1;
 
     fn new(size: usize, consists_of_value: bool) -> NonNull<Self> {
-        let ptr = unsafe {
+        unsafe {
             let ptr = libc::malloc(mem::size_of::<Self>() + size) as *mut Self;
             (*ptr).size = size;
             (*ptr).bits = if consists_of_value {
@@ -57,9 +56,7 @@ impl GcRegion {
             };
 
             NonNull::new(ptr).unwrap()
-        };
-
-        ptr
+        }
     }
 
     fn mark(&mut self) {
@@ -137,9 +134,9 @@ impl Gc {
             }
         };
 
+        // Push the region and return a reference to it
         self.values.push_front(region);
-
-        self.values.front_mut().unwrap().clone()
+        *self.values.front_mut().unwrap()
     }
 
     fn mark(&mut self, stack: &mut [Value]) {
@@ -200,17 +197,17 @@ impl Gc {
 
 impl Drop for Gc {
     fn drop(&mut self) {
-        fn free(region: &NonNull<GcRegion>) {
+        fn free(region: NonNull<GcRegion>) {
             unsafe { libc::free(region.as_ptr() as *mut _) };
         }
 
         for region in &self.values {
-            free(region);
+            free(*region);
         }
 
         for list in self.freelist_map.values() {
             for region in list {
-                free(region);
+                free(*region);
             }
         }
     }

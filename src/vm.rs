@@ -14,7 +14,7 @@ use crate::module::Module;
 use crate::sema::ModuleBody;
 use crate::value::{Lang2String, Value};
 
-pub const SELF_MODULE_ID: usize = 0x7fffffff;
+pub const SELF_MODULE_ID: usize = 0x7fff_ffff;
 
 const STACK_SIZE: usize = 10000;
 
@@ -90,7 +90,7 @@ impl Performance {
         let p = self
             .insts
             .entry(self.current_opcode)
-            .or_insert(InstPerformance::new());
+            .or_insert_with(InstPerformance::new);
         let count = p.count as f32;
 
         p.average = 1.0 / (count + 1.0) * (count * p.average + elapsed);
@@ -157,7 +157,7 @@ impl VM {
         unsafe { &*value.as_ptr() }
     }
 
-    fn dump_value(value: &Value, depth: usize) {
+    fn dump_value(value: Value, depth: usize) {
         print!("{}{:x}", "  ".repeat(depth), value.as_u64());
         if value.is_heap_ptr() {
             println!(" (HEAP {:p})", value.as_ptr::<Value>());
@@ -229,7 +229,7 @@ impl VM {
                 break;
             }
 
-            Self::dump_value(value, 0);
+            Self::dump_value(*value, 0);
         }
         println!("-------- END DUMP ----------");
     }
@@ -244,7 +244,7 @@ impl VM {
             let mut dumped_ep = FxHashSet::default();
             let mut ep = ep;
             let mut i = 0;
-            while ep != ptr::null() {
+            while !ep.is_null() {
                 if dumped_ep.contains(&ep) {
                     println!("\x1b[91m{:p} is already dumped\x1b[0m", ep);
                     break;
@@ -263,7 +263,7 @@ impl VM {
                     }
 
                     let value = &*ep.add(i);
-                    Self::dump_value(value, 0);
+                    Self::dump_value(*value, 0);
                 }
 
                 ep = (*ep).as_ptr();
@@ -311,13 +311,15 @@ impl VM {
 
         for i in 0..module_count {
             let loc = bytecode.read_u16(module_map_start + i * 2) as usize;
+
+            // Read module name
             let len = bytecode.read_u16(loc) as usize;
 
-            let mut buf = Vec::with_capacity(len);
-            buf.resize(len, 0);
+            let mut buf = vec![0; len];
             bytecode.read_bytes(loc + 2, &mut buf[..]);
             let name = str::from_utf8(&buf[..]).expect("invalid module name");
 
+            // Get global id and push it
             let global_id = all_global_ids[name];
             modules.push(global_id);
         }
@@ -340,7 +342,7 @@ impl VM {
         // Write the pointer to the parent stack frame
         unsafe {
             let value: *mut Value = region.as_mut().as_mut_ptr();
-            if parent != ptr::null() {
+            if !parent.is_null() {
                 *value = Value::new_ptr_to_heap(parent);
             } else {
                 *value = Value::new_ptr(parent);
@@ -407,6 +409,7 @@ impl VM {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
 
+    #[allow(clippy::cognitive_complexity)]
     pub fn run(
         &mut self,
         module_bodies: Vec<(String, ModuleBody)>,
@@ -433,10 +436,8 @@ impl VM {
         let mut module_global_ids = FxHashMap::default();
 
         {
-            let mut next_id = 0;
-            for (name, _) in &module_bodies {
+            for (next_id, (name, _)) in module_bodies.iter().enumerate() {
                 module_global_ids.insert(name.clone(), next_id);
-                next_id += 1;
             }
         }
 
@@ -676,8 +677,8 @@ impl VM {
                     push!(self, Value::new_ptr(value));
                 }
                 opcode::LOAD_COPY => {
-                    let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
-                    let size = (arg & 0b00000111) as usize;
+                    let loc = i8::from_le_bytes([arg & 0b1111_1000]) >> 3;
+                    let size = (arg & 0b0000_0111) as usize;
 
                     let loc = (self.fp as isize + loc as isize) as usize;
                     if loc >= STACK_SIZE {
@@ -822,8 +823,8 @@ impl VM {
                     }
                 }
                 opcode::CALL_EXTERN => {
-                    let module_local_id = ((arg & 0b11110000) >> 4) as usize;
-                    let func_id = (arg & 0b00001111) as usize;
+                    let module_local_id = ((arg & 0b1111_0000) >> 4) as usize;
+                    let func_id = (arg & 0b0000_1111) as usize;
 
                     let module_global_id =
                         modules[self.current_module].as_ref().unwrap()[module_local_id];

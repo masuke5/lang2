@@ -113,7 +113,7 @@ pub struct Lang2String {
 
 impl Lang2String {
     #[allow(dead_code)]
-    pub unsafe fn write_string(&mut self, s: &String) {
+    pub unsafe fn write_string(&mut self, s: &str) {
         self.len = s.len();
         ptr::copy_nonoverlapping(s.as_bytes().as_ptr(), self.bytes.as_mut_ptr(), s.len());
     }

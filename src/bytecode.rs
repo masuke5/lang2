@@ -1,4 +1,4 @@
-use std::collections::{HashMap, LinkedList};
+use std::collections::{HashMap, LinkedList, hash_map::Entry};
 use std::mem;
 use std::ptr;
 use std::str;
@@ -275,8 +275,7 @@ impl Bytecode {
                 let len = self.read_u64(loc) as usize;
 
                 // Read string bytes
-                let mut buf = Vec::with_capacity(len);
-                buf.resize(len, 0);
+                let mut buf = vec![0; len];
                 self.read_bytes(loc + 8, &mut buf[..]);
 
                 // Convert to string
@@ -303,8 +302,8 @@ impl Bytecode {
             }
             opcode::LOAD_REF => println!("{}", i8::from_le_bytes([arg])),
             opcode::LOAD_COPY => {
-                let loc = i8::from_le_bytes([arg & 0b11111000]) >> 3;
-                let size = arg & 0b00000111;
+                let loc = i8::from_le_bytes([arg & 0b1111_1000]) >> 3;
+                let size = arg & 0b0000_0111;
                 println!("{} size={}", loc, size);
             }
             opcode::LOAD_HEAP => println!("{}", i8::from_le_bytes([arg])),
@@ -328,8 +327,8 @@ impl Bytecode {
             opcode::CALL_EXTERN_POS => println!(),
             opcode::CALL_NATIVE => println!(" unimplemented"),
             opcode::CALL_EXTERN => {
-                let module = (arg & 0b11110000) >> 4;
-                let func = arg & 0b00001111;
+                let module = (arg & 0b1111_0000) >> 4;
+                let func = arg & 0b0000_1111;
                 println!("{} module={}", func, module);
             }
             opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
@@ -369,8 +368,7 @@ impl Bytecode {
             let len = self.read_u64(loc) as usize;
 
             // Read the string bytes
-            let mut buf = Vec::with_capacity(len);
-            buf.resize(len, 0);
+            let mut buf = vec![0; len];
             self.read_bytes(loc + 8, &mut buf[..]);
 
             let raw = str::from_utf8(&buf).unwrap();
@@ -395,8 +393,7 @@ impl Bytecode {
             let len = self.read_u16(loc) as usize;
 
             // Read the string bytes
-            let mut buf = Vec::with_capacity(len);
-            buf.resize(len, 0);
+            let mut buf = vec![0; len];
             self.read_bytes(loc + 2, &mut buf[..]);
 
             let raw = str::from_utf8(&buf).unwrap();
@@ -567,7 +564,7 @@ impl InstList {
 
     #[inline]
     pub fn push_jump(&mut self, opcode: u8, label: u8) {
-        let opcode = opcode | 0b10000000;
+        let opcode = opcode | 0b1000_0000;
         self.push_inst(opcode, label);
     }
 
@@ -725,12 +722,12 @@ impl BytecodeBuilder {
             panic!("too many functions");
         }
 
-        if !self.functions.contains_key(&func.name) {
+        if let Entry::Vacant(entry) = self.functions.entry(func.name) {
             // Set ID
             func.code_id = self.func_count as u16;
-            self.functions.insert(func.name, func);
-
             self.func_count += 1;
+
+            entry.insert(func);
         }
     }
 

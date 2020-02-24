@@ -250,7 +250,7 @@ impl<'a> Lexer<'a> {
             c if is_identifier_char(c) => Some(self.lex_identifier(c)),
             c if self.next_is('=') && make_compound_assignment_operator(c).is_some() => {
                 self.two_char(make_compound_assignment_operator(c).unwrap())
-            },
+            }
             '"' => self.lex_string(),
             '+' => Some(Token::Add),
             '-' if self.next_is('>') => self.two_char(Token::Arrow),

@@ -136,7 +136,7 @@ impl SymbolPath {
     }
 
     pub fn tail(&self) -> Option<&SymbolPathSegment> {
-        self.segments.get(self.segments.len() - 1)
+        self.segments.last()
     }
 
     #[allow(dead_code)]
@@ -276,11 +276,11 @@ pub enum Expr {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
     // name, type, initial expression, is mutable, is escaped
-    Bind(Id, Option<Spanned<AstType>>, Spanned<Expr>, bool, bool),
+    Bind(Id, Option<Spanned<AstType>>, Box<Spanned<Expr>>, bool, bool),
     Expr(Spanned<Expr>),
     Return(Option<Spanned<Expr>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
-    Assign(Spanned<Expr>, Spanned<Expr>),
+    Assign(Spanned<Expr>, Box<Spanned<Expr>>),
     Import(Spanned<ImportRange>),
     FnDef(Box<AstFunction>),
     TypeDef(AstTypeDef),

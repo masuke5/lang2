@@ -219,8 +219,10 @@ impl<'a> Parser<'a> {
 
     #[allow(dead_code)]
     fn parse_path(&mut self) -> Option<Spanned<SymbolPath>> {
-        let first = self.expect_identifier(&[Token::Scope]);
-        let first = first.map(|id| SymbolPathSegment::new(id));
+        let first = self
+            .expect_identifier(&[Token::Scope])
+            .map(SymbolPathSegment::new);
+
         self.parse_path_with_first_segment(first, self.prev().span.clone())
     }
 
@@ -325,7 +327,7 @@ impl<'a> Parser<'a> {
             Token::Scope => {
                 let path = self.parse_path_with_first_segment(
                     Some(SymbolPathSegment::new(ident)),
-                    ident_span.clone(),
+                    ident_span,
                 )?;
                 Some(spanned(Expr::Path(path.kind), path.span))
             }
@@ -333,7 +335,7 @@ impl<'a> Parser<'a> {
                 self.next();
                 self.parse_struct(ident, ident_span)
             }
-            _ => Some(spanned(Expr::Variable(ident, false), ident_span.clone())),
+            _ => Some(spanned(Expr::Variable(ident, false), ident_span)),
         }
     }
 
@@ -572,8 +574,8 @@ impl<'a> Parser<'a> {
         let parse = Self::parse_call;
 
         match self.peek().kind {
-            Token::Asterisk => self.parse_unary_op(parse, |expr| Expr::Dereference(expr)),
-            Token::Sub => self.parse_unary_op(parse, |expr| Expr::Negative(expr)),
+            Token::Asterisk => self.parse_unary_op(parse, Expr::Dereference),
+            Token::Sub => self.parse_unary_op(parse, Expr::Negative),
             Token::Ampersand => {
                 let symbol_span = self.peek().span.clone();
                 self.next();
@@ -683,7 +685,7 @@ impl<'a> Parser<'a> {
 
         let span = Span::merge(&let_span, semicolon_span);
 
-        Some(spanned(Stmt::Bind(name, ty, expr, is_mutable, false), span))
+        Some(spanned(Stmt::Bind(name, ty, Box::new(expr), is_mutable, false), span))
     }
 
     fn parse_block_expr(&mut self) -> Option<Spanned<Expr>> {
@@ -720,10 +722,8 @@ impl<'a> Parser<'a> {
 
                 let span = expr.span.clone();
                 stmts.push(spanned(Stmt::Expr(expr), span));
-            } else {
-                if let Some(stmt) = stmt {
-                    stmts.push(stmt);
-                }
+            } else if let Some(stmt) = stmt {
+                stmts.push(stmt);
             }
         }
 
@@ -733,10 +733,7 @@ impl<'a> Parser<'a> {
         let result_expr =
             result_expr.unwrap_or_else(|| spanned(Expr::Literal(Literal::Unit), span.clone()));
 
-        Some(spanned(
-            Expr::Block(stmts, Box::new(result_expr)),
-            span.clone(),
-        ))
+        Some(spanned(Expr::Block(stmts, Box::new(result_expr)), span))
     }
 
     fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
@@ -762,7 +759,7 @@ impl<'a> Parser<'a> {
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
         let span = Span::merge(&lhs.span, &self.prev().span);
-        Some(spanned(Stmt::Assign(lhs, rhs), span))
+        Some(spanned(Stmt::Assign(lhs, Box::new(rhs)), span))
     }
 
     fn parse_compound_assignment(
@@ -779,10 +776,10 @@ impl<'a> Parser<'a> {
         Some(spanned(
             Stmt::Assign(
                 lhs.clone(),
-                spanned(
+                Box::new(spanned(
                     Expr::BinOp(binop, Box::new(lhs), Box::new(rhs)),
                     span.clone(),
-                ),
+                )),
             ),
             span,
         ))

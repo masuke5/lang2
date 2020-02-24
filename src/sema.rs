@@ -300,7 +300,7 @@ impl<'a> Analyzer<'a> {
 
         self.variables.insert(
             id,
-            Entry::Variable(Variable::new(ty.clone(), is_mutable, loc.clone())),
+            Entry::Variable(Variable::new(ty, is_mutable, loc.clone())),
         );
 
         loc
@@ -584,14 +584,10 @@ impl<'a> Analyzer<'a> {
 
                     // if `ty` is not wrapped and `expr.ty` is wrapped
                     if let Type::App(TypeCon::Wrapped, _) = ty {
-                    } else {
-                        match &expr.ty {
-                            Type::App(TypeCon::Wrapped, types) => {
-                                expr.insts = translate::unwrap(expr.insts, &expr.ty);
-                                expr.ty = types[0].clone();
-                            }
-                            _ => {}
-                        };
+                        // Does nothing
+                    } else if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
+                        expr.insts = translate::unwrap(expr.insts, &expr.ty);
+                        expr.ty = types[0].clone();
                     }
 
                     Some(expr)
@@ -607,17 +603,15 @@ impl<'a> Analyzer<'a> {
     ) -> Option<ExprInfo> {
         let mut expr = self.walk_expr(code, expr)?;
 
-        match &expr.ty {
-            Type::App(TypeCon::Wrapped, types) => {
-                expr.insts = translate::unwrap(expr.insts, &expr.ty);
-                expr.ty = types[0].clone();
-            }
-            _ => {}
-        };
+        if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
+            expr.insts = translate::unwrap(expr.insts, &expr.ty);
+            expr.ty = types[0].clone();
+        }
 
         Some(expr)
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn walk_expr(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (insts, ty) = match expr.kind {
             Expr::Literal(Literal::Number(n)) => (translate::literal_int(n), Type::Int),
@@ -704,12 +698,12 @@ impl<'a> Analyzer<'a> {
                     .collect();
                 match &mut expr_ty {
                     Type::App(_, types) => {
+                        assert!(types.len() <= args.len());
+
                         if types.len() < args.len() {
                             for arg in args.into_iter().skip(types.len()) {
                                 types.push(arg);
                             }
-                        } else if types.len() > args.len() {
-                            panic!();
                         }
                     }
                     _ => panic!(),
@@ -804,8 +798,7 @@ impl<'a> Analyzer<'a> {
                     comp_expr,
                     offset,
                 );
-                let ty = field_ty.clone();
-                return Some(ExprInfo::new_lvalue(insts, ty, expr.span, is_mutable));
+                return Some(ExprInfo::new_lvalue(insts, field_ty, expr.span, is_mutable));
             }
             Expr::Subscript(expr, subscript_expr) => {
                 let should_store = Self::expr_push_multiple_values(&expr.kind);
@@ -1189,14 +1182,14 @@ impl<'a> Analyzer<'a> {
                 let expr = match ty {
                     Some(ty) => {
                         let ty = self.walk_type(ty)?;
-                        let mut expr = self.walk_expr_with_conversion(code, expr, &ty)?;
+                        let mut expr = self.walk_expr_with_conversion(code, *expr, &ty)?;
 
                         unify(&mut self.errors, &expr.span, &ty, &expr.ty)?;
                         expr.ty = ty;
 
                         expr
                     }
-                    None => self.walk_expr(code, expr)?,
+                    None => self.walk_expr(code, *expr)?,
                 };
 
                 let loc = self.new_var_in_current_func(
@@ -1211,7 +1204,7 @@ impl<'a> Analyzer<'a> {
             }
             Stmt::Assign(lhs, rhs) => {
                 let lhs = self.walk_expr(code, lhs)?;
-                let rhs = self.walk_expr_with_conversion(code, rhs, &lhs.ty)?;
+                let rhs = self.walk_expr_with_conversion(code, *rhs, &lhs.ty)?;
 
                 if !lhs.is_lvalue {
                     error!(self, lhs.span, "unassignable expression");
@@ -1372,7 +1365,7 @@ impl<'a> Analyzer<'a> {
     // Definition
     // ===================================
 
-    fn insert_extern_module_headers(&mut self, stmts: &Vec<Spanned<Stmt>>) {
+    fn insert_extern_module_headers(&mut self, stmts: &[Spanned<Stmt>]) {
         for stmt in stmts {
             if let Stmt::Import(range) = &stmt.kind {
                 self.insert_func_headers_by_range(&range);
@@ -1380,7 +1373,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn insert_type_headers_in_stmts(&mut self, stmts: &Vec<Spanned<Stmt>>) {
+    fn insert_type_headers_in_stmts(&mut self, stmts: &[Spanned<Stmt>]) {
         // Insert type headers
         for stmt in stmts {
             if let Stmt::TypeDef(tydef) = &stmt.kind {
@@ -1389,7 +1382,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_type_def_in_stmts(&mut self, stmts: &Vec<Spanned<Stmt>>) {
+    fn walk_type_def_in_stmts(&mut self, stmts: &[Spanned<Stmt>]) {
         // Walk the type definitions
         for stmt in stmts {
             if let Stmt::TypeDef(tydef) = &stmt.kind {
@@ -1401,10 +1394,10 @@ impl<'a> Analyzer<'a> {
     fn insert_func_headers_in_stmts(
         &mut self,
         code: &mut BytecodeBuilder,
-        stmts: &Vec<Spanned<Stmt>>,
+        stmts: &[Spanned<Stmt>],
     ) {
         // Insert function headers
-        'l: for stmt in stmts {
+        for stmt in stmts {
             if let Stmt::FnDef(func) = &stmt.kind {
                 if self.variables.contains_key(&func.name) {
                     error!(

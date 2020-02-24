@@ -58,7 +58,7 @@ fn print_errors(errors: Vec<Error>) {
                 let contents = fs::read_to_string(&IdMap::name(es.file)).unwrap();
                 file_cache.insert(
                     es.file,
-                    contents.split("\n").map(|c| c.to_string()).collect(),
+                    contents.split('\n').map(|c| c.to_string()).collect(),
                 );
                 &file_cache[&es.file]
             }
@@ -111,7 +111,7 @@ fn print_errors(errors: Vec<Error>) {
             } else if i == 0 {
                 (es.start_col, line_len - es.start_col)
             } else if i == line_count - 1 {
-                (indent, (line_len - es.end_col).checked_sub(1).unwrap_or(0))
+                (indent, (line_len - es.end_col).saturating_sub(1))
             } else {
                 (indent, line_len - indent)
             };
@@ -148,7 +148,7 @@ fn execute(
     container.add(*reserved_id::STD_MODULE, stdlib::module());
 
     let pwd = env::current_dir().expect("Unable to get current directory");
-    let file_path = file_path.unwrap_or(PathBuf::from(&pwd).join("cmd"));
+    let file_path = file_path.unwrap_or_else(|| PathBuf::from(&pwd).join("cmd"));
     let tmp = pwd.join(&file_path);
     let root_path = tmp.parent().unwrap();
 
@@ -176,7 +176,7 @@ fn execute(
         }
     };
 
-    for (_, program) in &mut module_buffers {
+    for program in module_buffers.values_mut() {
         escape::find(program);
     }
 

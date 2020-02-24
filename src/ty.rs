@@ -224,26 +224,22 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 }
 
 pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()> {
-    match (a, b) {
-        (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) => {
-            let ok = match (a_tycon, b_tycon) {
-                (TypeCon::Pointer(false), TypeCon::Pointer(false)) => true,
-                (TypeCon::Pointer(true), TypeCon::Pointer(false)) => false,
-                (TypeCon::Pointer(false), TypeCon::Pointer(true)) => true,
-                (TypeCon::Pointer(true), TypeCon::Pointer(true)) => true,
-                (a, b) if a == b => true,
-                _ => false,
-            };
+    if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
+        let ok = match (a_tycon, b_tycon) {
+            (TypeCon::Pointer(false), TypeCon::Pointer(false)) => true,
+            (TypeCon::Pointer(true), TypeCon::Pointer(false)) => false,
+            (TypeCon::Pointer(false), TypeCon::Pointer(true)) => true,
+            (TypeCon::Pointer(true), TypeCon::Pointer(true)) => true,
+            (a, b) => a == b,
+        };
 
-            if ok {
-                for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                    unify(errors, span, a_ty, b_ty)?;
-                }
-
-                return Some(());
+        if ok {
+            for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
+                unify(errors, span, a_ty, b_ty)?;
             }
+
+            return Some(());
         }
-        _ => {}
     };
 
     match (a, b) {
@@ -418,9 +414,9 @@ pub fn wrap_typevar(ty: &mut Type) {
 }
 
 pub fn generate_func_type(
-    params: &Vec<Type>,
+    params: &[Type],
     return_ty: &Type,
-    ty_params: &Vec<(Id, TypeVar)>,
+    ty_params: &[(Id, TypeVar)],
 ) -> Type {
     assert!(!params.is_empty());
 
