@@ -1,80 +1,119 @@
-arg-list = expr {"," expr} [","]
+(* Expression *)
 
-primary = number
-        | id
-        | id "(" [arg-list] ")"
-        | "true"
-        | "false"
-        | "(" expr ")"
+type_args = type {"," type} [","]
+field = identifier ":" expr
+fields = field {"," field} [","]
 
-field = primary
-      | field "." number
-      | field "." identifier
+number_expr = number
+variable = id
+path = id {"::" id}
+struct = (identifier | path) ":" "{" [fields] "}"
+bool_literal = "true" | "false"
+atom = "(" expr ")"
+tuple = "(" expr {"," expr} [","] ")"
+array = "[" expr ";" number "]"
+block = "{" {stmt} [expr] "}"
+if_expr = "if" expr expr ["else" expr]
+primary
+    = number_expr
+    | variable
+    | path
+    | struct
+    | bool_literal
+    | atom
+    | tuple
+    | array
+    | block
+    | if_expr
+field
+    = primary
+    | field "." number
+    | field "." identifier
+app = field "<" [type-args] ">"
+subscript = (subscript | app) "[" expr "]"
+call = (call | subscript) expr
+unary = ("-" | "*" | "&" ["mut"] | "new" ["mut"]) call
+factor = factor ("*" | "/" | "%") unary 
+term = term ("+" | "-") factor
+relational = term ("<" | "<=" | ">" | ">=") term
+equality = relational ("=" | "<>") relational
+and = and "&&" equality
+or = or "||" and
 
-factor = factor "*" primary
-       | factor "/" primary
-       | factor "%" primary
+expr = or
 
-term = term "+" factor
-     | term "-" factor
-
-relational = term "<" term
-           | term "=" term
-           | term ">" term
-           | term ">=" term
-
-equality = relational "==" relational
-         | relational "!=" relational
-
-expr = equality
-
+(* Statement *)
 
 bind = "let" id [":" type] "=" expr ";"
-
 return = "return" [expr] ";"
-
-block = "{" {stmt} "}"
-
-if = "if" expr block ["else" (block|if)]
-
 while = "while" expr block
-
 for = "for" id "in" expr block
+assign = expr ":=" expr
+expr_stmt = expr ";"
+stmt
+    = bind
+    | return
+    | block
+    | if
+    | while
+    | for
+    | assign
+    | expr_stmt
+    | def
 
-expr-stmt = expr ";"
-
-stmt = bind-stmt
-     | return
-     | block
-     | if
-     | while
-     | for
-
+(* Definition *)
 
 param = id ":" type
-param-list = param {"," param} [","]
-func-def = "fn" id "(" [param-list] ")" [":" type] block
+param_list = param {"," param} [","]
+func_def = "fn" id "(" [param_list] ")" [":" type] block
 
+type_params = identifier {"," identifier} [","]
+type_def = "type" identifier ["<" type_params ">"] type
 
-type-list = type {"," type} [","]
-tuple-type = "(" type-list ")"
+import_def = "import" path
 
-unit-type = "(" ")"
+def
+    = func_def
+    | type_def
+    | import_def
+
+(* Import *)
+
+range
+    = identfier
+    | identfier "as" identifier
+    | "{" import {"," import } [","] "}"
+import = path "::" range
+
+(* Type *)
+
+tuple_type = "(" type {"," type} [","] ")"
+unit_type = "(" ")"
+primitive_type
+    = "int"
+    | "bool"
+    | "string"
 
 field = identifier ":" type
-field-list = field {"," field} [","]
-struct-type = "struct" "{" [field-list] "}"
+field_list = field {"," field} [","]
+struct_type = "struct" "{" [field_list] "}"
 
-type = id
-     | tuple-type
-     | unit-type
-     | struct-type
+pointer_type = "*" ["mut"] type
+array_type = "[" type ";" number "]"
+app_type = type "<" [type_args] ">"
+arrow_type = type "->" type
 
-type-decl = "type" identifier type
+type
+    = id
+    | tuple_type
+    | unit_type
+    | struct_type
+    | primitive_type
+    | pointer_type
+    | arrow_type
+    | app_type
+    | arrow_type
 
+(* Program *)
 
-toplevel = stmt
-         | func-def
-         | type-decl
-
-program = {toplevel}
+program = {stmt ";"}
