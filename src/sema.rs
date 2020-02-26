@@ -1067,18 +1067,14 @@ impl<'a> Analyzer<'a> {
                 let insts = translate::alloc(expr);
                 (insts, ty)
             }
-            Expr::Block(stmts, result_expr) => {
+            Expr::Block(block) => {
                 self.push_scope();
 
-                let mut insts = self.walk_stmts_including_def(code, stmts);
-                let mut expr = self.walk_expr(code, *result_expr)?;
-
-                mem::swap(&mut expr.insts, &mut insts);
-                expr.insts.append(insts);
+                let (ty, insts) = self.walk_block(code, block)?;
 
                 self.pop_scope();
 
-                return Some(expr);
+                (insts, ty)
             }
             Expr::If(cond, then_expr, None) => {
                 let cond = self.walk_expr_with_conversion(code, *cond, &Type::Bool);
@@ -1245,9 +1241,6 @@ impl<'a> Analyzer<'a> {
                 let return_var = self.get_return_var();
                 translate::return_stmt(&self.relative_loc(&return_var.loc), expr, &return_var.ty)
             }
-            Stmt::Import(_) => InstList::new(),
-            Stmt::FnDef(_) => InstList::new(),
-            Stmt::TypeDef(_) => InstList::new(),
         };
 
         Some(insts)
@@ -1365,91 +1358,78 @@ impl<'a> Analyzer<'a> {
     // Definition
     // ===================================
 
-    fn insert_extern_module_headers(&mut self, stmts: &[Spanned<Stmt>]) {
-        for stmt in stmts {
-            if let Stmt::Import(range) = &stmt.kind {
-                self.insert_func_headers_by_range(&range);
-            }
+    fn insert_extern_module_headers(&mut self, imports: &[Spanned<ImportRange>]) {
+        for range in imports {
+            self.insert_func_headers_by_range(&range);
         }
     }
 
-    fn insert_type_headers_in_stmts(&mut self, stmts: &[Spanned<Stmt>]) {
+    fn insert_type_headers_in_stmts(&mut self, types: &[AstTypeDef]) {
         // Insert type headers
-        for stmt in stmts {
-            if let Stmt::TypeDef(tydef) = &stmt.kind {
-                self.insert_type_header(tydef);
-            }
+        for tydef in types {
+            self.insert_type_header(tydef);
         }
     }
 
-    fn walk_type_def_in_stmts(&mut self, stmts: &[Spanned<Stmt>]) {
+    fn walk_type_def_in_stmts(&mut self, types: Vec<AstTypeDef>) {
         // Walk the type definitions
-        for stmt in stmts {
-            if let Stmt::TypeDef(tydef) = &stmt.kind {
-                self.walk_type_def(tydef.clone()); // TODO: Avoid clone()
-            }
+        for tydef in types {
+            self.walk_type_def(tydef.clone());
         }
     }
 
-    fn insert_func_headers_in_stmts(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        stmts: &[Spanned<Stmt>],
-    ) {
+    fn insert_func_headers_in_stmts(&mut self, code: &mut BytecodeBuilder, funcs: &[AstFunction]) {
         // Insert function headers
-        for stmt in stmts {
-            if let Stmt::FnDef(func) = &stmt.kind {
-                if self.variables.contains_key(&func.name) {
-                    error!(
-                        self,
-                        stmt.span.clone(),
-                        "A function or variable with the same name exists"
-                    );
-                    continue;
-                }
+        for func in funcs {
+            if self.variables.contains_key(&func.name.kind) {
+                error!(
+                    self,
+                    func.name.span.clone(),
+                    "A function or variable with the same name exists"
+                );
+                continue;
+            }
 
-                if let Some((header, func)) = self.generate_function_header(&func) {
-                    let func_name = func.name;
-                    code.insert_function_header(func);
+            if let Some((header, func)) = self.generate_function_header(&func) {
+                let func_name = func.name;
+                code.insert_function_header(func);
 
-                    let func_id = code.get_function(func_name).unwrap().code_id;
-                    let fh = FunctionHeaderWithId::new_self(header, func_id);
-                    self.variables.insert(func_name, Entry::Function(fh));
-                }
+                let func_id = code.get_function(func_name).unwrap().code_id;
+                let fh = FunctionHeaderWithId::new_self(header, func_id);
+                self.variables.insert(func_name, Entry::Function(fh));
             }
         }
     }
 
-    fn walk_stmts_including_def(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        stmts: Vec<Spanned<Stmt>>,
-    ) -> InstList {
-        self.insert_extern_module_headers(&stmts);
-        self.insert_type_headers_in_stmts(&stmts);
-        self.walk_type_def_in_stmts(&stmts);
+    fn walk_block(&mut self, code: &mut BytecodeBuilder, block: Block) -> Option<(Type, InstList)> {
+        self.insert_extern_module_headers(&block.imports);
+        self.insert_type_headers_in_stmts(&block.types);
+        self.walk_type_def_in_stmts(block.types);
 
         self.resolve_type_sizes();
 
-        self.insert_func_headers_in_stmts(code, &stmts);
+        self.insert_func_headers_in_stmts(code, &block.functions);
 
         // Walk the statements
         let mut insts = InstList::new();
-        for stmt in &stmts {
-            let stmt_insts = self.walk_stmt(code, stmt.clone()); // TODO: Avoid clone()
+        for stmt in block.stmts {
+            let stmt_insts = self.walk_stmt(code, stmt);
             if let Some(stmt_insts) = stmt_insts {
                 insts.append(stmt_insts);
             }
         }
 
+        let result_expr = self.walk_expr(code, *block.result_expr);
+
         // Walk the function bodies in the statements
-        for stmt in stmts {
-            if let Stmt::FnDef(func) = stmt.kind {
-                self.walk_function(code, *func);
-            }
+        for func in block.functions {
+            self.walk_function(code, func);
         }
 
-        insts
+        let result_expr = result_expr?;
+        insts.append(result_expr.insts);
+
+        Some((result_expr.ty, insts))
     }
 
     // =======================================
@@ -1684,19 +1664,19 @@ impl<'a> Analyzer<'a> {
         };
 
         // Create a function for the bytecode
-        let bc_func = Function::new(func.name, param_size);
+        let bc_func = Function::new(func.name.kind, param_size);
 
         Some((header, bc_func))
     }
 
     fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
-        self.current_func = func.name;
+        self.current_func = func.name.kind;
 
         self.push_scope();
         self.push_type_scope();
         self.var_level += 1;
 
-        let header = match self.variables.get(&func.name) {
+        let header = match self.variables.get(&func.name.kind) {
             Some(Entry::Function(h)) => &h.header,
             // To reach there means the function header may be not inserted by errors
             _ => return,
@@ -1721,7 +1701,7 @@ impl<'a> Analyzer<'a> {
             })
             .collect();
 
-        let code_func = code.get_function_mut(func.name).unwrap();
+        let code_func = code.get_function_mut(func.name.kind).unwrap();
         let param_insts = match self.insert_params_as_variables(code_func, params, &return_ty) {
             Some(insts) => insts,
             None => return,
@@ -1741,7 +1721,7 @@ impl<'a> Analyzer<'a> {
         let mut insts = param_insts;
         insts.append(body_insts);
 
-        self.function_insts.push_back((func.name, insts));
+        self.function_insts.push_back((func.name.kind, insts));
 
         self.var_level -= 1;
         self.pop_type_scope();
@@ -1784,17 +1764,13 @@ impl<'a> Analyzer<'a> {
         self.push_type_scope();
 
         // Insert type headers
-        for stmt in &program.main_stmts {
-            if let Stmt::TypeDef(tydef) = &stmt.kind {
-                self.insert_type_header(tydef);
-            }
+        for tydef in &program.main.types {
+            self.insert_type_header(tydef);
         }
 
         // Walk the type definitions
-        for stmt in &program.main_stmts {
-            if let Stmt::TypeDef(tydef) = &stmt.kind {
-                self.walk_type_def(tydef.clone()); // TODO: Avoid clone()
-            }
+        for tydef in &program.main.types {
+            self.walk_type_def(tydef.clone());
         }
 
         self.resolve_type_sizes();
@@ -1814,20 +1790,15 @@ impl<'a> Analyzer<'a> {
             ),
         );
 
-        for stmt in &program.main_stmts {
-            match &stmt.kind {
-                Stmt::FnDef(func) => {
-                    if let Some((header, func)) = self.generate_function_header(&func) {
-                        let func_name = func.name;
-                        code.insert_function_header(func);
-                        function_headers.insert(
-                            func_name,
-                            (code.get_function(func_name).unwrap().code_id, header),
-                        );
-                    }
-                }
-                Stmt::Import(_) => {}
-                _ => {} // TODO: Implement it
+        for func in &program.main.functions {
+            if let Some((header, func)) = self.generate_function_header(&func) {
+                let func_name = func.name;
+
+                code.insert_function_header(func);
+                function_headers.insert(
+                    func_name,
+                    (code.get_function(func_name).unwrap().code_id, header),
+                );
             }
         }
 
@@ -1852,13 +1823,15 @@ impl<'a> Analyzer<'a> {
         let range = ImportRange::Scope(*reserved_id::STD_MODULE, Box::new(ImportRange::All));
         self.insert_func_headers_by_range(&Spanned {
             kind: range,
-            span: program.main_stmts[0].span.clone(), // ??
+            span: program.main.result_expr.span.clone(),
         });
 
         // Main statements
-        let insts = self.walk_stmts_including_def(&mut code, program.main_stmts);
-        self.function_insts
-            .push_front((*reserved_id::MAIN_FUNC, insts));
+        let insts = self.walk_block(&mut code, program.main);
+        if let Some((_, insts)) = insts {
+            self.function_insts
+                .push_front((*reserved_id::MAIN_FUNC, insts));
+        }
 
         self.pop_scope();
         self.pop_type_scope();

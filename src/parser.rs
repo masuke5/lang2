@@ -64,6 +64,53 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     }
 }
 
+struct DefinitionInBlock {
+    functions: Vec<AstFunction>,
+    types: Vec<AstTypeDef>,
+    imports: Vec<Spanned<ImportRange>>,
+}
+
+impl DefinitionInBlock {
+    fn new() -> Self {
+        Self {
+            functions: Vec::new(),
+            types: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
+}
+
+struct BlockBuilder {
+    defs: Vec<DefinitionInBlock>,
+}
+
+impl BlockBuilder {
+    fn new() -> Self {
+        Self {
+            defs: Vec::new(),
+        }
+    }
+
+    fn push(&mut self) {
+        self.defs.push(DefinitionInBlock::new());
+    }
+
+    fn pop_and_build(&mut self, stmts: Vec<Spanned<Stmt>>, result_expr: Spanned<Expr>) -> Block {
+        let def = self.defs.pop().unwrap();
+        Block {
+            functions: def.functions,
+            types: def.types,
+            imports: def.imports,
+            stmts,
+            result_expr: Box::new(result_expr),
+        }
+    }
+
+    fn def(&mut self) -> &mut DefinitionInBlock {
+        self.defs.last_mut().unwrap()
+    }
+}
+
 pub struct Parser<'a> {
     root_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
@@ -73,9 +120,11 @@ pub struct Parser<'a> {
     main_stmts: Vec<Spanned<Stmt>>,
     strings: Vec<String>,
     module_buffers: FxHashMap<SymbolPath, Program>,
-    imported_modules: Vec<SymbolPath>,
+    imported_modules: FxHashSet<SymbolPath>,
     loaded_modules: FxHashSet<SymbolPath>,
     native_modules: &'a ModuleContainer,
+
+    blocks_builder: BlockBuilder,
 }
 
 impl<'a> Parser<'a> {
@@ -93,9 +142,10 @@ impl<'a> Parser<'a> {
             main_stmts: Vec::new(),
             strings: Vec::new(),
             module_buffers: FxHashMap::default(),
-            imported_modules: Vec::new(),
+            imported_modules: FxHashSet::default(),
             loaded_modules,
             native_modules,
+            blocks_builder: BlockBuilder::new(),
         }
     }
 
@@ -695,6 +745,8 @@ impl<'a> Parser<'a> {
         let mut result_expr = None;
         let mut stmts = Vec::new();
 
+        self.blocks_builder.push();
+
         while !self.consume(&Token::Rbrace) {
             let (is_expr, stmt) = self.parse_stmt_without_expr();
             if is_expr {
@@ -733,7 +785,9 @@ impl<'a> Parser<'a> {
         let result_expr =
             result_expr.unwrap_or_else(|| spanned(Expr::Literal(Literal::Unit), span.clone()));
 
-        Some(spanned(Expr::Block(stmts, Box::new(result_expr)), span))
+        let block = self.blocks_builder.pop_and_build(stmts, result_expr);
+
+        Some(spanned(Expr::Block(block), span))
     }
 
     fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
@@ -981,7 +1035,7 @@ impl<'a> Parser<'a> {
                 }
             }
         } else if self.native_modules.contains(module_path) {
-            self.imported_modules.push(module_path.clone());
+            self.imported_modules.insert(module_path.clone());
             return true;
         } else {
             match module_path.parent() {
@@ -995,16 +1049,16 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.imported_modules.push(module_path.clone());
+        self.imported_modules.insert(module_path.clone());
         true
     }
 
     fn parse_import_stmt(&mut self) -> Option<Spanned<Stmt>> {
-        let import_token_span = self.peek().span.clone();
         self.next();
 
         let import_range = self.parse_skip(Self::parse_import_range, &[Token::Semicolon])?;
 
+        // Load modules
         let mut failed = false;
         let paths = import_range.kind.to_paths();
         for path in &paths {
@@ -1020,8 +1074,9 @@ impl<'a> Parser<'a> {
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
-        let span = Span::merge(&import_token_span, &self.prev().span);
-        Some(spanned(Stmt::Import(import_range), span))
+        self.blocks_builder.def().imports.push(import_range);
+
+        None
     }
 
     fn parse_stmt_without_expr(&mut self) -> (bool, Option<Spanned<Stmt>>) {
@@ -1032,16 +1087,18 @@ impl<'a> Parser<'a> {
             Token::While => self.parse_while_stmt(),
             Token::Import => self.parse_import_stmt(),
             Token::Fn => {
-                let fn_span = token.span.clone();
                 let func = self.parse_fn_decl();
-                let span = Span::merge(&fn_span, &self.prev().span);
-                func.map(|func| spanned(Stmt::FnDef(Box::new(func)), span))
+                if let Some(func) = func {
+                    self.blocks_builder.def().functions.push(func);
+                }
+                None
             }
             Token::Type => {
-                let type_span = token.span.clone();
                 let tydef = self.parse_def_type();
-                let span = Span::merge(&type_span, &self.prev().span);
-                tydef.map(|tydef| spanned(Stmt::TypeDef(tydef), span))
+                if let Some(tydef) = tydef {
+                    self.blocks_builder.def().types.push(tydef);
+                }
+                None
             }
             _ => return (true, None),
         };
@@ -1333,6 +1390,7 @@ impl<'a> Parser<'a> {
 
         // Parse the function name
         let name = self.expect_identifier(&[Token::Lparen]);
+        let name = name.map(|name| spanned(name, self.prev().span.clone()));
         // Parse the type parameters
         let ty_params = self.parse_type_vars();
 
@@ -1423,7 +1481,9 @@ impl<'a> Parser<'a> {
         module_path: &SymbolPath,
     ) -> Result<FxHashMap<SymbolPath, Program>, Vec<Error>> {
         self.imported_modules
-            .push(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
+            .insert(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
+
+        self.blocks_builder.push();
 
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
@@ -1435,12 +1495,15 @@ impl<'a> Parser<'a> {
             }
         }
 
+        let dummy_result_expr = spanned(Expr::Literal(Literal::Unit), self.peek().span.clone());
+        let block = self.blocks_builder.pop_and_build(self.main_stmts, dummy_result_expr);
+
         self.module_buffers.insert(
             module_path.clone(),
             Program {
-                main_stmts: self.main_stmts,
+                main: block,
                 strings: self.strings,
-                imported_modules: self.imported_modules,
+                imported_modules: self.imported_modules.into_iter().collect(),
             },
         );
 

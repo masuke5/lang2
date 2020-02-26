@@ -21,6 +21,24 @@ impl<'a> Finder<'a> {
         self.variables.pop_scope();
     }
 
+    fn find_block(&mut self, block: &'a mut Block) {
+        for stmt in &mut block.stmts {
+            self.find_stmt(&mut stmt.kind);
+        }
+        self.find_expr(&mut block.result_expr.kind);
+
+        for func in &mut block.functions {
+            self.push_scope();
+
+            for param in &mut func.params {
+                self.variables.insert(param.name, &mut param.is_escaped);
+            }
+            self.find_expr(&mut func.body.kind);
+
+            self.pop_scope();
+        }
+    }
+
     fn find_expr(&mut self, expr: &'a mut Expr) {
         match expr {
             Expr::Tuple(exprs) => {
@@ -59,11 +77,8 @@ impl<'a> Finder<'a> {
             | Expr::Negative(expr)
             | Expr::Alloc(expr, _)
             | Expr::App(expr, _) => self.find_expr(&mut expr.kind),
-            Expr::Block(stmts, expr) => {
-                for stmt in stmts {
-                    self.find_stmt(&mut stmt.kind);
-                }
-                self.find_expr(&mut expr.kind);
+            Expr::Block(block) => {
+                self.find_block(block);
             }
             Expr::If(cond, then, els) => {
                 self.find_expr(&mut cond.kind);
@@ -94,27 +109,13 @@ impl<'a> Finder<'a> {
                 self.find_expr(&mut lhs.kind);
                 self.find_expr(&mut rhs.kind);
             }
-            Stmt::FnDef(func) => {
-                self.push_scope();
-
-                for param in &mut func.params {
-                    self.variables.insert(param.name, &mut param.is_escaped);
-                }
-                self.find_expr(&mut func.body.kind);
-
-                self.pop_scope();
-            }
             _ => {}
         }
     }
 
     fn find(&mut self, program: &'a mut Program) {
         self.push_scope();
-
-        for stmt in &mut program.main_stmts {
-            self.find_stmt(&mut stmt.kind);
-        }
-
+        self.find_block(&mut program.main);
         self.pop_scope();
     }
 }

@@ -264,7 +264,7 @@ pub enum Expr {
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
     Alloc(Box<Spanned<Expr>>, bool),
-    Block(Vec<Spanned<Stmt>>, Box<Spanned<Expr>>),
+    Block(Block),
     If(
         Box<Spanned<Expr>>,
         Box<Spanned<Expr>>,
@@ -281,9 +281,6 @@ pub enum Stmt {
     Return(Option<Spanned<Expr>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Box<Spanned<Expr>>),
-    Import(Spanned<ImportRange>),
-    FnDef(Box<AstFunction>),
-    TypeDef(AstTypeDef),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -296,11 +293,20 @@ pub struct Param {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct AstFunction {
-    pub name: Id,
+    pub name: Spanned<Id>,
     pub params: Vec<Param>,
     pub return_ty: Spanned<AstType>,
     pub body: Spanned<Expr>,
     pub ty_params: Vec<Spanned<Id>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Block {
+    pub types: Vec<AstTypeDef>,
+    pub functions: Vec<AstFunction>,
+    pub stmts: Vec<Spanned<Stmt>>,
+    pub imports: Vec<Spanned<ImportRange>>,
+    pub result_expr: Box<Spanned<Expr>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -312,7 +318,7 @@ pub struct AstTypeDef {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
-    pub main_stmts: Vec<Spanned<Stmt>>,
+    pub main: Block,
     pub strings: Vec<String>,
     pub imported_modules: Vec<SymbolPath>,
 }
@@ -367,6 +373,54 @@ impl fmt::Display for AstType {
             AstType::Arrow(arg, ret) => write!(f, "{} -> {}", arg.kind, ret.kind),
         }
     }
+}
+
+pub fn dump_block(block: &Block, strings: &[String], depth: usize) {
+    for range in &block.imports {
+        println!("import {} {}", range.kind, span_to_string(&range.span));
+    }
+
+    for ty in &block.types {
+        println!(
+            "type {}<{}> {}",
+            IdMap::name(ty.name),
+            format_iter(ty.var_ids.iter().map(|id| IdMap::name(id.kind))),
+            ty.ty.kind,
+        );
+    }
+
+    for func in &block.functions {
+        print!("fn {}", IdMap::name(func.name.kind));
+
+        if !func.ty_params.is_empty() {
+            print!("<");
+            print!(
+                "{}",
+                format_iter(func.ty_params.iter().map(|id| IdMap::name(id.kind)))
+            );
+            print!(">");
+        }
+
+        println!(
+            "({}): {}",
+            format_iter(func.params.iter().map(|p| format!(
+                "{}{}{}: {}",
+                format_bool(p.is_mutable, "mut "),
+                IdMap::name(p.name),
+                format_bool(p.is_escaped, " \x1b[32mescaped\x1b[0m"),
+                p.ty.kind
+            ))),
+            func.return_ty.kind,
+        );
+
+        dump_expr(&func.body, strings, depth + 1);
+    }
+
+    for stmt in &block.stmts {
+        dump_stmt(stmt, strings, depth);
+    }
+
+    dump_expr(&block.result_expr, strings, depth);
 }
 
 pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
@@ -461,13 +515,8 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             );
             dump_expr(&expr_, strings, depth + 1);
         }
-        Expr::Block(stmts, expr) => {
-            println!("block {}", span_to_string(&expr.span));
-            for stmt in stmts {
-                dump_stmt(&stmt, strings, depth + 1);
-            }
-
-            dump_expr(expr, strings, depth + 1);
+        Expr::Block(block) => {
+            dump_block(block, strings, depth);
         }
         Expr::If(cond, body, else_expr) => {
             println!("if {}", span_to_string(&expr.span));
@@ -523,42 +572,6 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             dump_expr(&cond, strings, depth + 1);
             dump_stmt(&body, strings, depth + 1);
         }
-        Stmt::FnDef(func) => {
-            print!("fn {}", IdMap::name(func.name));
-
-            if !func.ty_params.is_empty() {
-                print!("<");
-                print!(
-                    "{}",
-                    format_iter(func.ty_params.iter().map(|id| IdMap::name(id.kind)))
-                );
-                print!(">");
-            }
-
-            println!(
-                "({}): {}",
-                format_iter(func.params.iter().map(|p| format!(
-                    "{}{}{}: {}",
-                    format_bool(p.is_mutable, "mut "),
-                    IdMap::name(p.name),
-                    format_bool(p.is_escaped, " \x1b[32mescaped\x1b[0m"),
-                    p.ty.kind
-                ))),
-                func.return_ty.kind,
-            );
-            dump_expr(&func.body, strings, depth + 1);
-        }
-        Stmt::TypeDef(ty) => {
-            println!(
-                "type {}<{}> {}",
-                IdMap::name(ty.name),
-                format_iter(ty.var_ids.iter().map(|id| IdMap::name(id.kind))),
-                ty.ty.kind,
-            );
-        }
-        Stmt::Import(name) => {
-            println!("import {} {}", name.kind, span_to_string(&stmt.span));
-        }
     }
 }
 
@@ -570,9 +583,7 @@ pub fn dump_program(program: &Program, depth: usize) {
         println!("module {}", module_path);
     }
 
-    for stmt in &program.main_stmts {
-        dump_stmt(&stmt, &program.strings, 0);
-    }
+    dump_block(&program.main, &program.strings, 0);
 }
 
 pub fn dump_ast(program: &Program) {
