@@ -153,6 +153,7 @@ pub enum TypeCon {
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, u32),
     Named(Id, usize),
+    UnsizedNamed(Id),
     Wrapped,
 }
 
@@ -171,10 +172,11 @@ impl fmt::Display for TypeCon {
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
                 write_iter!(f, params.iter().map(|a| format!("{}", a)))?;
-                write!(f, ") {}", body)
+                write!(f, ") = {}", body)
             }
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
             Self::Named(name, size) => write!(f, "{}{{size={}}}", IdMap::name(*name), size),
+            Self::UnsizedNamed(name) => write!(f, "{} unsized", IdMap::name(*name)),
             Self::Wrapped => write!(f, "wrapped"),
         }
     }
@@ -294,6 +296,7 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
 }
 
 // Returns size of a specified type. if a specified type size coludn't be calculated, returns None.
+#[inline]
 pub fn type_size(ty: &Type) -> Option<usize> {
     match ty {
         Type::App(TypeCon::Fun(params, body), tys) => {
@@ -312,6 +315,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
             Some(elem_size * size)
         }
         Type::App(TypeCon::Named(_, size), _) => Some(*size),
+        Type::App(TypeCon::UnsizedNamed(..), _) => None,
         Type::App(TypeCon::Arrow, _) => Some(2),
         ty @ Type::App(TypeCon::Unique(_, _), _) => {
             let ty = expand_unique(ty.clone());
@@ -328,7 +332,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::Poly(_, _) | Type::Var(_) => None,
         Type::String => None,
         Type::Unit => Some(0),
-        _ => Some(1),
+        Type::Int | Type::Null | Type::Bool => Some(1),
     }
 }
 
@@ -413,11 +417,7 @@ pub fn wrap_typevar(ty: &mut Type) {
     }
 }
 
-pub fn generate_func_type(
-    params: &[Type],
-    return_ty: &Type,
-    ty_params: &[(Id, TypeVar)],
-) -> Type {
+pub fn generate_func_type(params: &[Type], return_ty: &Type, ty_params: &[(Id, TypeVar)]) -> Type {
     assert!(!params.is_empty());
 
     // Generate type
@@ -439,6 +439,133 @@ pub fn generate_func_type(
     } else {
         let tyvars = ty_params.iter().map(|(_, var)| *var).collect();
         Type::Poly(tyvars, Box::new(result_ty))
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TypeBody {
+    Resolved(TypeCon),
+    Unresolved(TypeCon),
+}
+
+#[derive(Debug)]
+pub struct TypeDefinitions {
+    // Wrap tycon in Box so that pointers in unresolved_tycons will not get invalid
+    tycons: HashMapWithScope<Id, Option<TypeCon>>,
+    sizes: HashMapWithScope<Id, usize>,
+    is_resolved: bool,
+}
+
+impl TypeDefinitions {
+    pub fn new() -> Self {
+        Self {
+            tycons: HashMapWithScope::new(),
+            sizes: HashMapWithScope::new(),
+            is_resolved: false,
+        }
+    }
+
+    pub fn push_scope(&mut self) {
+        self.tycons.push_scope();
+        self.sizes.push_scope();
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.tycons.pop_scope();
+        self.sizes.pop_scope();
+    }
+
+    pub fn insert(&mut self, name: Id) {
+        self.tycons.insert(name, None);
+
+        self.is_resolved = false;
+    }
+
+    pub fn set_body(&mut self, name: Id, tycon_: TypeCon) {
+        let tycon = self.tycons.get_mut(&name).unwrap();
+        *tycon = Some(tycon_);
+
+        self.is_resolved = false;
+    }
+
+    pub fn get(&self, name: Id) -> Option<TypeBody> {
+        let tycon = self.tycons.get(&name)?.as_ref();
+        if self.sizes.contains_key(&name) {
+            Some(TypeBody::Resolved(tycon.unwrap().clone()))
+        } else {
+            Some(TypeBody::Unresolved(tycon.unwrap().clone()))
+        }
+    }
+
+    fn resolve_in_type(&mut self, ty: &mut Type) -> Option<()> {
+        match ty {
+            Type::App(tycon, types) => {
+                self.resolve_in_tycon(tycon)?;
+                for ty in types {
+                    self.resolve_in_type(ty)?;
+                }
+            }
+            Type::Poly(_, ty) => self.resolve_in_type(ty)?,
+            _ => {}
+        };
+
+        Some(())
+    }
+
+    fn resolve_in_tycon(&mut self, tycon: &mut TypeCon) -> Option<()> {
+        match tycon {
+            TypeCon::UnsizedNamed(name) => match self.sizes.get(name) {
+                Some(size) => *tycon = TypeCon::Named(*name, *size),
+                None => {
+                    // Calculate the type size after resolve it
+                    let mut tycon_to_calc =
+                        self.tycons.get(name).unwrap().as_ref().unwrap().clone();
+                    self.resolve_in_tycon(&mut tycon_to_calc)?;
+
+                    let size = type_size(&Type::App(tycon_to_calc, vec![]))?;
+                    self.sizes.insert(*name, size);
+
+                    *tycon = TypeCon::Named(*name, size);
+                }
+            },
+            TypeCon::Fun(_, ty) => self.resolve_in_type(ty)?,
+            TypeCon::Unique(tycon, _) => self.resolve_in_tycon(tycon)?,
+            _ => {}
+        };
+
+        Some(())
+    }
+
+    pub fn resolve(&mut self) -> Result<(), Vec<Id>> {
+        let mut names_not_calculated = Vec::new();
+
+        let mut tycons = Vec::new();
+        for map in &mut self.tycons.maps {
+            for (name, tycon) in map {
+                tycons.push((*name, tycon.as_ref().unwrap().clone()));
+            }
+        }
+
+        for (name, tycon) in &mut tycons {
+            if self.resolve_in_tycon(tycon).is_none() {
+                names_not_calculated.push(*name);
+                continue;
+            }
+
+            let size = type_size(&Type::App(tycon.clone(), vec![])).unwrap();
+            self.sizes.insert(*name, size);
+        }
+
+        for (name, tycon) in tycons {
+            self.tycons.insert(name, Some(tycon));
+        }
+
+        if names_not_calculated.is_empty() {
+            self.is_resolved = true;
+            Ok(())
+        } else {
+            Err(names_not_calculated)
+        }
     }
 }
 
@@ -477,5 +604,77 @@ mod tests {
                 ],
             )
         );
+    }
+
+    #[test]
+    fn resolve_type() {
+        let id = IdMap::new_id;
+
+        let mut types = TypeDefinitions::new();
+        types.push_scope();
+
+        types.insert(id("def"));
+
+        types.push_scope();
+
+        types.insert(id("ghi"));
+        types.insert(id("abc"));
+
+        // def = abc
+        types.set_body(
+            id("def"),
+            TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(TypeCon::UnsizedNamed(id("abc")), vec![])),
+            ),
+        );
+
+        // ghi = (abc, def)
+        types.set_body(
+            id("ghi"),
+            TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(
+                    TypeCon::Tuple,
+                    vec![
+                        Type::App(TypeCon::UnsizedNamed(id("abc")), vec![]),
+                        Type::App(TypeCon::UnsizedNamed(id("def")), vec![]),
+                    ],
+                )),
+            ),
+        );
+
+        // abc = int
+        types.set_body(id("abc"), TypeCon::Fun(vec![], Box::new(Type::Int)));
+
+        types.resolve().unwrap();
+
+        assert_eq!(
+            types.get(id("abc")).unwrap(),
+            TypeBody::Resolved(TypeCon::Fun(vec![], Box::new(Type::Int)))
+        );
+        assert_eq!(
+            types.get(id("def")).unwrap(),
+            TypeBody::Resolved(TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(TypeCon::Named(id("abc"), 1), vec![])),
+            )),
+        );
+        assert_eq!(
+            types.get(id("ghi")).unwrap(),
+            TypeBody::Resolved(TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(
+                    TypeCon::Tuple,
+                    vec![
+                        Type::App(TypeCon::Named(id("abc"), 1), vec![]),
+                        Type::App(TypeCon::Named(id("def"), 1), vec![]),
+                    ],
+                )),
+            )),
+        );
+
+        types.pop_scope();
+        types.pop_scope();
     }
 }

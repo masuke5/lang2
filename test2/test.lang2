@@ -199,15 +199,15 @@ test_eq "dereference struct field" 34 ptr.age;
 
 ## structure ##
 
-type Child struct {
-    age: int,
-    age_in_months: int,
-};
-
 type Person struct {
     name: *string,
     age: int,
     child: Child,
+};
+
+type Child struct {
+    age: int,
+    age_in_months: int,
 };
 
 let name = "Tarou";

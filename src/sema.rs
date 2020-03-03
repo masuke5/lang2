@@ -1802,7 +1802,7 @@ impl<'a> Analyzer<'a> {
 
         ModuleHeader {
             path: path.clone(),
-            functions: function_headers
+            functions: function_headers,
         }
     }
 
@@ -1868,10 +1868,11 @@ pub fn analyze_semantics(
     for (path, program) in &module_buffers {
         analyzers.insert(path.clone(), Analyzer::new());
         bytecode_builders.insert(path.clone(), BytecodeBuilder::new());
-        let header = analyzers
-            .get_mut(path)
-            .unwrap()
-            .get_module_header(path, bytecode_builders.get_mut(path).unwrap(), program);
+        let header = analyzers.get_mut(path).unwrap().get_module_header(
+            path,
+            bytecode_builders.get_mut(path).unwrap(),
+            program,
+        );
         module_headers.insert(path.clone(), header);
 
         // Native modules

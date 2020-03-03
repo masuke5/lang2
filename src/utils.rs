@@ -70,6 +70,16 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
         None
     }
 
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        for map in self.maps.iter_mut() {
+            if let Some(value) = map.get_mut(key) {
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
     #[allow(dead_code)]
     pub fn get_with_level(&self, key: &K) -> Option<(&V, usize)> {
         let mut level = self.level();
