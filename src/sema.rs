@@ -1,5 +1,4 @@
 use std::collections::LinkedList;
-use std::mem;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -171,8 +170,7 @@ pub struct Analyzer<'a> {
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
     types: HashMapWithScope<Id, Type>,
-    tycons: HashMapWithScope<Id, Option<TypeCon>>,
-    type_sizes: HashMapWithScope<Id, usize>,
+    tycons: TypeDefinitions,
     variables: HashMapWithScope<Id, Entry>,
     errors: Vec<Error>,
     current_func: Id,
@@ -190,8 +188,7 @@ impl<'a> Analyzer<'a> {
             module_headers: FxHashMap::default(),
             variables: HashMapWithScope::new(),
             types: HashMapWithScope::new(),
-            tycons: HashMapWithScope::new(),
-            type_sizes: HashMapWithScope::new(),
+            tycons: TypeDefinitions::new(),
             errors: Vec::new(),
             current_func: *reserved_id::MAIN_FUNC,
             next_temp_num: 0,
@@ -220,12 +217,10 @@ impl<'a> Analyzer<'a> {
     fn push_type_scope(&mut self) {
         self.types.push_scope();
         self.tycons.push_scope();
-        self.type_sizes.push_scope();
     }
 
     #[inline]
     fn pop_type_scope(&mut self) {
-        self.type_sizes.pop_scope();
         self.tycons.pop_scope();
         self.types.pop_scope();
     }
@@ -240,8 +235,9 @@ impl<'a> Analyzer<'a> {
                 let map = params.into_iter().zip(types.into_iter()).collect();
                 self.expand_name(subst(*body, &map))
             }
-            Type::App(TypeCon::Named(name, _), types) => match self.tycons.get(&name) {
-                Some(tycon) => Some(Type::App(tycon.clone().unwrap(), types)),
+            Type::App(TypeCon::Named(name, _), types) => match self.tycons.get(name) {
+                Some(TypeBody::Resolved(tycon)) => Some(Type::App(tycon.clone(), types)),
+                Some(TypeBody::Unresolved(tycon)) => panic!("Unresolved tycon: {}", tycon),
                 None => None,
             },
             Type::App(tycon, types) => {
@@ -1406,7 +1402,8 @@ impl<'a> Analyzer<'a> {
         self.insert_type_headers_in_stmts(&block.types);
         self.walk_type_def_in_stmts(block.types);
 
-        self.resolve_type_sizes();
+        // TODO: Error handling
+        let _ = self.tycons.resolve();
 
         self.insert_func_headers_in_stmts(code, &block.functions);
 
@@ -1436,24 +1433,6 @@ impl<'a> Analyzer<'a> {
     // Type Definition
     // =======================================
 
-    fn resolve_type_sizes(&mut self) {
-        for map in self.types.maps.iter_mut() {
-            for ty in map.values_mut() {
-                let oty = mem::replace(ty, Type::Int);
-                *ty = resolve_type_sizes(&self.type_sizes, oty);
-            }
-        }
-
-        for map in self.tycons.maps.iter_mut() {
-            for tycon in map.values_mut() {
-                if let Some(tycon) = tycon {
-                    let otc = mem::replace(tycon, TypeCon::Tuple);
-                    *tycon = resolve_type_sizes_in_tycon(&self.type_sizes, otc);
-                }
-            }
-        }
-    }
-
     fn walk_type(&mut self, ty: Spanned<AstType>) -> Option<Type> {
         match ty.kind {
             AstType::Int => Some(Type::Int),
@@ -1463,11 +1442,10 @@ impl<'a> Analyzer<'a> {
             AstType::Named(name) => {
                 if let Some(ty) = self.types.get(&name) {
                     Some(ty.clone())
-                } else if self.tycons.contains_key(&name) {
-                    Some(Type::App(
-                        TypeCon::Named(name, *self.type_sizes.get(&name).unwrap_or(&246)),
-                        Vec::new(),
-                    ))
+                } else if let Some(size) = self.tycons.get_size(name) {
+                    Some(Type::App(TypeCon::Named(name, size), Vec::new()))
+                } else if self.tycons.contains(name) {
+                    Some(Type::App(TypeCon::UnsizedNamed(name), Vec::new()))
                 } else {
                     error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
                     None
@@ -1501,15 +1479,19 @@ impl<'a> Analyzer<'a> {
             AstType::App(name, types) => {
                 self.push_type_scope();
 
-                if !self.tycons.contains_key(&name.kind) {
-                    error!(
-                        self,
-                        name.span,
-                        "undefined type `{}`",
-                        IdMap::name(name.kind)
-                    );
-                    return None;
-                }
+                let tycon = match self.tycons.get_size(name.kind) {
+                    Some(size) => TypeCon::Named(name.kind, size),
+                    None if self.tycons.contains(name.kind) => TypeCon::UnsizedNamed(name.kind),
+                    None => {
+                        error!(
+                            self,
+                            name.span,
+                            "undefined type `{}`",
+                            IdMap::name(name.kind)
+                        );
+                        return None;
+                    }
+                };
 
                 let mut new_types = Vec::with_capacity(types.len());
                 for ty in types {
@@ -1519,10 +1501,7 @@ impl<'a> Analyzer<'a> {
 
                 self.pop_type_scope();
 
-                Some(Type::App(
-                    TypeCon::Named(name.kind, *self.type_sizes.get(&name.kind).unwrap_or(&245)),
-                    new_types,
-                ))
+                Some(Type::App(tycon, new_types))
             }
             AstType::Arrow(arg, ret) => {
                 let arg = self.walk_type(*arg);
@@ -1535,7 +1514,7 @@ impl<'a> Analyzer<'a> {
     }
 
     fn insert_type_header(&mut self, tydef: &AstTypeDef) {
-        self.tycons.insert(tydef.name, None);
+        self.tycons.insert(tydef.name);
     }
 
     fn walk_type_def(&mut self, tydef: AstTypeDef) {
@@ -1554,8 +1533,6 @@ impl<'a> Analyzer<'a> {
         };
         wrap_typevar(&mut ty);
 
-        let size = self.type_size_err(tydef.ty.span, &ty);
-
         let tycon = TypeCon::Fun(vars, Box::new(ty));
         let uniq = self.next_unique;
         self.next_unique += 1;
@@ -1563,8 +1540,7 @@ impl<'a> Analyzer<'a> {
         self.pop_type_scope();
 
         self.tycons
-            .insert(tydef.name, Some(TypeCon::Unique(Box::new(tycon), uniq)));
-        self.type_sizes.insert(tydef.name, size);
+            .set_body(tydef.name, TypeCon::Unique(Box::new(tycon), uniq));
     }
 
     // =================================
@@ -1769,7 +1745,8 @@ impl<'a> Analyzer<'a> {
             self.walk_type_def(tydef.clone());
         }
 
-        self.resolve_type_sizes();
+        // TODO: Error handling
+        let _ = self.tycons.resolve();
 
         // Insert main function header
         let header = FunctionHeader {

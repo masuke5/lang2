@@ -365,37 +365,6 @@ pub fn expand_wrap(ty: Type) -> Type {
     }
 }
 
-pub fn resolve_type_sizes_in_tycon(
-    type_sizes: &HashMapWithScope<Id, usize>,
-    tycon: TypeCon,
-) -> TypeCon {
-    match tycon {
-        TypeCon::Named(name, _) => TypeCon::Named(name, *type_sizes.get(&name).unwrap()),
-        TypeCon::Fun(params, ty) => {
-            TypeCon::Fun(params, Box::new(resolve_type_sizes(type_sizes, *ty)))
-        }
-        TypeCon::Unique(tycon, uniq) => TypeCon::Unique(
-            Box::new(resolve_type_sizes_in_tycon(type_sizes, *tycon)),
-            uniq,
-        ),
-        tycon => tycon,
-    }
-}
-
-pub fn resolve_type_sizes(type_sizes: &HashMapWithScope<Id, usize>, ty: Type) -> Type {
-    match ty {
-        Type::App(tycon, types) => {
-            let tycon = resolve_type_sizes_in_tycon(type_sizes, tycon);
-            let types = types
-                .into_iter()
-                .map(|ty| resolve_type_sizes(type_sizes, ty))
-                .collect();
-            Type::App(tycon, types)
-        }
-        ty => ty,
-    }
-}
-
 pub fn wrap_typevar(ty: &mut Type) {
     match ty {
         Type::App(TypeCon::Fun(_, _), _) => panic!(),
@@ -443,9 +412,9 @@ pub fn generate_func_type(params: &[Type], return_ty: &Type, ty_params: &[(Id, T
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TypeBody {
-    Resolved(TypeCon),
-    Unresolved(TypeCon),
+pub enum TypeBody<'a> {
+    Resolved(&'a TypeCon),
+    Unresolved(&'a TypeCon),
 }
 
 #[derive(Debug)]
@@ -488,18 +457,31 @@ impl TypeDefinitions {
         self.is_resolved = false;
     }
 
-    pub fn get(&self, name: Id) -> Option<TypeBody> {
-        let tycon = self.tycons.get(&name)?.as_ref();
+    pub fn get<'a>(&'a self, name: Id) -> Option<TypeBody<'a>> {
+        let tycon = self.tycons.get(&name)?.as_ref().unwrap();
         if self.sizes.contains_key(&name) {
-            Some(TypeBody::Resolved(tycon.unwrap().clone()))
+            Some(TypeBody::Resolved(tycon))
         } else {
-            Some(TypeBody::Unresolved(tycon.unwrap().clone()))
+            Some(TypeBody::Unresolved(tycon))
         }
+    }
+
+    pub fn get_size(&self, name: Id) -> Option<usize> {
+        self.sizes.get(&name).copied()
+    }
+
+    pub fn contains(&self, name: Id) -> bool {
+        self.tycons.contains_key(&name)
     }
 
     fn resolve_in_type(&mut self, ty: &mut Type) -> Option<()> {
         match ty {
             Type::App(tycon, types) => {
+                match &tycon {
+                    TypeCon::Pointer(_) | TypeCon::Arrow | TypeCon::Wrapped => return Some(()),
+                    _ => {}
+                }
+
                 self.resolve_in_tycon(tycon)?;
                 for ty in types {
                     self.resolve_in_type(ty)?;
@@ -544,7 +526,15 @@ impl TypeDefinitions {
 
         let mut tycons = Vec::new();
         for (level, name, tycon) in &mut self.tycons {
-            tycons.push((level, *name, tycon.as_ref().unwrap().clone()));
+            let tycon = match tycon.as_ref() {
+                Some(tycon) => tycon,
+                None => {
+                    names_not_calculated.push(*name);
+                    continue;
+                }
+            };
+
+            tycons.push((level, *name, tycon.clone()));
         }
 
         for (level, name, tycon) in &mut tycons {
@@ -652,11 +642,11 @@ mod tests {
 
         assert_eq!(
             types.get(id("abc")).unwrap(),
-            TypeBody::Resolved(TypeCon::Fun(vec![], Box::new(Type::Int)))
+            TypeBody::Resolved(&TypeCon::Fun(vec![], Box::new(Type::Int)))
         );
         assert_eq!(
             types.get(id("ghi")).unwrap(),
-            TypeBody::Resolved(TypeCon::Fun(
+            TypeBody::Resolved(&TypeCon::Fun(
                 vec![],
                 Box::new(Type::App(
                     TypeCon::Tuple,
@@ -672,7 +662,7 @@ mod tests {
 
         assert_eq!(
             types.get(id("def")).unwrap(),
-            TypeBody::Resolved(TypeCon::Fun(
+            TypeBody::Resolved(&TypeCon::Fun(
                 vec![],
                 Box::new(Type::App(TypeCon::Named(id("abc"), 1), vec![])),
             )),
