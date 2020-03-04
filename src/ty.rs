@@ -518,12 +518,15 @@ impl TypeDefinitions {
                 Some(size) => *tycon = TypeCon::Named(*name, *size),
                 None => {
                     // Calculate the type size after resolve it
-                    let mut tycon_to_calc =
-                        self.tycons.get(name).unwrap().as_ref().unwrap().clone();
+                    let (mut tycon_to_calc, level) = self
+                        .tycons
+                        .get_with_level(name)
+                        .map(|(tycon, l)| (tycon.as_ref().unwrap().clone(), l))
+                        .unwrap();
                     self.resolve_in_tycon(&mut tycon_to_calc)?;
 
                     let size = type_size(&Type::App(tycon_to_calc, vec![]))?;
-                    self.sizes.insert(*name, size);
+                    self.sizes.insert_with_level(level, *name, size);
 
                     *tycon = TypeCon::Named(*name, size);
                 }
@@ -540,24 +543,22 @@ impl TypeDefinitions {
         let mut names_not_calculated = Vec::new();
 
         let mut tycons = Vec::new();
-        for map in &mut self.tycons.maps {
-            for (name, tycon) in map {
-                tycons.push((*name, tycon.as_ref().unwrap().clone()));
-            }
+        for (level, name, tycon) in &mut self.tycons {
+            tycons.push((level, *name, tycon.as_ref().unwrap().clone()));
         }
 
-        for (name, tycon) in &mut tycons {
+        for (level, name, tycon) in &mut tycons {
             if self.resolve_in_tycon(tycon).is_none() {
                 names_not_calculated.push(*name);
                 continue;
             }
 
             let size = type_size(&Type::App(tycon.clone(), vec![])).unwrap();
-            self.sizes.insert(*name, size);
+            self.sizes.insert_with_level(*level, *name, size);
         }
 
-        for (name, tycon) in tycons {
-            self.tycons.insert(name, Some(tycon));
+        for (level, name, tycon) in tycons {
+            self.tycons.insert_with_level(level, name, Some(tycon));
         }
 
         if names_not_calculated.is_empty() {
