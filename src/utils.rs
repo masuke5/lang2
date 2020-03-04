@@ -1,4 +1,4 @@
-use std::collections::{hash_map, LinkedList};
+use std::collections::hash_map;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::iter::Iterator;
@@ -69,9 +69,9 @@ pub struct HashMapWithScopeIter<'a, K, V> {
 }
 
 impl<'a, K, V> HashMapWithScopeIter<'a, K, V> {
-    fn new(maps: &'a LinkedList<FxHashMap<K, V>>) -> Self {
+    fn new(maps: &'a Vec<FxHashMap<K, V>>) -> Self {
         let mut iters = Vec::with_capacity(maps.len());
-        for map in maps.iter().rev() {
+        for map in maps.iter() {
             iters.push(map.iter());
         }
 
@@ -95,10 +95,10 @@ pub struct HashMapWithScopeIterMut<'a, K, V> {
 }
 
 impl<'a, K, V> HashMapWithScopeIterMut<'a, K, V> {
-    fn new(maps: &'a mut LinkedList<FxHashMap<K, V>>) -> Self {
+    fn new(maps: &'a mut Vec<FxHashMap<K, V>>) -> Self {
         let level = maps.len() + 1;
         let mut iters = Vec::with_capacity(maps.len());
-        for map in maps.iter_mut().rev() {
+        for map in maps.iter_mut() {
             iters.push(map.iter_mut());
         }
 
@@ -122,10 +122,10 @@ pub struct HashMapWithScopeIntoIter<K, V> {
 }
 
 impl<K, V> HashMapWithScopeIntoIter<K, V> {
-    fn new(maps: LinkedList<FxHashMap<K, V>>) -> Self {
+    fn new(maps: Vec<FxHashMap<K, V>>) -> Self {
         let level = maps.len() + 1;
         let mut iters = Vec::with_capacity(maps.len());
-        for map in maps.into_iter().rev() {
+        for map in maps.into_iter() {
             iters.push(map.into_iter());
         }
 
@@ -144,26 +144,24 @@ impl<K, V> Iterator for HashMapWithScopeIntoIter<K, V> {
 
 #[derive(Debug, Clone)]
 pub struct HashMapWithScope<K: Hash + Eq, V> {
-    pub(crate) maps: LinkedList<FxHashMap<K, V>>,
+    pub(crate) maps: Vec<FxHashMap<K, V>>,
 }
 
 impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
     pub fn new() -> Self {
-        Self {
-            maps: LinkedList::new(),
-        }
+        Self { maps: Vec::new() }
     }
 
     pub fn push_scope(&mut self) {
-        self.maps.push_front(FxHashMap::default());
+        self.maps.push(FxHashMap::default());
     }
 
     pub fn pop_scope(&mut self) {
-        self.maps.pop_front().unwrap();
+        self.maps.pop().unwrap();
     }
 
     pub fn get(&self, key: &K) -> Option<&V> {
-        for map in self.maps.iter() {
+        for map in self.maps.iter().rev() {
             if let Some(value) = map.get(key) {
                 return Some(value);
             }
@@ -173,7 +171,7 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
     }
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        for map in self.maps.iter_mut() {
+        for map in self.maps.iter_mut().rev() {
             if let Some(value) = map.get_mut(key) {
                 return Some(value);
             }
@@ -185,7 +183,7 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
     #[allow(dead_code)]
     pub fn get_with_level(&self, key: &K) -> Option<(&V, usize)> {
         let mut level = self.level();
-        for map in self.maps.iter() {
+        for map in self.maps.iter().rev() {
             if let Some(value) = map.get(key) {
                 return Some((value, level));
             }
@@ -198,7 +196,7 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
 
     pub fn get_mut_with_level(&mut self, key: &K) -> Option<(&mut V, usize)> {
         let mut level = self.level();
-        for map in self.maps.iter_mut() {
+        for map in self.maps.iter_mut().rev() {
             if let Some(value) = map.get_mut(key) {
                 return Some((value, level));
             }
@@ -210,12 +208,17 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
     }
 
     pub fn insert(&mut self, key: K, value: V) {
-        let front_map = self.maps.front_mut().unwrap();
+        let front_map = self.maps.last_mut().unwrap();
         front_map.insert(key, value);
     }
 
+    pub fn insert_with_level(&mut self, level: usize, key: K, value: V) {
+        let map = &mut self.maps[level - 1];
+        map.insert(key, value);
+    }
+
     pub fn contains_key(&self, key: &K) -> bool {
-        for map in self.maps.iter() {
+        for map in self.maps.iter().rev() {
             if map.contains_key(key) {
                 return true;
             }
@@ -226,7 +229,7 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
 
     #[allow(dead_code)]
     pub fn last_scope(&self) -> Option<&FxHashMap<K, V>> {
-        self.maps.front()
+        self.maps.last()
     }
 
     pub fn level(&self) -> usize {
@@ -372,5 +375,23 @@ mod tests {
 
         let vec: Vec<(usize, i32, i32)> = hm.into_iter().collect();
         assert_eq!(vec, vec![(1, 100, 10)]);
+    }
+
+    #[test]
+    fn insert_with_level() {
+        let mut hm = HashMapWithScope::<i32, i32>::new();
+        hm.push_scope();
+        hm.push_scope();
+        hm.push_scope();
+        hm.push_scope();
+
+        hm.insert_with_level(3, 100, 200);
+        assert_eq!(hm.maps[2][&100], 200);
+        assert_eq!(hm.get_with_level(&100).unwrap(), (&200, 3));
+
+        hm.pop_scope();
+        hm.pop_scope();
+        hm.pop_scope();
+        hm.pop_scope();
     }
 }
