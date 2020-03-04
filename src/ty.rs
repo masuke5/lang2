@@ -615,11 +615,6 @@ mod tests {
 
         types.insert(id("def"));
 
-        types.push_scope();
-
-        types.insert(id("ghi"));
-        types.insert(id("abc"));
-
         // def = abc
         types.set_body(
             id("def"),
@@ -628,6 +623,11 @@ mod tests {
                 Box::new(Type::App(TypeCon::UnsizedNamed(id("abc")), vec![])),
             ),
         );
+
+        types.push_scope();
+
+        types.insert(id("ghi"));
+        types.insert(id("abc"));
 
         // ghi = (abc, def)
         types.set_body(
@@ -654,13 +654,6 @@ mod tests {
             TypeBody::Resolved(TypeCon::Fun(vec![], Box::new(Type::Int)))
         );
         assert_eq!(
-            types.get(id("def")).unwrap(),
-            TypeBody::Resolved(TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(TypeCon::Named(id("abc"), 1), vec![])),
-            )),
-        );
-        assert_eq!(
             types.get(id("ghi")).unwrap(),
             TypeBody::Resolved(TypeCon::Fun(
                 vec![],
@@ -675,6 +668,15 @@ mod tests {
         );
 
         types.pop_scope();
+
+        assert_eq!(
+            types.get(id("def")).unwrap(),
+            TypeBody::Resolved(TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(TypeCon::Named(id("abc"), 1), vec![])),
+            )),
+        );
+
         types.pop_scope();
     }
 }
