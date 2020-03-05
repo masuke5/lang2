@@ -1,4 +1,4 @@
-use std::collections::{HashMap, LinkedList, hash_map::Entry};
+use std::collections::{hash_map::Entry, HashMap, LinkedList};
 use std::mem;
 use std::ptr;
 use std::str;
@@ -8,32 +8,63 @@ use crate::utils;
 
 #[allow(dead_code)]
 pub mod opcode {
+    // Words:
+    // TOS = the top of stack
+    // ARG = the argument
+    // RARG =
+    // SARG =
+
+    // Do nothing.
     pub const NOP: u8 = 0x0;
+    // Push RARG that is a singed 63-bit integer.
     pub const INT: u8 = 0x1;
+    // Push a pointer to SARG
     pub const STRING: u8 = 0x2;
+    // Push a true.
     pub const TRUE: u8 = 0x3;
+    // Push a false.
     pub const FALSE: u8 = 0x4;
+    // Push a null.
     pub const NULL: u8 = 0x5;
+    // Do nothing
+    // Used to prevent copying.
     pub const POINTER: u8 = 0x6;
+    // Do nothing
+    // Used as a marker for copying.
     pub const DEREFERENCE: u8 = 0x7;
+    // Implements TOS = -TOS
     pub const NEGATIVE: u8 = 0x8;
+    // Dereference and copy TOS that is a pointer
     pub const COPY: u8 = 0x9;
+    // Add TOS0 that is a pointer and TOS1 that is a signed 63-bit integer.
     pub const OFFSET: u8 = 0xa;
     pub const DUPLICATE: u8 = 0xb;
     pub const LOAD_REF: u8 = 0xc;
     pub const LOAD_COPY: u8 = 0xd;
     pub const STORE: u8 = 0xe;
+    // Implements TOS0 + TOS1
     pub const BINOP_ADD: u8 = 0xf;
+    // Implements TOS0 - TOS1
     pub const BINOP_SUB: u8 = 0x10;
+    // Implements TOS0 * TOS1
     pub const BINOP_MUL: u8 = 0x11;
+    // Implements TOS0 / TOS1
     pub const BINOP_DIV: u8 = 0x12;
+    // Implements TOS0 % TOS1
     pub const BINOP_MOD: u8 = 0x13;
+    // Implements TOS0 < TOS1
     pub const BINOP_LT: u8 = 0x14;
+    // Implements TOS0 <= TOS1
     pub const BINOP_LE: u8 = 0x15;
+    // Implements TOS0 > TOS1
     pub const BINOP_GT: u8 = 0x16;
+    // Implements TOS0 >= TOS1
     pub const BINOP_GE: u8 = 0x17;
+    // Implements TOS0 = TOS1
     pub const BINOP_EQ: u8 = 0x18;
+    // Implements TOS0 <> TOS1
     pub const BINOP_NEQ: u8 = 0x19;
+    // Pop once.
     pub const POP: u8 = 0x1a;
     pub const ALLOC: u8 = 0x1b;
     pub const CALL: u8 = 0x1c;
@@ -534,39 +565,39 @@ impl InstList {
     }
 
     #[inline]
-    pub fn replace_last_inst_with(&mut self, opcode: u8, arg: u8) {
+    pub fn replace_last_with(&mut self, opcode: u8, arg: u8) {
         let last = self.insts.back_mut().unwrap();
         *last = [opcode, arg];
     }
 
     #[inline]
-    pub fn push_inst(&mut self, opcode: u8, arg: u8) {
+    pub fn push(&mut self, opcode: u8, arg: u8) {
         self.insts.push_back([opcode, arg]);
     }
 
     #[inline]
     pub fn push_jump(&mut self, opcode: u8, label: u8) {
         let opcode = opcode | 0b1000_0000;
-        self.push_inst(opcode, label);
+        self.push(opcode, label);
     }
 
     #[inline]
-    pub fn push_inst_noarg(&mut self, opcode: u8) {
-        self.push_inst(opcode, 0);
+    pub fn push_noarg(&mut self, opcode: u8) {
+        self.push(opcode, 0);
     }
 
     #[inline]
-    pub fn push_inst_ref_u64(&mut self, opcode: u8, arg: u64) {
+    pub fn push_ref_u64(&mut self, opcode: u8, arg: u64) {
         let arg = self.new_ref_u64(arg);
         // TODO: Add support for values above u8
-        self.push_inst(opcode, arg as u8);
+        self.push(opcode, arg as u8);
     }
 
     #[inline]
-    pub fn push_inst_ref_i64(&mut self, opcode: u8, arg: i64) {
+    pub fn push_ref_i64(&mut self, opcode: u8, arg: i64) {
         let arg = self.new_ref_i64(arg);
         // TODO: Add support for values above u8
-        self.push_inst(opcode, arg as u8);
+        self.push(opcode, arg as u8);
     }
 
     pub fn new_ref_u64(&mut self, value: u64) -> usize {
@@ -721,7 +752,7 @@ impl BytecodeBuilder {
     }
 
     pub fn push_function_body(&mut self, func_id: Id, mut insts: InstList) {
-        insts.push_inst_noarg(opcode::END);
+        insts.push_noarg(opcode::END);
 
         let func = self
             .functions
@@ -787,13 +818,13 @@ mod tests {
     #[test]
     fn instlist_append() {
         let mut insts = InstList::new();
-        insts.push_inst(opcode::TINY_INT, 30);
-        insts.push_inst_ref_u64(opcode::INT, 505050);
+        insts.push(opcode::TINY_INT, 30);
+        insts.push_ref_u64(opcode::INT, 505050);
 
         let mut insts2 = InstList::new();
-        insts2.push_inst_noarg(opcode::BINOP_ADD);
-        insts2.push_inst_ref_u64(opcode::INT, 606060);
-        insts2.push_inst_noarg(opcode::BINOP_MUL);
+        insts2.push_noarg(opcode::BINOP_ADD);
+        insts2.push_ref_u64(opcode::INT, 606060);
+        insts2.push_noarg(opcode::BINOP_MUL);
 
         insts.append(insts2);
 
@@ -814,13 +845,13 @@ mod tests {
     #[test]
     fn instlist_prepend() {
         let mut insts = InstList::new();
-        insts.push_inst_noarg(opcode::BINOP_ADD);
-        insts.push_inst_ref_u64(opcode::INT, 606060);
-        insts.push_inst_noarg(opcode::BINOP_MUL);
+        insts.push_noarg(opcode::BINOP_ADD);
+        insts.push_ref_u64(opcode::INT, 606060);
+        insts.push_noarg(opcode::BINOP_MUL);
 
         let mut insts2 = InstList::new();
-        insts2.push_inst(opcode::TINY_INT, 30);
-        insts2.push_inst_ref_u64(opcode::INT, 505050);
+        insts2.push(opcode::TINY_INT, 30);
+        insts2.push_ref_u64(opcode::INT, 505050);
 
         insts.prepend(insts2);
 

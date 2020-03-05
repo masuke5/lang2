@@ -80,17 +80,17 @@ fn push_copy_inst_with_size(insts: &mut InstList, size: usize) {
     match opcode {
         opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
             let arg = (loc << 3) | size as i8;
-            insts.replace_last_inst_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
+            insts.replace_last_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
         }
         opcode::DEREFERENCE => {
-            insts.replace_last_inst_with(opcode::COPY, size as u8);
+            insts.replace_last_with(opcode::COPY, size as u8);
         }
         opcode::LOAD_REF
         | opcode::LOAD_HEAP
         | opcode::LOAD_HEAP_TRACE
         | opcode::OFFSET
         | opcode::CONST_OFFSET => {
-            insts.push_inst(opcode::COPY, size as u8);
+            insts.push(opcode::COPY, size as u8);
         }
         _ => {}
     }
@@ -104,20 +104,20 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
 fn push_store_insts(insts: &mut InstList, loc: &RelativeVariableLoc, ty: &Type) {
     let size = type_size_nocheck(ty);
     push_load_insts(insts, loc);
-    insts.push_inst(opcode::STORE, size as u8);
+    insts.push(opcode::STORE, size as u8);
 }
 
 fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
     match loc {
         RelativeVariableLoc::Stack(loc) => {
-            insts.push_inst(opcode::LOAD_REF, loc.to_le_bytes()[0]);
+            insts.push(opcode::LOAD_REF, loc.to_le_bytes()[0]);
         }
         RelativeVariableLoc::StackInHeap(loc, level) => {
             if *level == 0 {
-                insts.push_inst(opcode::LOAD_HEAP, loc.to_le_bytes()[0]);
+                insts.push(opcode::LOAD_HEAP, loc.to_le_bytes()[0]);
             } else {
                 push_u64_insts(insts, *level as u64);
-                insts.push_inst(opcode::LOAD_HEAP_TRACE, loc.to_le_bytes()[0]);
+                insts.push(opcode::LOAD_HEAP_TRACE, loc.to_le_bytes()[0]);
             }
         }
     }
@@ -126,18 +126,18 @@ fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
 pub fn push_i64_insts(insts: &mut InstList, n: i64) {
     if let Ok(n) = n.try_into() {
         let [n] = i8::to_le_bytes(n);
-        insts.push_inst(opcode::TINY_INT, n);
+        insts.push(opcode::TINY_INT, n);
     } else {
-        insts.push_inst_ref_i64(opcode::INT, n);
+        insts.push_ref_i64(opcode::INT, n);
     }
 }
 
 pub fn push_u64_insts(insts: &mut InstList, n: u64) {
     if let Ok(n) = n.try_into() {
         let [n] = i8::to_le_bytes(n);
-        insts.push_inst(opcode::TINY_INT, n);
+        insts.push(opcode::TINY_INT, n);
     } else {
-        insts.push_inst_ref_u64(opcode::INT, n);
+        insts.push_ref_u64(opcode::INT, n);
     }
 }
 
@@ -153,7 +153,7 @@ pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
 
     let size = type_size_nocheck(ty);
     if size > 1 {
-        insts.push_inst(opcode::WRAP, size as u8);
+        insts.push(opcode::WRAP, size as u8);
     }
 
     insts
@@ -170,7 +170,7 @@ pub fn unwrap(mut insts: InstList, ty: &Type) -> InstList {
 
     let size = type_size_nocheck(inner_ty);
     if size > 1 {
-        insts.push_inst(opcode::UNWRAP, size as u8);
+        insts.push(opcode::UNWRAP, size as u8);
     }
 
     insts
@@ -200,25 +200,25 @@ pub fn literal_int(n: i64) -> InstList {
 
 pub fn literal_str(id: usize) -> InstList {
     let mut insts = InstList::new();
-    insts.push_inst(opcode::STRING, id as u8);
+    insts.push(opcode::STRING, id as u8);
     insts
 }
 
 pub fn literal_true() -> InstList {
     let mut insts = InstList::new();
-    insts.push_inst_noarg(opcode::TRUE);
+    insts.push_noarg(opcode::TRUE);
     insts
 }
 
 pub fn literal_false() -> InstList {
     let mut insts = InstList::new();
-    insts.push_inst_noarg(opcode::FALSE);
+    insts.push_noarg(opcode::FALSE);
     insts
 }
 
 pub fn literal_null() -> InstList {
     let mut insts = InstList::new();
-    insts.push_inst(opcode::ZERO, 1);
+    insts.push(opcode::ZERO, 1);
     insts
 }
 
@@ -230,7 +230,7 @@ pub fn literal_array(expr: ExprInfo, arr_len: usize) -> InstList {
         let element_size = type_size_nocheck(&expr.ty);
         let count = (arr_len - 1) as u64;
         let arg: u64 = ((element_size as u64) << 32) | count;
-        insts.push_inst_ref_u64(opcode::DUPLICATE, arg);
+        insts.push_ref_u64(opcode::DUPLICATE, arg);
     }
 
     insts
@@ -263,16 +263,16 @@ pub fn field(
 
     if should_deref {
         push_copy_inst(&mut insts, &comp_expr.ty);
-        insts.push_inst_noarg(opcode::DEREFERENCE);
+        insts.push_noarg(opcode::DEREFERENCE);
     }
 
     if let Type::App(TypeCon::Wrapped, _) = &comp_expr.ty {
         push_copy_inst(&mut insts, &comp_expr.ty);
-        insts.push_inst_noarg(opcode::DEREFERENCE);
+        insts.push_noarg(opcode::DEREFERENCE);
     }
 
     if offset > 0 {
-        insts.push_inst(opcode::CONST_OFFSET, offset as u8);
+        insts.push(opcode::CONST_OFFSET, offset as u8);
     }
 
     insts
@@ -294,7 +294,7 @@ pub fn subscript(
 
     if should_deref {
         push_copy_inst(&mut insts, &expr.ty);
-        insts.push_inst_noarg(opcode::DEREFERENCE);
+        insts.push_noarg(opcode::DEREFERENCE);
     }
 
     insts.append(subscript_expr.insts);
@@ -303,10 +303,10 @@ pub fn subscript(
     let elem_size = type_size_nocheck(element_ty);
     if elem_size > 1 {
         push_i64_insts(&mut insts, elem_size as i64);
-        insts.push_inst_noarg(opcode::BINOP_MUL);
+        insts.push_noarg(opcode::BINOP_MUL);
     }
 
-    insts.push_inst_noarg(opcode::OFFSET);
+    insts.push_noarg(opcode::OFFSET);
 
     insts
 }
@@ -324,11 +324,11 @@ pub fn func_pos(module_id: Option<u16>, func_id: u16) -> InstList {
         Some(module_id) => ((module_id as u64) << 32) | func_id as u64,
         None => ((SELF_MODULE_ID as u64) << 32) | func_id as u64,
     };
-    insts.push_inst_ref_u64(opcode::INT, arg);
+    insts.push_ref_u64(opcode::INT, arg);
 
     // Push the pointer to stack in heap
-    insts.push_inst(opcode::LOAD_HEAP, 0);
-    insts.push_inst_noarg(opcode::POINTER);
+    insts.push(opcode::LOAD_HEAP, 0);
+    insts.push_noarg(opcode::POINTER);
 
     insts
 }
@@ -350,10 +350,10 @@ pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
         insts.append(rhs.insts);
         push_copy_inst(&mut insts, &rhs.ty);
         insts.push_jump(opcode::JUMP_IF_FALSE, a.id());
-        insts.push_inst_noarg(opcode::TRUE);
+        insts.push_noarg(opcode::TRUE);
         insts.push_jump(opcode::JUMP, end.id());
         a.set_here(&insts);
-        insts.push_inst_noarg(opcode::FALSE);
+        insts.push_noarg(opcode::FALSE);
         end.set_here(&insts);
         insts
     })
@@ -376,10 +376,10 @@ pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
         insts.append(rhs.insts);
         push_copy_inst(&mut insts, &rhs.ty);
         insts.push_jump(opcode::JUMP_IF_TRUE, a.id());
-        insts.push_inst_noarg(opcode::FALSE);
+        insts.push_noarg(opcode::FALSE);
         insts.push_jump(opcode::JUMP, end.id());
         a.set_here(&insts);
-        insts.push_inst_noarg(opcode::TRUE);
+        insts.push_noarg(opcode::TRUE);
         end.set_here(&insts);
         insts
     })
@@ -406,7 +406,7 @@ pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> InstList {
         binop => panic!("unexpected binop `{}`", binop.to_symbol()),
     };
 
-    insts.push_inst_noarg(opcode);
+    insts.push_noarg(opcode);
     insts
 }
 
@@ -418,7 +418,7 @@ pub fn arg(insts: &mut InstList, arg_expr: ExprInfo) {
 pub fn call_expr(func: ExprInfo) -> InstList {
     let mut insts = func.insts;
     push_copy_inst(&mut insts, &func.ty);
-    insts.push_inst_noarg(opcode::CALL_POS);
+    insts.push_noarg(opcode::CALL_POS);
     insts
 }
 
@@ -427,9 +427,9 @@ pub fn call_func_id(module_id: Option<u16>, func_id: u16) -> InstList {
 
     if let Some(module_id) = module_id {
         let arg = ((module_id as u8) << 4) | func_id as u8;
-        insts.push_inst(opcode::CALL_EXTERN, arg);
+        insts.push(opcode::CALL_EXTERN, arg);
     } else {
-        insts.push_inst(opcode::CALL, func_id as u8);
+        insts.push(opcode::CALL, func_id as u8);
     }
 
     insts
@@ -445,7 +445,7 @@ pub fn call(
 
     let return_value_size = type_size_nocheck(return_ty);
     if return_value_size != 0 {
-        insts.push_inst(opcode::ZERO, type_size_nocheck(return_ty) as u8);
+        insts.push(opcode::ZERO, type_size_nocheck(return_ty) as u8);
     }
 
     insts.append(args_insts);
@@ -457,7 +457,7 @@ pub fn call(
 
 pub fn address(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
-    insts.push_inst_noarg(opcode::POINTER);
+    insts.push_noarg(opcode::POINTER);
     insts
 }
 
@@ -465,28 +465,28 @@ pub fn address_no_lvalue(expr: ExprInfo, loc: &RelativeVariableLoc) -> InstList 
     let mut insts = expr.insts;
     push_store_insts(&mut insts, loc, &expr.ty);
     push_load_insts(&mut insts, &loc);
-    insts.push_inst_noarg(opcode::POINTER);
+    insts.push_noarg(opcode::POINTER);
     insts
 }
 
 pub fn dereference(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
-    insts.push_inst_noarg(opcode::DEREFERENCE);
+    insts.push_noarg(opcode::DEREFERENCE);
     insts
 }
 
 pub fn negative(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
-    insts.push_inst_noarg(opcode::NEGATIVE);
+    insts.push_noarg(opcode::NEGATIVE);
     insts
 }
 
 pub fn alloc(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
-    insts.push_inst(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
+    insts.push(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
     insts
 }
 
@@ -496,7 +496,7 @@ pub fn expr_stmt(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     let size = type_size_nocheck(&expr.ty);
     for _ in 0..size {
-        insts.push_inst_noarg(opcode::POP);
+        insts.push_noarg(opcode::POP);
     }
     insts
 }
@@ -559,7 +559,7 @@ pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
     let mut insts = rhs.insts;
     push_copy_inst(&mut insts, &rhs.ty);
     insts.append(lhs.insts);
-    insts.push_inst(opcode::STORE, type_size_nocheck(&rhs.ty) as u8);
+    insts.push(opcode::STORE, type_size_nocheck(&rhs.ty) as u8);
     insts
 }
 
@@ -576,6 +576,6 @@ pub fn return_stmt(
         push_store_insts(&mut insts, loc, return_ty);
     }
 
-    insts.push_inst_noarg(opcode::RETURN);
+    insts.push_noarg(opcode::RETURN);
     insts
 }
