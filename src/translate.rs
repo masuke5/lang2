@@ -283,6 +283,7 @@ pub fn subscript(
     should_deref: bool,
     expr: ExprInfo,
     subscript_expr: ExprInfo,
+    element_ty: &Type,
 ) -> InstList {
     let mut insts = expr.insts;
 
@@ -298,7 +299,13 @@ pub fn subscript(
 
     insts.append(subscript_expr.insts);
     push_copy_inst(&mut insts, &subscript_expr.ty);
-    // TODO: element size
+
+    let elem_size = type_size_nocheck(element_ty);
+    if elem_size > 1 {
+        push_i64_insts(&mut insts, elem_size as i64);
+        insts.push_inst_noarg(opcode::BINOP_MUL);
+    }
+
     insts.push_inst_noarg(opcode::OFFSET);
 
     insts

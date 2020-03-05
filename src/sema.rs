@@ -868,6 +868,7 @@ impl<'a> Analyzer<'a> {
                     should_deref,
                     expr,
                     subscript_expr,
+                    &ty,
                 );
 
                 return Some(ExprInfo {

@@ -247,6 +247,11 @@ test_eq "assign to pointer to array" 30984304 arr[4];
 test_eq "function passed array" 30993462 (sum arr);
 test_eq "function returning array" 4 (one_to_ten ())[3];
 
+let mut comp_arr = [(3, 5); 3];
+(comp_arr[2]).0 := 5;
+
+test_eq "array of compound element" 10 ((comp_arr[2]).1 + (comp_arr[2]).0);
+
 fn sum(arr: [int; 10]): int = {
     let mut i = 0;
     let mut result = 0;
