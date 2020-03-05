@@ -1,4 +1,6 @@
 #![feature(box_patterns, slice_concat_trait, drain_filter, seek_convenience)]
+#![warn(rust_2018_idioms, unused_import_braces)]
+#![deny(trivial_casts, trivial_numeric_casts, elided_lifetimes_in_paths)]
 
 #[macro_use]
 extern crate pretty_assertions;
