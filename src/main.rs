@@ -81,14 +81,14 @@ fn print_errors(errors: Vec<Error>) {
         let line_count = es.end_line - es.start_line + 1;
         for i in 0..line_count {
             let line = (es.start_line + i) as usize;
-            let line_len = if line >= input.len() as usize {
+            let line_len = if line >= input.len() {
                 0
             } else {
                 input[line].len() as u32
             };
             println!(
                 "{}",
-                if line >= input.len() as usize {
+                if line >= input.len() {
                     ""
                 } else {
                     &input[line]
@@ -126,7 +126,7 @@ fn print_errors(errors: Vec<Error>) {
 }
 
 fn execute(
-    matches: &ArgMatches,
+    matches: &ArgMatches<'_>,
     input: &str,
     file: Id,
     main_module_name: Id,
@@ -229,7 +229,7 @@ fn execute(
 }
 
 fn get_input<'a>(
-    matches: &'a ArgMatches,
+    matches: &'a ArgMatches<'a>,
 ) -> Result<(Id, Cow<'a, str>, Id, Option<PathBuf>), String> {
     if let Some(filepath_str) = matches.value_of("file") {
         let mut file = File::open(filepath_str).map_err(|err| format!("{}", err))?;

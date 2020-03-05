@@ -200,7 +200,7 @@ impl<'a> Lexer<'a> {
                         }
 
                         if count == 2 && n <= 0x7f {
-                            s.push(std::char::from_u32(n as u32).unwrap());
+                            s.push(std::char::from_u32(n).unwrap());
                         } else {
                             self.error(&format!("invalid character code '{:x}'", n));
                         }

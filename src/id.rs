@@ -7,7 +7,7 @@ use std::sync::RwLock;
 pub struct Id(u32);
 
 impl fmt::Debug for Id {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", IdMap::name(*self))
     }
 }

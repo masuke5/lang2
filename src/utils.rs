@@ -69,7 +69,7 @@ pub struct HashMapWithScopeIter<'a, K, V> {
 }
 
 impl<'a, K, V> HashMapWithScopeIter<'a, K, V> {
-    fn new(maps: &'a Vec<FxHashMap<K, V>>) -> Self {
+    fn new(maps: &'a [FxHashMap<K, V>]) -> Self {
         let mut iters = Vec::with_capacity(maps.len());
         for map in maps.iter() {
             iters.push(map.iter());
@@ -142,7 +142,7 @@ impl<K, V> Iterator for HashMapWithScopeIntoIter<K, V> {
     fn_next!();
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct HashMapWithScope<K: Hash + Eq, V> {
     pub(crate) maps: Vec<FxHashMap<K, V>>,
 }
@@ -236,11 +236,11 @@ impl<K: Hash + Eq, V> HashMapWithScope<K, V> {
         self.maps.len()
     }
 
-    pub fn iter<'a>(&'a self) -> HashMapWithScopeIter<'a, K, V> {
+    pub fn iter(&self) -> HashMapWithScopeIter<'_, K, V> {
         HashMapWithScopeIter::new(&self.maps)
     }
 
-    pub fn iter_mut<'a>(&'a mut self) -> HashMapWithScopeIterMut<'a, K, V> {
+    pub fn iter_mut(&mut self) -> HashMapWithScopeIterMut<'_, K, V> {
         HashMapWithScopeIterMut::new(&mut self.maps)
     }
 

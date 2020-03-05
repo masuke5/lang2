@@ -154,7 +154,7 @@ pub const FUNC_OFFSET_REF_START: usize = 6;
 
 macro_rules! bfn_read {
     ($ty:ty, $name:ident) => {
-        #[allow(dead_code)]
+        #[allow(dead_code, trivial_casts)]
         pub fn $name(&self, pos: usize) -> $ty {
             let ptr = self.bytes.as_ptr();
             unsafe {

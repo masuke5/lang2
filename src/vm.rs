@@ -349,7 +349,7 @@ impl VM {
             }
         }
 
-        unsafe { region.as_mut().as_ptr() as *const _ }
+        unsafe { region.as_mut().as_ptr() }
     }
 
     #[inline]
@@ -379,7 +379,7 @@ impl VM {
 
         // Allocate stack frame
         self.fp = self.sp + 1;
-        self.sp += func.stack_size as usize;
+        self.sp += func.stack_size;
     }
 
     fn panic(&self, message: &str) -> ! {
@@ -529,7 +529,7 @@ impl VM {
                     let count = arg as usize;
 
                     unsafe {
-                        let dst = &mut self.stack[self.sp + 1] as *mut _;
+                        let dst: *mut _ = &mut self.stack[self.sp + 1];
                         ptr::write_bytes(dst, 0, count);
                     }
 
@@ -567,7 +567,7 @@ impl VM {
                         // Write the string bytes
                         let bytes_ptr = region.as_mut_ptr::<u8>().add(size_of::<u64>());
                         let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
-                        current_bytecode.read_bytes(loc + size_of::<u64>() as usize, &mut bytes);
+                        current_bytecode.read_bytes(loc + size_of::<u64>(), &mut bytes);
                     }
 
                     unsafe {
@@ -627,7 +627,7 @@ impl VM {
                     let offset = arg as usize;
 
                     let ptr = self.stack[self.sp].as_ptr::<Value>();
-                    let new_ptr = unsafe { ptr.add(offset as usize) };
+                    let new_ptr = unsafe { ptr.add(offset) };
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
                 }
                 opcode::DUPLICATE => {
@@ -635,7 +635,7 @@ impl VM {
                     let size = (value >> 32) as usize; // upper 32 bits
                     let count = (value as u32) as usize; // lower 32 bits
 
-                    let ptr = &self.stack[self.sp - (size - 1)] as *const Value;
+                    let ptr: *const _ = &self.stack[self.sp - (size - 1)];
 
                     for i in 1..=count {
                         unsafe {
@@ -653,7 +653,7 @@ impl VM {
                     }
 
                     let value = &mut self.stack[loc];
-                    push!(self, Value::new_ptr(value as *mut Value));
+                    push!(self, Value::new_ptr(value));
                 }
                 opcode::LOAD_HEAP => {
                     let loc = arg as usize;
@@ -701,7 +701,7 @@ impl VM {
 
                     unsafe {
                         let dst = dst.as_ptr();
-                        let src = &self.stack[self.sp - size + 1] as *const _;
+                        let src: *const _ = &self.stack[self.sp - size + 1];
                         ptr::copy_nonoverlapping(src, dst, size);
                     }
 
@@ -716,7 +716,7 @@ impl VM {
 
                         unsafe {
                             let dst = region.as_mut().as_mut_ptr::<Value>();
-                            let src = &self.stack[self.sp - size + 1] as *const _;
+                            let src: *const _ = &self.stack[self.sp - size + 1];
                             ptr::copy_nonoverlapping(src, dst, size);
                         }
 
@@ -730,7 +730,7 @@ impl VM {
                     let size = arg as usize;
                     if size != 1 {
                         unsafe {
-                            let dst = &mut self.stack[self.sp] as *mut _;
+                            let dst: *mut _ = &mut self.stack[self.sp];
                             let src = self.stack[self.sp].as_ptr::<Value>();
                             ptr::copy_nonoverlapping(src, dst, size);
                         }
@@ -777,7 +777,7 @@ impl VM {
 
                     unsafe {
                         let dst = region.as_mut().as_mut_ptr::<Value>();
-                        let src = &self.stack[self.sp - size + 1] as *const _;
+                        let src = &self.stack[self.sp - size + 1];
                         ptr::copy_nonoverlapping(src, dst, size);
                     }
 
@@ -861,7 +861,7 @@ impl VM {
                     self.ep = pop!(self).as_ptr();
 
                     // Pop arguments
-                    self.sp -= self.current_func().param_size as usize;
+                    self.sp -= self.current_func().param_size;
 
                     self.current_func = prev_func;
                     self.current_module = prev_module;
@@ -896,7 +896,7 @@ impl VM {
         }
 
         if cfg!(debug_assertions) {
-            let mfss = self.main_func().stack_size as usize;
+            let mfss = self.main_func().stack_size;
             if self.sp != mfss + 1 {
                 self.dump_stack(self.sp);
                 eprintln!("warning: expected sp {}, but sp is {}.", mfss + 1, self.sp);

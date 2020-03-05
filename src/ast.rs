@@ -61,7 +61,7 @@ pub struct SymbolPath {
 }
 
 impl fmt::Display for SymbolPath {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{}",
@@ -75,7 +75,7 @@ impl fmt::Display for SymbolPath {
 }
 
 impl fmt::Debug for SymbolPath {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)
     }
 }
@@ -175,7 +175,7 @@ pub enum ImportRange {
 }
 
 impl fmt::Display for ImportRange {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Symbol(id) => write!(f, "{}", IdMap::name(*id)),
             Self::Renamed(id, renamed) => {

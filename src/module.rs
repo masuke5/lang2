@@ -15,7 +15,7 @@ pub const ROOT_MODULE_FILE: &str = "mod.lang2";
 pub struct NativeFunctionBody(pub fn(&mut VM));
 
 impl fmt::Debug for NativeFunctionBody {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[function pointer]")
     }
 }

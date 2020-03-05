@@ -13,7 +13,7 @@ pub struct GcRegion {
 }
 
 impl fmt::Debug for GcRegion {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "GcRegion {{ is_marked: {}, consists_of_value: {}, size: {}, data: {:p} }}",
@@ -36,7 +36,8 @@ impl PartialEq for GcRegion {
 impl Drop for GcRegion {
     fn drop(&mut self) {
         unsafe {
-            libc::free(self as *mut _ as *mut c_void);
+            let self_ptr: *mut _ = self;
+            libc::free(self_ptr as *mut c_void);
         }
     }
 }
@@ -77,7 +78,8 @@ impl GcRegion {
 
     #[allow(dead_code)]
     pub fn as_ptr<T>(&self) -> *const T {
-        self.data.as_ptr() as *const c_void as *const T
+        let data_ptr: *const _ = self.data.as_ptr();
+        data_ptr as *const T
     }
 
     pub fn as_mut_ptr<T>(&mut self) -> *mut T {

@@ -66,7 +66,7 @@ impl TypeVar {
 }
 
 impl fmt::Display for TypeVar {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let var_id_map = VAR_ID_MAP.read().expect("STR_MAP poisoned");
         let id = var_id_map.get(self);
 
@@ -91,7 +91,7 @@ pub enum Type {
 }
 
 impl fmt::Display for Type {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Int => write!(f, "int"),
             Self::Bool => write!(f, "bool"),
@@ -158,7 +158,7 @@ pub enum TypeCon {
 }
 
 impl fmt::Display for TypeCon {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pointer(is_mutable) => write!(f, "{}pointer", format_bool(*is_mutable, "mut ")),
             Self::Tuple => write!(f, "tuple"),
@@ -459,7 +459,7 @@ impl TypeDefinitions {
         self.is_resolved = false;
     }
 
-    pub fn get<'a>(&'a self, name: Id) -> Option<TypeBody<'a>> {
+    pub fn get(&self, name: Id) -> Option<TypeBody<'_>> {
         let tycon = self.tycons.get(&name)?.as_ref().unwrap();
         if self.sizes.contains_key(&name) {
             Some(TypeBody::Resolved(tycon))

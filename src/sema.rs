@@ -1856,7 +1856,7 @@ pub fn analyze_semantics(
 ) -> Result<FxHashMap<String, ModuleBody>, Vec<Error>> {
     let mut module_headers: FxHashMap<SymbolPath, ModuleHeader> = FxHashMap::default();
     let mut bytecode_builders: FxHashMap<SymbolPath, BytecodeBuilder> = FxHashMap::default();
-    let mut analyzers: FxHashMap<SymbolPath, Analyzer> = FxHashMap::default();
+    let mut analyzers: FxHashMap<SymbolPath, Analyzer<'_>> = FxHashMap::default();
     let mut bodies: FxHashMap<String, ModuleBody> = FxHashMap::default();
 
     let mut imported_native_modules: FxHashSet<SymbolPath> = FxHashSet::default();
