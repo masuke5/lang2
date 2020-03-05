@@ -169,15 +169,21 @@ impl FunctionHeaderWithId {
 pub struct Analyzer<'a> {
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
+
     types: HashMapWithScope<Id, Type>,
     tycons: TypeDefinitions,
-    variables: HashMapWithScope<Id, Entry>,
-    errors: Vec<Error>,
-    current_func: Id,
-    next_temp_num: u32,
+    tycon_spans: HashMapWithScope<Id, Span>,
     next_unique: u32,
-    function_insts: LinkedList<(Id, InstList)>,
+
+    variables: HashMapWithScope<Id, Entry>,
+    next_temp_num: u32,
     var_level: usize,
+
+    current_func: Id,
+    function_insts: LinkedList<(Id, InstList)>,
+
+    errors: Vec<Error>,
+
     _phantom: &'a std::marker::PhantomData<Self>,
 }
 
@@ -189,6 +195,7 @@ impl<'a> Analyzer<'a> {
             variables: HashMapWithScope::new(),
             types: HashMapWithScope::new(),
             tycons: TypeDefinitions::new(),
+            tycon_spans: HashMapWithScope::new(),
             errors: Vec::new(),
             current_func: *reserved_id::MAIN_FUNC,
             next_temp_num: 0,
@@ -217,12 +224,14 @@ impl<'a> Analyzer<'a> {
     fn push_type_scope(&mut self) {
         self.types.push_scope();
         self.tycons.push_scope();
+        self.tycon_spans.push_scope();
     }
 
     #[inline]
     fn pop_type_scope(&mut self) {
         self.tycons.pop_scope();
         self.types.pop_scope();
+        self.tycon_spans.pop_scope();
     }
 
     // =====================================
@@ -237,8 +246,9 @@ impl<'a> Analyzer<'a> {
             }
             Type::App(TypeCon::Named(name, _), types)
             | Type::App(TypeCon::UnsizedNamed(name), types) => match self.tycons.get(name) {
-                Some(TypeBody::Resolved(tycon)) => Some(Type::App(tycon.clone(), types)),
-                Some(TypeBody::Unresolved(tycon)) => panic!("Unresolved tycon: {}", tycon),
+                Some(TypeBody::Resolved(tycon)) | Some(TypeBody::Unresolved(tycon)) => {
+                    Some(Type::App(tycon.clone(), types))
+                }
                 None => None,
             },
             Type::App(tycon, types) => {
@@ -1403,7 +1413,6 @@ impl<'a> Analyzer<'a> {
         self.insert_type_headers_in_stmts(&block.types);
         self.walk_type_def_in_stmts(block.types);
 
-        // TODO: Error handling
         let _ = self.tycons.resolve();
 
         self.insert_func_headers_in_stmts(code, &block.functions);
@@ -1516,6 +1525,7 @@ impl<'a> Analyzer<'a> {
 
     fn insert_type_header(&mut self, tydef: &AstTypeDef) {
         self.tycons.insert(tydef.name);
+        self.tycon_spans.insert(tydef.name, tydef.ty.span.clone());
     }
 
     fn walk_type_def(&mut self, tydef: AstTypeDef) {
@@ -1746,8 +1756,16 @@ impl<'a> Analyzer<'a> {
             self.walk_type_def(tydef.clone());
         }
 
-        // TODO: Error handling
-        let _ = self.tycons.resolve();
+        if let Err(ids) = self.tycons.resolve() {
+            for id in ids {
+                error!(
+                    self,
+                    self.tycon_spans.get(&id).unwrap().clone(),
+                    "The type `{}` could not be calculated",
+                    IdMap::name(id)
+                );
+            }
+        }
 
         // Insert main function header
         let header = FunctionHeader {

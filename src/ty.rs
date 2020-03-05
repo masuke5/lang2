@@ -545,7 +545,14 @@ impl TypeDefinitions {
                 continue;
             }
 
-            let size = type_size(&Type::App(tycon.clone(), vec![])).unwrap();
+            let size = match type_size(&Type::App(tycon.clone(), vec![])) {
+                Some(size) => size,
+                None => {
+                    names_not_calculated.push(*name);
+                    continue;
+                }
+            };
+
             self.sizes.insert_with_level(*level, *name, size);
         }
 
