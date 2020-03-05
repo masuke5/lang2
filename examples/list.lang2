@@ -37,7 +37,7 @@ list_push_front (&mut list) 9;
 list_push_front (&mut list) 91;
 list_pop_front (&mut list);
 
-let mut node: *Node<int> = list.front;
+let mut node = list.front;
 while node <> __null__ {
     printnln node.value;
     node := node.next;

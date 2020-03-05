@@ -176,7 +176,7 @@ impl fmt::Display for TypeCon {
             }
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
             Self::Named(name, size) => write!(f, "{}{{size={}}}", IdMap::name(*name), size),
-            Self::UnsizedNamed(name) => write!(f, "{} unsized", IdMap::name(*name)),
+            Self::UnsizedNamed(name) => write!(f, "{}{{size=?}} ", IdMap::name(*name)),
             Self::Wrapped => write!(f, "wrapped"),
         }
     }
@@ -232,6 +232,8 @@ pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option
             (TypeCon::Pointer(true), TypeCon::Pointer(false)) => false,
             (TypeCon::Pointer(false), TypeCon::Pointer(true)) => true,
             (TypeCon::Pointer(true), TypeCon::Pointer(true)) => true,
+            (TypeCon::Named(a, _), TypeCon::UnsizedNamed(b)) if a == b => true,
+            (TypeCon::UnsizedNamed(a), TypeCon::Named(b, _)) if a == b => true,
             (a, b) => a == b,
         };
 

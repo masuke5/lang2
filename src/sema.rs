@@ -235,7 +235,8 @@ impl<'a> Analyzer<'a> {
                 let map = params.into_iter().zip(types.into_iter()).collect();
                 self.expand_name(subst(*body, &map))
             }
-            Type::App(TypeCon::Named(name, _), types) => match self.tycons.get(name) {
+            Type::App(TypeCon::Named(name, _), types)
+            | Type::App(TypeCon::UnsizedNamed(name), types) => match self.tycons.get(name) {
                 Some(TypeBody::Resolved(tycon)) => Some(Type::App(tycon.clone(), types)),
                 Some(TypeBody::Unresolved(tycon)) => panic!("Unresolved tycon: {}", tycon),
                 None => None,
