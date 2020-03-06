@@ -39,6 +39,15 @@ pub struct ModuleHeader {
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
 }
 
+impl ModuleHeader {
+    pub fn new(path: &SymbolPath) -> Self {
+        Self {
+            path: path.clone(),
+            functions: FxHashMap::default(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ModuleWithChild {
     pub module: Module,
