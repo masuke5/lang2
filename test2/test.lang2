@@ -319,6 +319,12 @@ test_eq "call with instantiation 3" 702 (aaa.0.c + aaa.1.c + aaa.2.c);
 ## import ##
 test_eq "mutually importing" 243 (pow 3 5); 
 
+let file = File:{
+    name: "a.txt",
+    created_at: 1583562987,
+};
+test_eq "type importing" 1583562990 (file.created_at + 3);
+
 ## other expressions ##
 
 test_eq "negative" (-39) (-15 - 24);

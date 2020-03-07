@@ -419,9 +419,16 @@ pub enum TypeBody<'a> {
     Unresolved(&'a TypeCon),
 }
 
+impl TypeBody<'_> {
+    pub fn tycon(&self) -> &TypeCon {
+        match self {
+            Self::Resolved(tycon) | Self::Unresolved(tycon) => tycon,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TypeDefinitions {
-    // Wrap tycon in Box so that pointers in unresolved_tycons will not get invalid
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
     sizes: HashMapWithScope<Id, usize>,
     is_resolved: bool,

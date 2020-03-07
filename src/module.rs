@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::SymbolPath;
 use crate::id::{Id, IdMap};
-use crate::ty::{type_size, Type, TypeVar};
+use crate::ty::{type_size, Type, TypeCon, TypeVar};
 use crate::vm::VM;
 
 pub const MODULE_EXTENSION: &str = "lang2";
@@ -37,6 +37,7 @@ pub struct FunctionHeader {
 pub struct ModuleHeader {
     pub path: SymbolPath,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
+    pub types: FxHashMap<Id, Option<TypeCon>>,
 }
 
 impl ModuleHeader {
@@ -44,6 +45,7 @@ impl ModuleHeader {
         Self {
             path: path.clone(),
             functions: FxHashMap::default(),
+            types: FxHashMap::default(),
         }
     }
 }
@@ -144,6 +146,7 @@ impl ModuleBuilder {
         let header = ModuleHeader {
             path,
             functions: self.func_headers,
+            types: FxHashMap::default(),
         };
 
         ModuleWithChild {

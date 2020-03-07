@@ -1,5 +1,10 @@
 import module::module2::pow_inner;
 
+type File struct {
+    name: *string,
+    created_at: int,
+};
+
 fn pow(n: int, a: int): int = {
     if a <= 1 {
         n
