@@ -120,14 +120,31 @@ impl fmt::Display for Type {
             }
             Self::App(TypeCon::Arrow, types) => write!(f, "{} -> {}", types[0], types[1]),
             Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
+            #[cfg(debug_assertions)]
             Self::App(TypeCon::Unique(tycon, uniq), types) => {
                 write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq)
             }
+            #[cfg(not(debug_assertions))]
+            Self::App(TypeCon::Unique(tycon, _), types) => {
+                write!(f, "{}", Type::App(*tycon.clone(), types.clone()))
+            }
             Self::App(TypeCon::Wrapped, types) => write!(f, "'{}", types[0]),
+            #[cfg(not(debug_assertions))]
+            Self::App(TypeCon::Named(name, _), types)
+            | Self::App(TypeCon::UnsizedNamed(name), types) => {
+                write!(f, "{}", IdMap::name(*name))?;
+                if !types.is_empty() {
+                    write!(f, "<")?;
+                    write_iter!(f, types.iter())?;
+                    write!(f, ">")?;
+                }
+
+                Ok(())
+            }
             Self::App(tycon, tys) => {
-                write!(f, "{}(", tycon)?;
+                write!(f, "{}<", tycon)?;
                 write_iter!(f, tys.iter())?;
-                write!(f, ")")
+                write!(f, ">")
             }
             Self::Var(var) => write!(f, "{}", var),
             Self::Poly(vars, ty) => {
