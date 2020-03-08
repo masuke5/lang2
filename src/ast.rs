@@ -298,6 +298,7 @@ pub struct AstFunction {
     pub return_ty: Spanned<AstType>,
     pub body: Spanned<Expr>,
     pub ty_params: Vec<Spanned<Id>>,
+    pub has_escaped_variables: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -391,6 +392,10 @@ pub fn dump_block(block: &Block, strings: &[String], depth: usize) {
 
     for func in &block.functions {
         print!("fn {}", IdMap::name(func.name.kind));
+
+        if func.has_escaped_variables {
+            print!(" \x1b[32mhas escaped vars\x1b[0m");
+        }
 
         if !func.ty_params.is_empty() {
             print!("<");

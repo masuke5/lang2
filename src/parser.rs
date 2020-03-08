@@ -1421,6 +1421,7 @@ impl<'a> Parser<'a> {
             return_ty: return_ty?,
             body,
             ty_params,
+            has_escaped_variables: false,
         })
     }
 

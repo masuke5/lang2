@@ -35,6 +35,15 @@ impl<'a> Finder<'a> {
             }
             self.find_expr(&mut func.body.kind);
 
+            // Check for variables or arguments to escape
+            let current_level = self.variables.level();
+            let has_escaped_variables = self
+                .variables
+                .iter()
+                .filter(|(level, _, _)| *level == current_level)
+                .any(|(_, _, is_escaped)| **is_escaped);
+            func.has_escaped_variables = has_escaped_variables;
+
             self.pop_scope();
         }
     }
