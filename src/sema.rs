@@ -19,6 +19,12 @@ macro_rules! error {
     };
 }
 
+macro_rules! warn {
+    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
+        $self.errors.push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
+    };
+}
+
 macro_rules! try_some {
     ($($var:ident),*) => {
         $(let $var = $var?;)*
@@ -1169,12 +1175,53 @@ impl<'a> Analyzer<'a> {
     // Statement
     // =====================================
 
+    fn expr_has_side_effects(expr: &Expr) -> bool {
+        use Expr::*;
+
+        match expr {
+            Literal(_) | Path(_) | Variable(_, _) => false,
+            Call(_, _) | Block(_) => true,
+            Tuple(exprs) => exprs
+                .iter()
+                .map(|e| &e.kind)
+                .any(Self::expr_has_side_effects),
+            Struct(_, fields) => fields
+                .iter()
+                .map(|(_, e)| &e.kind)
+                .any(Self::expr_has_side_effects),
+            Subscript(e1, e2) | BinOp(_, e1, e2) => {
+                Self::expr_has_side_effects(&e1.kind) || Self::expr_has_side_effects(&e2.kind)
+            }
+            Array(expr, _)
+            | Field(expr, _)
+            | Dereference(expr)
+            | Address(expr, _)
+            | Negative(expr)
+            | Alloc(expr, _)
+            | App(expr, _) => Self::expr_has_side_effects(&expr.kind),
+            If(cond, then, els) => {
+                Self::expr_has_side_effects(&cond.kind)
+                    || Self::expr_has_side_effects(&then.kind)
+                    || els
+                        .as_ref()
+                        .map(|e| Self::expr_has_side_effects(&e.kind))
+                        .unwrap_or(false)
+            }
+        }
+    }
+
     fn walk_stmt(&mut self, code: &mut BytecodeBuilder, stmt: Spanned<Stmt>) -> Option<InstList> {
         let insts = match stmt.kind {
             Stmt::Expr(expr) => {
-                let expr = self.walk_expr(code, expr)?;
+                // An expression that doesn't have side effects is unnecessary
+                if !Self::expr_has_side_effects(&expr.kind) {
+                    warn!(self, expr.span, "Unnecessary expression");
+                    InstList::new()
+                } else {
+                    let expr = self.walk_expr(code, expr)?;
 
-                translate::expr_stmt(expr)
+                    translate::expr_stmt(expr)
+                }
             }
             Stmt::While(cond, stmt) => {
                 let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
