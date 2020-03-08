@@ -78,7 +78,7 @@ impl fmt::Display for TypeVar {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum Type {
     Int,
     Bool,
@@ -160,7 +160,13 @@ impl fmt::Display for Type {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+impl fmt::Debug for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Type({})", self)
+    }
+}
+
+#[derive(PartialEq, Clone)]
 pub enum TypeCon {
     Pointer(bool),
     Tuple,
@@ -196,6 +202,12 @@ impl fmt::Display for TypeCon {
             Self::UnsizedNamed(name) => write!(f, "{}{{size=?}} ", IdMap::name(*name)),
             Self::Wrapped => write!(f, "wrapped"),
         }
+    }
+}
+
+impl fmt::Debug for TypeCon {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TypeCon({})", self)
     }
 }
 
@@ -484,7 +496,7 @@ impl TypeDefinitions {
     }
 
     pub fn get(&self, name: Id) -> Option<TypeBody<'_>> {
-        let tycon = self.tycons.get(&name)?.as_ref().unwrap();
+        let tycon = self.tycons.get(&name)?.as_ref()?;
         if self.sizes.contains_key(&name) {
             Some(TypeBody::Resolved(tycon))
         } else {

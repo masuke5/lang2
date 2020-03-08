@@ -1,5 +1,5 @@
 import assert::{testo as test, test_eq};
-import module::module1::*;
+import module::{module1::*, module2::Dir};
 
 ## literals ##
 
@@ -322,6 +322,9 @@ test_eq "mutually importing" 243 (pow 3 5);
 let file = File:{
     name: "a.txt",
     created_at: 1583562987,
+    parent: new Dir:{
+        first_file: __null__,
+    },
 };
 test_eq "type importing" 1583562990 (file.created_at + 3);
 

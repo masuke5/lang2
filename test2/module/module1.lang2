@@ -1,8 +1,9 @@
-import module::module2::pow_inner;
+import module::module2::{pow_inner, Dir};
 
 type File struct {
     name: *string,
     created_at: int,
+    parent: *Dir,
 };
 
 fn pow(n: int, a: int): int = {

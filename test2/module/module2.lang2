@@ -1,4 +1,8 @@
-import module::module1::*;
+import module::module1::{File, pow};
+
+type Dir struct {
+    first_file: *File,
+};
 
 fn pow_inner(n: int, a: int): int = {
     (pow n (a - 1)) * n
