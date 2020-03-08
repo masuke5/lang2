@@ -86,9 +86,7 @@ struct BlockBuilder {
 
 impl BlockBuilder {
     fn new() -> Self {
-        Self {
-            defs: Vec::new(),
-        }
+        Self { defs: Vec::new() }
     }
 
     fn push(&mut self) {
@@ -735,7 +733,10 @@ impl<'a> Parser<'a> {
 
         let span = Span::merge(&let_span, semicolon_span);
 
-        Some(spanned(Stmt::Bind(name, ty, Box::new(expr), is_mutable, false), span))
+        Some(spanned(
+            Stmt::Bind(name, ty, Box::new(expr), is_mutable, false),
+            span,
+        ))
     }
 
     fn parse_block_expr(&mut self) -> Option<Spanned<Expr>> {
@@ -1496,7 +1497,9 @@ impl<'a> Parser<'a> {
         }
 
         let dummy_result_expr = spanned(Expr::Literal(Literal::Unit), self.peek().span.clone());
-        let block = self.blocks_builder.pop_and_build(self.main_stmts, dummy_result_expr);
+        let block = self
+            .blocks_builder
+            .pop_and_build(self.main_stmts, dummy_result_expr);
 
         self.module_buffers.insert(
             module_path.clone(),

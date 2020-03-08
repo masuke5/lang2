@@ -36,7 +36,7 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use ast::*;
-use error::Error;
+use error::{Error, Level};
 use id::{reserved_id, Id, IdMap};
 use lexer::Lexer;
 use module::ModuleContainer;
@@ -66,9 +66,16 @@ fn print_errors(errors: Vec<Error>) {
             }
         };
 
+        let (color, label) = match error.level {
+            Level::Error => ("\x1b[91m", "error"),     // bright red
+            Level::Warning => ("\x1b[93m", "warning"), // bright yellow
+        };
+
         // Print the error position and message
         println!(
-            "\x1b[91merror\x1b[0m: {}:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
+            "{}{}\x1b[0m: {}:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
+            color,
+            label,
             IdMap::name(es.file),
             es.start_line + 1,
             es.start_col,
@@ -120,7 +127,12 @@ fn print_errors(errors: Vec<Error>) {
 
             let (start, length) = (start as usize, length as usize);
 
-            println!("{}\x1b[91m{}\x1b[0m", " ".repeat(start), "^".repeat(length));
+            println!(
+                "{}{}{}\x1b[0m",
+                " ".repeat(start),
+                color,
+                "^".repeat(length)
+            );
         }
     }
 }

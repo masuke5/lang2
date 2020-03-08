@@ -3,7 +3,14 @@ use std::error;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
+pub enum Level {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Error {
+    pub level: Level,
     pub msg: String,
     pub span: Span,
 }
@@ -11,6 +18,15 @@ pub struct Error {
 impl Error {
     pub fn new(msg: &str, span: Span) -> Self {
         Self {
+            level: Level::Error,
+            msg: msg.to_string(),
+            span,
+        }
+    }
+
+    pub fn new_warning(msg: &str, span: Span) -> Self {
+        Self {
+            level: Level::Warning,
             msg: msg.to_string(),
             span,
         }
