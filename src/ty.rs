@@ -6,7 +6,7 @@ use std::sync::RwLock;
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorList};
 use crate::id::{Id, IdMap};
 use crate::span::Span;
 use crate::utils::{format_bool, HashMapWithScope};
@@ -254,7 +254,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
     }
 }
 
-pub fn unify(errors: &mut Vec<Error>, span: &Span, a: &Type, b: &Type) -> Option<()> {
+pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<()> {
     if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
         let ok = match (a_tycon, b_tycon) {
             (TypeCon::Pointer(false), TypeCon::Pointer(false)) => true,

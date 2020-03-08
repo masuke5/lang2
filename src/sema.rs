@@ -4,7 +4,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast::{Param as AstParam, *};
 use crate::bytecode::{Bytecode, BytecodeBuilder, Function, InstList};
-use crate::error::Error;
+use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
 use crate::module::{FunctionHeader, Module, ModuleContainer, ModuleHeader};
 use crate::span::{Span, Spanned};
@@ -12,18 +12,6 @@ use crate::translate;
 use crate::translate::RelativeVariableLoc;
 use crate::ty::*;
 use crate::utils::HashMapWithScope;
-
-macro_rules! error {
-    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
-        $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
-    };
-}
-
-macro_rules! warn {
-    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
-        $self.errors.push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
-    };
-}
 
 macro_rules! try_some {
     ($($var:ident),*) => {
@@ -33,7 +21,7 @@ macro_rules! try_some {
 
 macro_rules! fn_to_expect {
     ($fn_name:ident, $type_name:tt, $ty:ty, $pat:pat => $expr:expr,) => {
-        fn $fn_name<'a>(errors: &mut Vec<Error>, ty: &'a Type, span: Span) -> Option<&'a $ty> {
+        fn $fn_name<'a>(errors: &mut ErrorList, ty: &'a Type, span: Span) -> Option<&'a $ty> {
             match ty {
                 $pat => $expr,
                 _ => {
@@ -188,7 +176,7 @@ pub struct Analyzer<'a> {
     current_func: Id,
     function_insts: LinkedList<(Id, InstList)>,
 
-    errors: Vec<Error>,
+    errors: ErrorList,
 
     _phantom: &'a std::marker::PhantomData<Self>,
 }
@@ -202,7 +190,7 @@ impl<'a> Analyzer<'a> {
             types: HashMapWithScope::new(),
             tycons: TypeDefinitions::new(),
             tycon_spans: HashMapWithScope::new(),
-            errors: Vec::new(),
+            errors: ErrorList::new(),
             current_func: *reserved_id::MAIN_FUNC,
             next_temp_num: 0,
             next_unique: 0,
@@ -1961,7 +1949,7 @@ impl<'a> Analyzer<'a> {
         mut self,
         mut code: BytecodeBuilder,
         program: Program,
-    ) -> Result<Bytecode, Vec<Error>> {
+    ) -> Result<Bytecode, ErrorList> {
         self.push_scope();
         self.push_type_scope();
 
@@ -1985,7 +1973,7 @@ impl<'a> Analyzer<'a> {
             code.push_function_body(name, insts);
         }
 
-        if !self.errors.is_empty() {
+        if self.errors.has_error() {
             Err(self.errors)
         } else {
             Ok(code.build(&program.strings))
@@ -1998,10 +1986,10 @@ pub enum ModuleBody {
     Native(Module),
 }
 
-pub fn analyze_semantics(
+pub fn do_semantics_analysis(
     module_buffers: FxHashMap<SymbolPath, Program>,
     native_modules: &ModuleContainer,
-) -> Result<FxHashMap<String, ModuleBody>, Vec<Error>> {
+) -> Result<FxHashMap<String, ModuleBody>, ErrorList> {
     struct Module<'a> {
         bc_builder: BytecodeBuilder,
         analyzer: Analyzer<'a>,
@@ -2074,7 +2062,7 @@ pub fn analyze_semantics(
             .insert_public_functions(&mut module.bc_builder, program, module_header);
     }
 
-    let mut errors = Vec::new();
+    let mut errors = ErrorList::new();
 
     for (name, program) in module_buffers {
         let Module {
@@ -2086,8 +2074,8 @@ pub fn analyze_semantics(
 
         let bytecode = match analyzer.analyze(bc_builder, program) {
             Ok(b) => b,
-            Err(mut new_errors) => {
-                errors.append(&mut new_errors);
+            Err(new_errors) => {
+                errors.append(new_errors);
                 continue;
             }
         };
@@ -2099,7 +2087,7 @@ pub fn analyze_semantics(
         bodies.insert(format!("{}", path), ModuleBody::Native(module));
     }
 
-    if !errors.is_empty() {
+    if errors.has_error() {
         Err(errors)
     } else {
         Ok(bodies)

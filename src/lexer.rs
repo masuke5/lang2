@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Error, ErrorList};
 use crate::id::{Id, IdMap};
 use crate::span::{Span, Spanned};
 use crate::token::*;
@@ -23,7 +23,7 @@ pub struct Lexer<'a> {
     file: Id,
     raw: &'a str,
     input: Peekable<Chars<'a>>,
-    errors: Vec<Error>,
+    errors: ErrorList,
     start_line: u32,
     start_col: u32,
     line: u32,
@@ -38,7 +38,7 @@ impl<'a> Lexer<'a> {
             file,
             raw: s,
             input: s.chars().peekable(),
-            errors: Vec::new(),
+            errors: ErrorList::new(),
             start_line: 0,
             start_col: 0,
             line: 0,
@@ -290,7 +290,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn lex(mut self) -> (Vec<Spanned<Token>>, Vec<Error>) {
+    pub fn lex(mut self) -> (Vec<Spanned<Token>>, ErrorList) {
         let mut tokens = Vec::new();
 
         self.skip_whitespace();

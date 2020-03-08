@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast::*;
-use crate::error::Error;
+use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
 use crate::module;
 use crate::module::ModuleContainer;
@@ -15,15 +15,6 @@ use crate::token::*;
 
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
-}
-
-macro_rules! error {
-    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
-        {
-            let mess = format!($fmt $(,$arg)*);
-            $self.errors.push(Error::new(&mess, $span));
-        }
-    };
 }
 
 fn needs_semicolon(expr: &Expr) -> bool {
@@ -43,7 +34,7 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     module_path: &SymbolPath,
     imported_modules: FxHashSet<SymbolPath>,
     native_modules: &'a ModuleContainer,
-) -> Result<Result<FxHashMap<SymbolPath, Program>, Vec<Error>>, io::Error> {
+) -> Result<Result<FxHashMap<SymbolPath, Program>, ErrorList>, io::Error> {
     use crate::lexer::Lexer;
 
     let module_file_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
@@ -55,10 +46,10 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
 
     let parser = Parser::new(root_path.as_ref(), tokens, imported_modules, native_modules);
     match parser.parse(module_path) {
-        Ok(program) if errors_when_lex.is_empty() => Ok(Ok(program)),
+        Ok(program) if !errors_when_lex.has_error() => Ok(Ok(program)),
         Ok(_) => Ok(Err(errors_when_lex)),
-        Err(mut errors) => {
-            errors_when_lex.append(&mut errors);
+        Err(errors) => {
+            errors_when_lex.append(errors);
             Ok(Err(errors_when_lex))
         }
     }
@@ -113,7 +104,7 @@ pub struct Parser<'a> {
     root_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
-    errors: Vec<Error>,
+    errors: ErrorList,
 
     main_stmts: Vec<Spanned<Stmt>>,
     strings: Vec<String>,
@@ -136,7 +127,7 @@ impl<'a> Parser<'a> {
             root_path: root_path.to_path_buf(),
             tokens,
             pos: 0,
-            errors: Vec::new(),
+            errors: ErrorList::new(),
             main_stmts: Vec::new(),
             strings: Vec::new(),
             module_buffers: FxHashMap::default(),
@@ -1022,7 +1013,7 @@ impl<'a> Parser<'a> {
                             self.loaded_modules.insert(module_path.clone());
                         }
                     }
-                    Ok(Err(mut errors)) => self.errors.append(&mut errors),
+                    Ok(Err(errors)) => self.errors.append(errors),
                     Err(err) => {
                         error!(
                             self,
@@ -1480,7 +1471,7 @@ impl<'a> Parser<'a> {
     pub fn parse(
         mut self,
         module_path: &SymbolPath,
-    ) -> Result<FxHashMap<SymbolPath, Program>, Vec<Error>> {
+    ) -> Result<FxHashMap<SymbolPath, Program>, ErrorList> {
         self.imported_modules
             .insert(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
 
@@ -1510,7 +1501,7 @@ impl<'a> Parser<'a> {
             },
         );
 
-        if !self.errors.is_empty() {
+        if self.errors.has_error() {
             Err(self.errors)
         } else {
             Ok(self.module_buffers)

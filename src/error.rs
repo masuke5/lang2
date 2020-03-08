@@ -1,5 +1,4 @@
 use crate::span::Span;
-use std::error;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -47,8 +46,53 @@ impl fmt::Display for Error {
     }
 }
 
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        "Parse error"
+macro_rules! error {
+    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
+        $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
+    };
+}
+
+macro_rules! warn {
+    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
+        $self.errors.push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
+    };
+}
+
+#[derive(Debug)]
+pub struct ErrorList {
+    errors: Vec<Error>,
+    has_error: bool,
+}
+
+impl ErrorList {
+    pub fn new() -> Self {
+        Self {
+            errors: Vec::new(),
+            has_error: false,
+        }
+    }
+
+    pub fn push(&mut self, error: Error) {
+        if let Level::Error = &error.level {
+            self.has_error = true;
+        }
+
+        self.errors.push(error);
+    }
+
+    pub fn append(&mut self, mut other: ErrorList) {
+        if other.has_error {
+            self.has_error = true;
+        }
+
+        self.errors.append(&mut other.errors);
+    }
+
+    pub fn has_error(&self) -> bool {
+        self.has_error
+    }
+
+    pub fn errors(self) -> Vec<Error> {
+        self.errors
     }
 }

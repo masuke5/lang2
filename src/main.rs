@@ -9,9 +9,9 @@ extern crate pretty_assertions;
 mod utils;
 #[macro_use]
 mod ty;
-
 mod ast;
 mod bytecode;
+#[macro_use]
 mod error;
 mod escape;
 mod gc;
@@ -36,7 +36,7 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use ast::*;
-use error::{Error, Level};
+use error::{ErrorList, Level};
 use id::{reserved_id, Id, IdMap};
 use lexer::Lexer;
 use module::ModuleContainer;
@@ -48,10 +48,10 @@ use vm::VM;
 use clap::{App, Arg, ArgMatches};
 use rustc_hash::FxHashMap;
 
-fn print_errors(errors: Vec<Error>) {
+fn print_errors(errors: ErrorList) {
     let mut file_cache: FxHashMap<Id, Vec<String>> = FxHashMap::default();
 
-    for error in errors {
+    for error in errors.errors() {
         let es = error.span;
 
         let input = match file_cache.get(&es.file) {
@@ -143,9 +143,9 @@ fn execute(
     file: Id,
     main_module_name: Id,
     file_path: Option<PathBuf>,
-) -> Result<(), Vec<Error>> {
-    fn ok_if_empty(errors: Vec<Error>) -> Result<(), Vec<Error>> {
-        if errors.is_empty() {
+) -> Result<(), ErrorList> {
+    fn ok_if_empty(errors: ErrorList) -> Result<(), ErrorList> {
+        if !errors.has_error() {
             Ok(())
         } else {
             Err(errors)
@@ -184,8 +184,8 @@ fn execute(
     let main_module_path = SymbolPath::from_path(&root_path, &file_path);
     let mut module_buffers = match parser.parse(&main_module_path) {
         Ok(p) => p,
-        Err(mut perrors) => {
-            errors.append(&mut perrors);
+        Err(perrors) => {
+            errors.append(perrors);
             return Err(errors);
         }
     };
@@ -203,13 +203,13 @@ fn execute(
         return ok_if_empty(errors);
     }
 
-    if !errors.is_empty() {
+    if errors.has_error() {
         return Err(errors);
     }
 
     // Analyze semantics and translate to a bytecode
 
-    let mut module_bodies = sema::analyze_semantics(module_buffers, &container)?;
+    let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container)?;
 
     if matches.is_present("dump-insts") {
         for (name, body) in module_bodies {
