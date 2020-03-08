@@ -1310,12 +1310,12 @@ impl<'a> Analyzer<'a> {
                 match self.module_headers.get(&spath) {
                     Some((module_id, module)) => {
                         // Insert functions
-                        for (func_name, _) in &module.functions {
+                        for func_name in module.functions.keys() {
                             insert(*module_id, *func_name, *func_name);
                         }
 
                         // Insert types
-                        for (name, _) in &module.types {
+                        for name in module.types.keys() {
                             insert(*module_id, *name, *name);
                         }
                     }
