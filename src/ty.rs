@@ -78,6 +78,31 @@ impl fmt::Display for TypeVar {
     }
 }
 
+static NEXT_UNIQUE: AtomicU32 = AtomicU32::new(0);
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Unique(u32);
+
+impl Unique {
+    pub fn new() -> Self {
+        let var = Self(NEXT_UNIQUE.load(Ordering::Acquire));
+        NEXT_UNIQUE.fetch_add(1, Ordering::Acquire);
+        var
+    }
+}
+
+impl fmt::Display for Unique {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Unique({})", self.0)
+    }
+}
+
+impl fmt::Debug for Unique {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 #[derive(PartialEq, Clone)]
 pub enum Type {
     Int,
@@ -174,7 +199,7 @@ pub enum TypeCon {
     Struct(Vec<Id>),
     Array(usize),
     Fun(Vec<TypeVar>, Box<Type>),
-    Unique(Box<TypeCon>, u32),
+    Unique(Box<TypeCon>, Unique),
     Named(Id, usize),
     UnsizedNamed(Id),
     Wrapped,

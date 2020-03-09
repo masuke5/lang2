@@ -167,7 +167,6 @@ pub struct Analyzer<'a> {
     types: HashMapWithScope<Id, Type>,
     tycons: TypeDefinitions,
     tycon_spans: HashMapWithScope<Id, Span>,
-    next_unique: u32,
 
     variables: HashMapWithScope<Id, Entry>,
     next_temp_num: u32,
@@ -193,7 +192,6 @@ impl<'a> Analyzer<'a> {
             errors: ErrorList::new(),
             current_func: *reserved_id::MAIN_FUNC,
             next_temp_num: 0,
-            next_unique: 0,
             function_insts: LinkedList::new(),
             var_level: 0,
             _phantom: &std::marker::PhantomData,
@@ -1615,13 +1613,11 @@ impl<'a> Analyzer<'a> {
         wrap_typevar(&mut ty);
 
         let tycon = TypeCon::Fun(vars, Box::new(ty));
-        let uniq = self.next_unique;
-        self.next_unique += 1;
 
         self.pop_type_scope();
 
         self.tycons
-            .set_body(tydef.name, TypeCon::Unique(Box::new(tycon), uniq));
+            .set_body(tydef.name, TypeCon::Unique(Box::new(tycon), Unique::new()));
     }
 
     // =================================
