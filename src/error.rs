@@ -1,6 +1,9 @@
 use std::fmt;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 
+use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
 use crate::id::{Id, IdMap};
@@ -52,43 +55,41 @@ impl fmt::Display for Error {
 }
 
 macro_rules! error {
-    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
-        $self.errors.push(Error::new(&format!($fmt $(,$arg)*), $span));
+    ($span:expr, $fmt: tt $(,$arg:expr)*) => {
+        ErrorList::push(Error::new(&format!($fmt $(,$arg)*), $span));
     };
 }
 
 macro_rules! warn {
-    ($self:ident, $span:expr, $fmt: tt $(,$arg:expr)*) => {
-        $self.errors.push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
+    ($span:expr, $fmt: tt $(,$arg:expr)*) => {
+        ErrorList::push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
     };
 }
 
 #[derive(Debug)]
-pub struct ErrorList {
-    file_cache: FxHashMap<Id, Vec<String>>,
-    has_error: bool,
+pub struct ErrorList {}
+
+static HAS_ERRORS: AtomicBool = AtomicBool::new(false);
+
+lazy_static! {
+    static ref FILE_CACHE: RwLock<FxHashMap<Id, Vec<String>>> =
+        { RwLock::new(FxHashMap::default()) };
 }
 
 impl ErrorList {
-    pub fn new() -> Self {
-        Self {
-            file_cache: FxHashMap::default(),
-            has_error: false,
-        }
-    }
-
-    fn print_error(&mut self, error: Error) {
+    fn print_error(error: Error) {
+        let mut file_cache = FILE_CACHE.write().expect("FILE_CACHE poisoned");
         let es = error.span;
 
-        let input = match self.file_cache.get(&es.file) {
+        let input = match file_cache.get(&es.file) {
             Some(input) => input,
             None => {
                 let contents = fs::read_to_string(&IdMap::name(es.file)).unwrap();
-                self.file_cache.insert(
+                file_cache.insert(
                     es.file,
                     contents.split('\n').map(|c| c.to_string()).collect(),
                 );
-                &self.file_cache[&es.file]
+                &file_cache[&es.file]
             }
         };
 
@@ -162,25 +163,15 @@ impl ErrorList {
         }
     }
 
-    pub fn push(&mut self, error: Error) {
+    pub fn push(error: Error) {
         if let Level::Error = &error.level {
-            self.has_error = true;
+            HAS_ERRORS.store(true, Ordering::Relaxed);
         }
 
-        self.print_error(error);
+        Self::print_error(error);
     }
 
-    pub fn append(&mut self, other: ErrorList) {
-        if other.has_error {
-            self.has_error = true;
-        }
-    }
-
-    pub fn has_error(&self) -> bool {
-        self.has_error
-    }
-
-    pub fn errors(self) -> Vec<Error> {
-        Vec::new()
+    pub fn has_error() -> bool {
+        HAS_ERRORS.load(Ordering::Acquire)
     }
 }

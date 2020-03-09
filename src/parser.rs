@@ -34,7 +34,7 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     module_path: &SymbolPath,
     imported_modules: FxHashSet<SymbolPath>,
     native_modules: &'a ModuleContainer,
-) -> Result<Result<FxHashMap<SymbolPath, Program>, ErrorList>, io::Error> {
+) -> Result<FxHashMap<SymbolPath, Program>, io::Error> {
     use crate::lexer::Lexer;
 
     let module_file_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
@@ -42,17 +42,12 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     let raw = fs::read_to_string(&module_file)?;
 
     let lexer = Lexer::new(&raw, module_file_id);
-    let (tokens, mut errors_when_lex) = lexer.lex();
+    let tokens = lexer.lex();
 
     let parser = Parser::new(root_path.as_ref(), tokens, imported_modules, native_modules);
-    match parser.parse(module_path) {
-        Ok(program) if !errors_when_lex.has_error() => Ok(Ok(program)),
-        Ok(_) => Ok(Err(errors_when_lex)),
-        Err(errors) => {
-            errors_when_lex.append(errors);
-            Ok(Err(errors_when_lex))
-        }
-    }
+    let program = parser.parse(module_path);
+
+    Ok(program)
 }
 
 struct DefinitionInBlock {
@@ -104,7 +99,6 @@ pub struct Parser<'a> {
     root_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
-    errors: ErrorList,
 
     main_stmts: Vec<Spanned<Stmt>>,
     strings: Vec<String>,
@@ -127,7 +121,6 @@ impl<'a> Parser<'a> {
             root_path: root_path.to_path_buf(),
             tokens,
             pos: 0,
-            errors: ErrorList::new(),
             main_stmts: Vec::new(),
             strings: Vec::new(),
             module_buffers: FxHashMap::default(),
@@ -174,8 +167,8 @@ impl<'a> Parser<'a> {
         if !self.consume(&expected) {
             let token = self.peek().clone();
             error!(
-                self,
-                token.span, "expected `{}` but got `{}`", expected, token.kind
+                token.span,
+                "expected `{}` but got `{}`", expected, token.kind
             );
 
             self.skip_to(skip);
@@ -197,10 +190,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let token = self.peek().clone();
-                error!(
-                    self,
-                    token.span, "expected `identifier` but got `{}`", token.kind
-                );
+                error!(token.span, "expected `identifier` but got `{}`", token.kind);
 
                 self.skip_to(skip);
                 if let Token::Identifier(_) = self.peek().kind {
@@ -410,7 +400,7 @@ impl<'a> Parser<'a> {
             Token::Number(size) => match usize::try_from(size) {
                 Ok(size) => size,
                 Err(_) => {
-                    error!(self, self.peek().span.clone(), "too large");
+                    error!(self.peek().span.clone(), "too large");
                     0
                 }
             },
@@ -481,7 +471,6 @@ impl<'a> Parser<'a> {
             Token::If => self.parse_if_expr(),
             _ => {
                 error!(
-                    self,
                     token.span,
                     "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`",
                     self.peek().kind
@@ -502,7 +491,7 @@ impl<'a> Parser<'a> {
                         self.next();
 
                         if n < 0 {
-                            error!(self, self.peek().span.clone(), "field of negative number");
+                            error!(self.peek().span.clone(), "field of negative number");
                             return None;
                         }
 
@@ -517,7 +506,6 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         error!(
-                            self,
                             self.peek().span.clone(),
                             "expected `number` but got `{}`",
                             self.peek().kind
@@ -784,7 +772,7 @@ impl<'a> Parser<'a> {
 
     fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
         if self.peek().kind != Token::Lbrace {
-            error!(self, self.peek().span.clone(), "expected block");
+            error!(self.peek().span.clone(), "expected block");
             return None;
         }
 
@@ -1006,21 +994,21 @@ impl<'a> Parser<'a> {
                     self.loaded_modules.clone(),
                     &self.native_modules,
                 ) {
-                    Ok(Ok(module_buffers)) => {
+                    Ok(module_buffers) => {
                         // Merge module buffers
                         for (module_path, program) in module_buffers {
                             self.module_buffers.insert(module_path.clone(), program);
                             self.loaded_modules.insert(module_path.clone());
                         }
                     }
-                    Ok(Err(errors)) => self.errors.append(errors),
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                        error!(span.clone(), "Not found module `{}`", module_path);
+                        return false;
+                    }
                     Err(err) => {
                         error!(
-                            self,
                             span.clone(),
-                            "Unable to load module {}: {}",
-                            module_path,
-                            err
+                            "Unable to load module {}: {}", module_path, err
                         );
                         return false;
                     }
@@ -1035,7 +1023,7 @@ impl<'a> Parser<'a> {
                     return self.load_module(&path, span, false);
                 }
                 _ => {
-                    error!(self, span.clone(), "Cannot find module `{}`", module_path);
+                    error!(span.clone(), "Cannot find module `{}`", module_path);
                     return false;
                 }
             }
@@ -1226,7 +1214,7 @@ impl<'a> Parser<'a> {
             Token::Number(size) => match usize::try_from(size) {
                 Ok(size) => size,
                 Err(_) => {
-                    error!(self, self.peek().span.clone(), "too large");
+                    error!(self.peek().span.clone(), "too large");
                     0
                 }
             },
@@ -1313,7 +1301,7 @@ impl<'a> Parser<'a> {
             Token::Struct => self.parse_type_struct(), // struct
             Token::Lbracket => self.parse_type_array(), // array
             _ => {
-                error!(self,
+                error!(
                     self.peek().span.clone(),
                     "expected `(`, `[`, `*`, `int`, `bool`, `string`, `struct` or `identifier` but got `{}`",
                     self.peek().kind
@@ -1469,10 +1457,7 @@ impl<'a> Parser<'a> {
         Some(AstTypeDef { name, ty, var_ids })
     }
 
-    pub fn parse(
-        mut self,
-        module_path: &SymbolPath,
-    ) -> Result<FxHashMap<SymbolPath, Program>, ErrorList> {
+    pub fn parse(mut self, module_path: &SymbolPath) -> FxHashMap<SymbolPath, Program> {
         self.imported_modules
             .insert(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
 
@@ -1502,10 +1487,6 @@ impl<'a> Parser<'a> {
             },
         );
 
-        if self.errors.has_error() {
-            Err(self.errors)
-        } else {
-            Ok(self.module_buffers)
-        }
+        self.module_buffers
     }
 }

@@ -8,11 +8,11 @@ extern crate pretty_assertions;
 #[macro_use]
 mod utils;
 #[macro_use]
+mod error;
+#[macro_use]
 mod ty;
 mod ast;
 mod bytecode;
-#[macro_use]
-mod error;
 mod escape;
 mod gc;
 mod id;
@@ -29,14 +29,13 @@ mod vm;
 
 use std::borrow::Cow;
 use std::env;
-use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::exit;
 
 use ast::*;
-use error::{ErrorList, Level};
+use error::ErrorList;
 use id::{reserved_id, Id, IdMap};
 use lexer::Lexer;
 use module::ModuleContainer;
@@ -46,96 +45,6 @@ use token::dump_token;
 use vm::VM;
 
 use clap::{App, Arg, ArgMatches};
-use rustc_hash::FxHashMap;
-
-fn print_errors(errors: ErrorList) {
-    let mut file_cache: FxHashMap<Id, Vec<String>> = FxHashMap::default();
-
-    for error in errors.errors() {
-        let es = error.span;
-
-        let input = match file_cache.get(&es.file) {
-            Some(input) => input,
-            None => {
-                let contents = fs::read_to_string(&IdMap::name(es.file)).unwrap();
-                file_cache.insert(
-                    es.file,
-                    contents.split('\n').map(|c| c.to_string()).collect(),
-                );
-                &file_cache[&es.file]
-            }
-        };
-
-        let (color, label) = match error.level {
-            Level::Error => ("\x1b[91m", "error"),     // bright red
-            Level::Warning => ("\x1b[93m", "warning"), // bright yellow
-        };
-
-        // Print the error position and message
-        println!(
-            "{}{}\x1b[0m: {}:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
-            color,
-            label,
-            IdMap::name(es.file),
-            es.start_line + 1,
-            es.start_col,
-            es.end_line + 1,
-            es.end_col,
-            error.msg
-        );
-
-        // Print the lines
-        let line_count = es.end_line - es.start_line + 1;
-        for i in 0..line_count {
-            let line = (es.start_line + i) as usize;
-            let line_len = if line >= input.len() {
-                0
-            } else {
-                input[line].len() as u32
-            };
-            println!(
-                "{}",
-                if line >= input.len() {
-                    ""
-                } else {
-                    &input[line]
-                }
-            );
-
-            let indent = input[line]
-                .chars()
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .fold(0, |indent, c| {
-                    indent
-                        + match c {
-                            ' ' => 1,
-                            '\t' => 4,
-                            _ => unreachable!(),
-                        }
-                }) as u32;
-
-            // Print the error span
-            let (start, length) = if line_count == 1 {
-                (es.start_col, es.end_col - es.start_col)
-            } else if i == 0 {
-                (es.start_col, line_len - es.start_col)
-            } else if i == line_count - 1 {
-                (indent, (line_len - es.end_col).saturating_sub(1))
-            } else {
-                (indent, line_len - indent)
-            };
-
-            let (start, length) = (start as usize, length as usize);
-
-            println!(
-                "{}{}{}\x1b[0m",
-                " ".repeat(start),
-                color,
-                "^".repeat(length)
-            );
-        }
-    }
-}
 
 fn execute(
     matches: &ArgMatches<'_>,
@@ -143,15 +52,7 @@ fn execute(
     file: Id,
     main_module_name: Id,
     file_path: Option<PathBuf>,
-) -> Result<(), ErrorList> {
-    fn ok_if_empty(errors: ErrorList) -> Result<(), ErrorList> {
-        if !errors.has_error() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
-    }
-
+) {
     let enable_trace = matches.is_present("trace");
     let enable_measure = matches.is_present("measure");
     if !cfg!(debug_assertions) && (enable_measure || enable_trace) {
@@ -168,10 +69,10 @@ fn execute(
 
     // Lex
     let lexer = Lexer::new(input, file);
-    let (tokens, mut errors) = lexer.lex();
+    let tokens = lexer.lex();
     if matches.is_present("dump-token") {
         dump_token(tokens);
-        return ok_if_empty(errors);
+        return;
     }
 
     // Parse
@@ -182,13 +83,7 @@ fn execute(
         &container,
     );
     let main_module_path = SymbolPath::from_path(&root_path, &file_path);
-    let mut module_buffers = match parser.parse(&main_module_path) {
-        Ok(p) => p,
-        Err(perrors) => {
-            errors.append(perrors);
-            return Err(errors);
-        }
-    };
+    let mut module_buffers = parser.parse(&main_module_path);
 
     for program in module_buffers.values_mut() {
         escape::find(program);
@@ -200,16 +95,12 @@ fn execute(
             dump_ast(&program);
         }
 
-        return ok_if_empty(errors);
-    }
-
-    if errors.has_error() {
-        return Err(errors);
+        return;
     }
 
     // Analyze semantics and translate to a bytecode
 
-    let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container)?;
+    let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container);
 
     if matches.is_present("dump-insts") {
         for (name, body) in module_bodies {
@@ -219,7 +110,11 @@ fn execute(
             }
         }
 
-        return Ok(());
+        return;
+    }
+
+    if ErrorList::has_error() {
+        return;
     }
 
     let mut new_module_bodies = Vec::with_capacity(module_bodies.len());
@@ -236,8 +131,6 @@ fn execute(
     // Execute the bytecode
     let mut vm = VM::new();
     vm.run(new_module_bodies, enable_trace, enable_measure);
-
-    Ok(())
 }
 
 fn get_input<'a>(
@@ -318,8 +211,8 @@ fn main() {
         }
     };
 
-    if let Err(errors) = execute(&matches, &input, file, module_name, file_path) {
-        print_errors(errors);
+    execute(&matches, &input, file, module_name, file_path);
+    if ErrorList::has_error() {
         exit(1);
     }
 }

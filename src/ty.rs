@@ -279,7 +279,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
     }
 }
 
-pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<()> {
+pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
     if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
         let ok = match (a_tycon, b_tycon) {
             (TypeCon::Pointer(false), TypeCon::Pointer(false)) => true,
@@ -293,7 +293,7 @@ pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<
 
         if ok {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(errors, span, a_ty, b_ty)?;
+                unify(span, a_ty, b_ty)?;
             }
 
             return Some(());
@@ -308,7 +308,7 @@ pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<
                 map.insert(param.clone(), ty.clone());
             }
 
-            unify(errors, span, &subst(*body.clone(), &map), b)?;
+            unify(span, &subst(*body.clone(), &map), b)?;
             Some(())
         }
         (
@@ -320,7 +320,7 @@ pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<
             }
 
             for (ty1, ty2) in tys1.iter().zip(tys2.iter()) {
-                unify(errors, span, ty1, ty2)?;
+                unify(span, ty1, ty2)?;
             }
 
             Some(())
@@ -331,7 +331,7 @@ pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<
                 map.insert(var2.clone(), Type::Var(*var1));
             }
 
-            unify(errors, span, ty1, &subst(*ty2.clone(), &map))?;
+            unify(span, ty1, &subst(*ty2.clone(), &map))?;
             Some(())
         }
         (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Some(()),
@@ -342,10 +342,7 @@ pub fn unify(errors: &mut ErrorList, span: &Span, a: &Type, b: &Type) -> Option<
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
         (a, b) => {
-            errors.push(Error::new(
-                &format!("`{}` and `{}` are not equivalent", a, b),
-                span.clone(),
-            ));
+            error!(span.clone(), "`{}` and `{}` are not equivalent", a, b);
             None
         }
     }

@@ -21,7 +21,7 @@ macro_rules! try_some {
 
 macro_rules! fn_to_expect {
     ($fn_name:ident, $type_name:tt, $ty:ty, $pat:pat => $expr:expr,) => {
-        fn $fn_name<'a>(errors: &mut ErrorList, ty: &'a Type, span: Span) -> Option<&'a $ty> {
+        fn $fn_name<'a>(ty: &'a Type, span: Span) -> Option<&'a $ty> {
             match ty {
                 $pat => $expr,
                 _ => {
@@ -29,8 +29,7 @@ macro_rules! fn_to_expect {
                         concat!("expected type `", $type_name, "` but got type `{}`"),
                         ty
                     );
-                    let error = Error::new(&msg, span);
-                    errors.push(error);
+                    ErrorList::push(Error::new(&msg, span));
                     None
                 }
             }
@@ -175,8 +174,6 @@ pub struct Analyzer<'a> {
     current_func: Id,
     function_insts: LinkedList<(Id, InstList)>,
 
-    errors: ErrorList,
-
     _phantom: &'a std::marker::PhantomData<Self>,
 }
 
@@ -189,7 +186,6 @@ impl<'a> Analyzer<'a> {
             types: HashMapWithScope::new(),
             tycons: TypeDefinitions::new(),
             tycon_spans: HashMapWithScope::new(),
-            errors: ErrorList::new(),
             current_func: *reserved_id::MAIN_FUNC,
             next_temp_num: 0,
             function_insts: LinkedList::new(),
@@ -199,10 +195,6 @@ impl<'a> Analyzer<'a> {
         slf.push_type_scope();
 
         slf
-    }
-
-    fn add_error(&mut self, msg: &str, span: Span) {
-        self.errors.push(Error::new(msg, span));
     }
 
     #[inline]
@@ -260,14 +252,11 @@ impl<'a> Analyzer<'a> {
     }
 
     #[inline]
-    fn type_size_err(&mut self, span: Span, ty: &Type) -> usize {
+    fn type_size_err(span: Span, ty: &Type) -> usize {
         match type_size(ty) {
             Some(size) => size,
             None => {
-                self.errors.push(Error::new(
-                    &format!("the size of type `{}` cannot be calculated", ty),
-                    span,
-                ));
+                error!(span, "the size of type `{}` cannot be calculated", ty);
                 0
             }
         }
@@ -402,10 +391,8 @@ impl<'a> Analyzer<'a> {
                     )),
                     ty => {
                         error!(
-                            self,
                             span.clone(),
-                            "expected type `struct` or `*struct` but got type `{}`",
-                            ty
+                            "expected type `struct` or `*struct` but got type `{}`", ty
                         );
                         None
                     }
@@ -413,10 +400,8 @@ impl<'a> Analyzer<'a> {
             }
             ty => {
                 error!(
-                    self,
                     span.clone(),
-                    "expected type `struct` or `*struct` but got type `{}`",
-                    ty
+                    "expected type `struct` or `*struct` but got type `{}`", ty
                 );
                 None
             }
@@ -507,7 +492,7 @@ impl<'a> Analyzer<'a> {
         let (mut arg_ty, mut return_ty) = match &ty {
             Type::App(TypeCon::Arrow, types) => (types[0].clone(), types[1].clone()),
             ty => {
-                error!(self, func_span, "expected type `function` but got `{}`", ty);
+                error!(func_span, "expected type `function` but got `{}`", ty);
                 return None;
             }
         };
@@ -517,7 +502,7 @@ impl<'a> Analyzer<'a> {
         arg_ty = subst(arg_ty, &map);
         return_ty = subst(return_ty, &map);
 
-        unify(&mut self.errors, &arg_expr.span, &arg_ty, &arg_expr.ty)?;
+        unify(&arg_expr.span, &arg_ty, &arg_expr.ty)?;
 
         translate::arg(&mut insts, arg_expr);
 
@@ -554,7 +539,6 @@ impl<'a> Analyzer<'a> {
                     // Check size of the tuples
                     if types.len() != exprs.len() {
                         error!(
-                            self,
                             expr.span,
                             "expected that tuple size will be `{}` but the number of expressions `{}`",
                             types.len(),
@@ -658,7 +642,7 @@ impl<'a> Analyzer<'a> {
                         fields.into_iter().zip(tys.into_iter()).collect()
                     }
                     ty => {
-                        error!(self, expr.span.clone(), "type `{}` is not struct", ty);
+                        error!(expr.span.clone(), "type `{}` is not struct", ty);
                         return None;
                     }
                 };
@@ -681,12 +665,11 @@ impl<'a> Analyzer<'a> {
                                 *ty = subst(ty.clone(), &map);
                             }
 
-                            unify(&mut self.errors, &expr.span, &fields[i].1, &expr.ty);
+                            unify(&expr.span, &fields[i].1, &expr.ty);
                             insts.append(translate::literal_struct_field(expr));
                         }
                     } else {
                         error!(
-                            self,
                             expr.span.clone(),
                             "missing field `{}`",
                             IdMap::name(fields[i].0)
@@ -748,9 +731,9 @@ impl<'a> Analyzer<'a> {
                         let types = match &ty {
                             Type::App(TypeCon::Pointer(is_mutable_), tys) => {
                                 is_mutable = *is_mutable_;
-                                expect_tuple(&mut self.errors, &tys[0], comp_expr.span.clone())?
+                                expect_tuple(&tys[0], comp_expr.span.clone())?
                             }
-                            ty => expect_tuple(&mut self.errors, ty, comp_expr.span.clone())?,
+                            ty => expect_tuple(ty, comp_expr.span.clone())?,
                         };
 
                         match types.get(i) {
@@ -762,7 +745,7 @@ impl<'a> Analyzer<'a> {
                                 (ty.clone(), offset)
                             }
                             None => {
-                                error!(self, expr.span, "error");
+                                error!(expr.span, "error");
                                 return None;
                             }
                         }
@@ -776,7 +759,6 @@ impl<'a> Analyzer<'a> {
                             Some(i) => i,
                             None => {
                                 error!(
-                                    self,
                                     expr.span,
                                     "no field in `{}`: `{}`",
                                     comp_expr.ty,
@@ -827,33 +809,18 @@ impl<'a> Analyzer<'a> {
                         match &tys[0] {
                             Type::App(TypeCon::Array(_), tys) => (tys[0].clone(), true),
                             ty => {
-                                error!(
-                                    self,
-                                    expr.span.clone(),
-                                    "expected array but got type `{}`",
-                                    ty
-                                );
+                                error!(expr.span.clone(), "expected array but got type `{}`", ty);
                                 return None;
                             }
                         }
                     }
                     ty => {
-                        error!(
-                            self,
-                            expr.span.clone(),
-                            "expected array but got type `{}`",
-                            ty
-                        );
+                        error!(expr.span.clone(), "expected array but got type `{}`", ty);
                         return None;
                     }
                 };
 
-                unify(
-                    &mut self.errors,
-                    &subscript_expr.span,
-                    &subscript_expr.ty,
-                    &Type::Int,
-                );
+                unify(&subscript_expr.span, &subscript_expr.ty, &Type::Int);
 
                 let span = expr.span.clone();
                 let is_lvalue = expr.is_lvalue;
@@ -878,7 +845,7 @@ impl<'a> Analyzer<'a> {
                 let entry = match self.find_var(name) {
                     Some(v) => v,
                     None => {
-                        self.add_error("undefined variable or function", expr.span.clone());
+                        error!(expr.span.clone(), "undefined variable or function");
                         return None;
                     }
                 };
@@ -905,7 +872,7 @@ impl<'a> Analyzer<'a> {
                 let (header, func_id, module_id) = match self.find_external_func(&path) {
                     Some(t) => t,
                     None => {
-                        error!(self, expr.span, "undefined function `{}`", path);
+                        error!(expr.span, "undefined function `{}`", path);
                         return None;
                     }
                 };
@@ -927,7 +894,7 @@ impl<'a> Analyzer<'a> {
                 match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {}
                     (lty, rty) => {
-                        error!(self, expr.span.clone(), "{} && {}", lty, rty);
+                        error!(expr.span.clone(), "{} && {}", lty, rty);
                     }
                 }
 
@@ -942,7 +909,7 @@ impl<'a> Analyzer<'a> {
                 match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {}
                     (lty, rty) => {
-                        error!(self, expr.span.clone(), "{} || {}", lty, rty);
+                        error!(expr.span.clone(), "{} || {}", lty, rty);
                     }
                 }
 
@@ -981,9 +948,9 @@ impl<'a> Analyzer<'a> {
                     (BinOp::NotEqual, Type::Null, Type::App(TypeCon::Pointer(_), _)) => Type::Bool,
                     (BinOp::NotEqual, Type::App(TypeCon::Pointer(_), _), Type::Null) => Type::Bool,
                     _ => {
-                        self.add_error(
-                            &format!("`{} {} {}`", lhs.ty, binop_symbol, rhs.ty),
+                        error!(
                             expr.span.clone(),
+                            "`{} {} {}`", lhs.ty, binop_symbol, rhs.ty
                         );
                         return None;
                     }
@@ -1005,7 +972,7 @@ impl<'a> Analyzer<'a> {
                 let expr = self.walk_expr_with_unwrap(code, *expr)?;
 
                 if is_mutable && !expr.is_mutable {
-                    error!(self, expr.span, "this expression is immutable");
+                    error!(expr.span, "this expression is immutable");
                     return None;
                 }
 
@@ -1042,10 +1009,7 @@ impl<'a> Analyzer<'a> {
                         ));
                     }
                     ty => {
-                        error!(
-                            self,
-                            expr.span, "expected type `pointer` but got type `{}`", ty
-                        );
+                        error!(expr.span, "expected type `pointer` but got type `{}`", ty);
                         return None;
                     }
                 }
@@ -1058,7 +1022,7 @@ impl<'a> Analyzer<'a> {
                         (translate::negative(expr), ty)
                     },
                     ty => {
-                        error!(self, expr.span, "expected type `int` or `float` but got type `{}`", ty);
+                        error!(expr.span, "expected type `int` or `float` but got type `{}`", ty);
                         return None;
                     },
                 }
@@ -1084,7 +1048,7 @@ impl<'a> Analyzer<'a> {
                 let then_expr = self.walk_expr(code, *then_expr);
                 try_some!(cond, then_expr);
 
-                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
+                unify(&cond.span, &Type::Bool, &cond.ty);
 
                 (
                     translate::if_expr(cond, then_expr.insts, &then_expr.ty),
@@ -1098,8 +1062,8 @@ impl<'a> Analyzer<'a> {
 
                 let els = self.walk_expr_with_conversion(code, *else_expr, &then.ty)?;
 
-                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
-                unify(&mut self.errors, &els.span, &then.ty, &els.ty);
+                unify(&cond.span, &Type::Bool, &cond.ty);
+                unify(&els.span, &then.ty, &els.ty);
 
                 (
                     translate::if_else_expr(cond, then.insts, els.insts, &then.ty),
@@ -1128,7 +1092,6 @@ impl<'a> Analyzer<'a> {
                     Type::Poly(vars, ty) => {
                         if vars.len() != tyargs.len() {
                             error!(
-                                self,
                                 expr.span,
                                 "the expression takes {} parameters but got {} arguments",
                                 vars.len(),
@@ -1143,8 +1106,8 @@ impl<'a> Analyzer<'a> {
                     }
                     ty => {
                         error!(
-                            self,
-                            expr.span, "The expression with type `{}` cannot be apply", ty
+                            expr.span,
+                            "The expression with type `{}` cannot be apply", ty
                         );
                         return None;
                     }
@@ -1201,7 +1164,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Expr(expr) => {
                 // An expression that doesn't have side effects is unnecessary
                 if !Self::expr_has_side_effects(&expr.kind) {
-                    warn!(self, expr.span, "Unnecessary expression");
+                    warn!(expr.span, "Unnecessary expression");
                     InstList::new()
                 } else {
                     let expr = self.walk_expr(code, expr)?;
@@ -1214,7 +1177,7 @@ impl<'a> Analyzer<'a> {
                 let body = self.walk_stmt(code, *stmt);
                 try_some!(cond, body);
 
-                unify(&mut self.errors, &cond.span, &Type::Bool, &cond.ty);
+                unify(&cond.span, &Type::Bool, &cond.ty);
 
                 translate::while_stmt(cond, body)
             }
@@ -1224,7 +1187,7 @@ impl<'a> Analyzer<'a> {
                         let ty = self.walk_type(ty)?;
                         let mut expr = self.walk_expr_with_conversion(code, *expr, &ty)?;
 
-                        unify(&mut self.errors, &expr.span, &ty, &expr.ty)?;
+                        unify(&expr.span, &ty, &expr.ty)?;
                         expr.ty = ty;
 
                         expr
@@ -1247,16 +1210,16 @@ impl<'a> Analyzer<'a> {
                 let rhs = self.walk_expr_with_conversion(code, *rhs, &lhs.ty)?;
 
                 if !lhs.is_lvalue {
-                    error!(self, lhs.span, "unassignable expression");
+                    error!(lhs.span, "unassignable expression");
                     return None;
                 }
 
                 if !lhs.is_mutable {
-                    error!(self, lhs.span, "immutable expression");
+                    error!(lhs.span, "immutable expression");
                     return None;
                 }
 
-                unify(&mut self.errors, &rhs.span, &lhs.ty, &rhs.ty)?;
+                unify(&rhs.span, &lhs.ty, &rhs.ty)?;
 
                 translate::assign_stmt(lhs, rhs)
             }
@@ -1265,7 +1228,7 @@ impl<'a> Analyzer<'a> {
 
                 // Check if is outside function
                 if func_name == *reserved_id::MAIN_FUNC {
-                    error!(self, stmt.span, "return statement outside function");
+                    error!(stmt.span, "return statement outside function");
                     return None;
                 }
 
@@ -1280,7 +1243,7 @@ impl<'a> Analyzer<'a> {
 
                 // Check type
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
-                unify(&mut self.errors, &stmt.span, &return_var_ty, return_ty);
+                unify(&stmt.span, &return_var_ty, return_ty);
 
                 let return_var = self.get_return_var();
                 translate::return_stmt(&self.relative_loc(&return_var.loc), expr, &return_var.ty)
@@ -1317,7 +1280,7 @@ impl<'a> Analyzer<'a> {
                             insert(*module_id, *name, *name);
                         }
                     }
-                    _ => error!(self, range_span.clone(), "undefined module `{}`", spath),
+                    _ => error!(range_span.clone(), "undefined module `{}`", spath),
                 }
             }
             ImportRangePath::Path(spath) | ImportRangePath::Renamed(spath, _)
@@ -1332,7 +1295,7 @@ impl<'a> Analyzer<'a> {
                 // Get the module path from `spath`
                 let module_path = spath.parent();
                 if module_path.is_none() {
-                    error!(self, range_span.clone(), "undefined module `{}`", spath);
+                    error!(range_span.clone(), "undefined module `{}`", spath);
                     return;
                 }
 
@@ -1343,7 +1306,7 @@ impl<'a> Analyzer<'a> {
                 let (module_id, _) = match self.module_headers.get(&module_path) {
                     Some(t) => t,
                     None => {
-                        error!(self, range_span.clone(), "undefined module `{}`", spath);
+                        error!(range_span.clone(), "undefined module `{}`", spath);
                         return;
                     }
                 };
@@ -1402,7 +1365,6 @@ impl<'a> Analyzer<'a> {
                 }
                 None => {
                     error!(
-                        self,
                         span.clone(),
                         "undefined function or type `{}`",
                         IdMap::name(original_name)
@@ -1458,7 +1420,6 @@ impl<'a> Analyzer<'a> {
         for func in funcs {
             if self.variables.contains_key(&func.name.kind) {
                 error!(
-                    self,
                     func.name.span.clone(),
                     "A function or variable with the same name exists"
                 );
@@ -1525,7 +1486,7 @@ impl<'a> Analyzer<'a> {
                 } else if self.tycons.contains(name) {
                     Some(Type::App(TypeCon::UnsizedNamed(name), Vec::new()))
                 } else {
-                    error!(self, ty.span, "undefined type `{}`", IdMap::name(name));
+                    error!(ty.span, "undefined type `{}`", IdMap::name(name));
                     None
                 }
             }
@@ -1561,12 +1522,7 @@ impl<'a> Analyzer<'a> {
                     Some(size) => TypeCon::Named(name.kind, size),
                     None if self.tycons.contains(name.kind) => TypeCon::UnsizedNamed(name.kind),
                     None => {
-                        error!(
-                            self,
-                            name.span,
-                            "undefined type `{}`",
-                            IdMap::name(name.kind)
-                        );
+                        error!(name.span, "undefined type `{}`", IdMap::name(name.kind));
                         return None;
                     }
                 };
@@ -1693,7 +1649,7 @@ impl<'a> Analyzer<'a> {
             };
             wrap_typevar(&mut ty);
 
-            param_size += self.type_size_err(ty_span, &ty);
+            param_size += Self::type_size_err(ty_span, &ty);
             param_types.push(ty);
         }
 
@@ -1707,7 +1663,7 @@ impl<'a> Analyzer<'a> {
 
         self.pop_type_scope();
 
-        self.type_size_err(return_ty_span, &return_ty);
+        Self::type_size_err(return_ty_span, &return_ty);
 
         // Insert a header of the function
         let header = FunctionHeader {
@@ -1765,7 +1721,7 @@ impl<'a> Analyzer<'a> {
             None => return,
         };
 
-        unify(&mut self.errors, &body.span, &return_ty, &body.ty);
+        unify(&body.span, &return_ty, &body.ty);
 
         let return_var = self.get_return_var();
         let body_insts =
@@ -1941,11 +1897,7 @@ impl<'a> Analyzer<'a> {
         self.pop_type_scope();
     }
 
-    pub fn analyze(
-        mut self,
-        mut code: BytecodeBuilder,
-        program: Program,
-    ) -> Result<Bytecode, ErrorList> {
+    pub fn analyze(mut self, mut code: BytecodeBuilder, program: Program) -> Bytecode {
         self.push_scope();
         self.push_type_scope();
 
@@ -1969,11 +1921,7 @@ impl<'a> Analyzer<'a> {
             code.push_function_body(name, insts);
         }
 
-        if self.errors.has_error() {
-            Err(self.errors)
-        } else {
-            Ok(code.build(&program.strings))
-        }
+        code.build(&program.strings)
     }
 }
 
@@ -1985,7 +1933,7 @@ pub enum ModuleBody {
 pub fn do_semantics_analysis(
     module_buffers: FxHashMap<SymbolPath, Program>,
     native_modules: &ModuleContainer,
-) -> Result<FxHashMap<String, ModuleBody>, ErrorList> {
+) -> FxHashMap<String, ModuleBody> {
     struct Module<'a> {
         bc_builder: BytecodeBuilder,
         analyzer: Analyzer<'a>,
@@ -2058,8 +2006,6 @@ pub fn do_semantics_analysis(
             .insert_public_functions(&mut module.bc_builder, program, module_header);
     }
 
-    let mut errors = ErrorList::new();
-
     for (name, program) in module_buffers {
         let Module {
             mut analyzer,
@@ -2068,13 +2014,7 @@ pub fn do_semantics_analysis(
 
         analyzer.update_modules(&module_headers);
 
-        let bytecode = match analyzer.analyze(bc_builder, program) {
-            Ok(b) => b,
-            Err(new_errors) => {
-                errors.append(new_errors);
-                continue;
-            }
-        };
+        let bytecode = analyzer.analyze(bc_builder, program);
         bodies.insert(format!("{}", name), ModuleBody::Normal(bytecode));
     }
 
@@ -2083,9 +2023,5 @@ pub fn do_semantics_analysis(
         bodies.insert(format!("{}", path), ModuleBody::Native(module));
     }
 
-    if errors.has_error() {
-        Err(errors)
-    } else {
-        Ok(bodies)
-    }
+    bodies
 }
