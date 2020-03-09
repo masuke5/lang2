@@ -327,8 +327,7 @@ pub fn func_pos(module_id: Option<u16>, func_id: u16) -> InstList {
     insts.push_ref_u64(opcode::INT, arg);
 
     // Push the pointer to stack in heap
-    insts.push(opcode::LOAD_HEAP, 0);
-    insts.push_noarg(opcode::POINTER);
+    insts.push_noarg(opcode::EP);
 
     insts
 }

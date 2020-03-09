@@ -113,6 +113,23 @@ fn add1(x: int): int = {
 
 test_eq "escaped variable and parameter" 3038 (add1 3);
 
+fn func1(x: int): int -> int = {
+    fn func2(): int -> int = {
+        fn func3(y: int): int = {
+            let z = 30;
+            fn func4(): int = z;
+            x + y + func4 ()
+        }
+        func3
+    }
+
+    func2 ()
+}
+
+let func = func1 3;
+let value = func 50;
+test_eq "escaped variable and parameter 2" 83 value;
+
 fn mul(a: int): int -> int = {
     fn mul2(b: int): int = a * b;
     mul2

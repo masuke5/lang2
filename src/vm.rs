@@ -271,7 +271,7 @@ impl VM {
             }
         }
 
-        println!("####### END DUMP #######");
+        println!("####### END DUMP ########");
     }
 
     fn read_functions(&mut self, bytecode: &Bytecode, module_id: usize) {
@@ -654,6 +654,9 @@ impl VM {
 
                     let value = &mut self.stack[loc];
                     push!(self, Value::new_ptr(value));
+                }
+                opcode::EP => {
+                    push!(self, Value::new_ptr_to_heap(self.ep));
                 }
                 opcode::LOAD_HEAP => {
                     let loc = arg as usize;

@@ -180,8 +180,14 @@ impl Gc {
             }
         });
 
-        for region_ptr in free_regions {
-            let region = unsafe { region_ptr.as_ref() };
+        for mut region_ptr in free_regions {
+            let region = unsafe { region_ptr.as_mut() };
+            // Zero clear before add to freelist
+            unsafe {
+                let p = region.as_mut_ptr::<u8>();
+                p.write_bytes(0, region.size);
+            }
+
             let freelist = match self.freelist_map.entry(region.size) {
                 Entry::Occupied(l) => l.into_mut(),
                 Entry::Vacant(v) => v.insert(LinkedList::new()),

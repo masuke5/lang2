@@ -83,6 +83,7 @@ pub mod opcode {
     pub const CALL_EXTERN_POS: u8 = 0x29;
     pub const LOAD_HEAP: u8 = 0x2a;
     pub const LOAD_HEAP_TRACE: u8 = 0x2b;
+    pub const EP: u8 = 0x2c;
 
     pub const END: u8 = 0x50;
 }
@@ -106,6 +107,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::DUPLICATE => "DUPLICATE",
         opcode::LOAD_REF => "LOAD_REF",
         opcode::LOAD_COPY => "LOAD_COPY",
+        opcode::EP => "EP",
         opcode::LOAD_HEAP => "LOAD_HEAP",
         opcode::LOAD_HEAP_TRACE => "LOAD_HEAP_TRACE",
         opcode::STORE => "STORE",
@@ -337,6 +339,7 @@ impl Bytecode {
                 let size = arg & 0b0000_0111;
                 println!("{} size={}", loc, size);
             }
+            opcode::EP => println!(),
             opcode::LOAD_HEAP => println!("{}", i8::from_le_bytes([arg])),
             opcode::LOAD_HEAP_TRACE => println!("{}", i8::from_le_bytes([arg])),
             opcode::STORE => println!("size={}", arg),
