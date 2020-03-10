@@ -1,4 +1,5 @@
 use std::collections::{hash_map::Entry, HashMap, LinkedList};
+use std::convert::TryInto;
 use std::mem;
 use std::ptr;
 use std::str;
@@ -147,12 +148,6 @@ pub const POS_MODULE_COUNT: usize = 13;
 pub const POS_FUNC_MAP_START: usize = 6;
 pub const POS_STRING_MAP_START: usize = 8;
 pub const POS_MODULE_MAP_START: usize = 10;
-
-pub const FUNC_OFFSET_STACK_IN_HEAP_SIZE: usize = 0;
-pub const FUNC_OFFSET_STACK_SIZE: usize = 1;
-pub const FUNC_OFFSET_PARAM_SIZE: usize = 2;
-pub const FUNC_OFFSET_POS: usize = 4;
-pub const FUNC_OFFSET_REF_START: usize = 6;
 
 macro_rules! bfn_read {
     ($ty:ty, $name:ident) => {
@@ -444,27 +439,33 @@ impl Bytecode {
         let func_map_start = self.read_u16(POS_FUNC_MAP_START) as usize;
         let func_count = self.read_u8(POS_FUNC_COUNT) as usize;
 
-        type Func = (u16, u8, u8, usize, usize); // id, stack_size, param_size, pos, ref_start
+        type Func = (u16, usize, usize, usize, usize); // id, stack_size, param_size, pos, ref_start
         let mut functions: Vec<Func> = Vec::new();
 
         for j in 0..func_count {
             let loc = func_map_start + j * 8;
             let func_id = j as u16;
-            let stack_in_heap_size = self.read_u8(loc + FUNC_OFFSET_STACK_IN_HEAP_SIZE);
-            let stack_size = self.read_u8(loc + FUNC_OFFSET_STACK_SIZE);
-            let param_size = self.read_u8(loc + FUNC_OFFSET_PARAM_SIZE);
-            let pos = self.read_u16(loc + FUNC_OFFSET_POS) as usize;
-            let ref_start = self.read_u16(loc + FUNC_OFFSET_REF_START) as usize;
+
+            let mut bytes = [0; 8];
+            self.read_bytes(loc, &mut bytes);
+
+            let func = Function::from_bytes(func_id, bytes);
 
             println!("{:<width$}", loc, width = index_len);
             println!("  id: {}", func_id);
-            println!("  stack_in_heap_size: {}", stack_in_heap_size);
-            println!("  stack_size: {}", stack_size);
-            println!("  param_size: {}", param_size);
-            println!("  pos: {}", pos);
-            println!("  ref_start: {}", ref_start);
+            println!("  stack_in_heap_size: {}", func.stack_in_heap_size);
+            println!("  stack_size: {}", func.stack_size);
+            println!("  param_size: {}", func.param_size);
+            println!("  pos: {}", func.pos);
+            println!("  ref_start: {}", func.ref_start);
 
-            functions.push((func_id, stack_size, param_size, pos, ref_start));
+            functions.push((
+                func_id,
+                func.stack_size,
+                func.param_size,
+                func.pos,
+                func.ref_start,
+            ));
         }
 
         for (id, _, _, pos, ref_start) in functions {
@@ -490,26 +491,71 @@ impl Bytecode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
-    pub name: Id,
+    pub name: Option<Id>,
     pub code_id: u16,
-    pub stack_in_heap_size: u8,
-    pub stack_size: u8,
-    pub param_size: u8,
-    pub pos: u16,
-    pub ref_start: u16,
+    pub stack_in_heap_size: usize,
+    pub stack_size: usize,
+    pub param_size: usize,
+    pub pos: usize,
+    pub ref_start: usize,
 }
 
 impl Function {
+    pub const OFFSET_STACK_IN_HEAP_SIZE: usize = 0;
+    pub const OFFSET_STACK_SIZE: usize = 1;
+    pub const OFFSET_PARAM_SIZE: usize = 2;
+    pub const OFFSET_POS: usize = 4;
+    pub const OFFSET_REF_START: usize = 6;
+
     pub fn new(name: Id, param_size: usize) -> Self {
         Self {
-            name,
+            name: Some(name),
             code_id: 0,
-            param_size: param_size as u8,
+            param_size,
             stack_in_heap_size: 0,
             stack_size: 0,
             pos: 0,
             ref_start: 0,
         }
+    }
+
+    #[inline]
+    pub fn name(&self) -> Id {
+        self.name.unwrap()
+    }
+
+    pub fn from_bytes(code_id: u16, bytes: [u8; 8]) -> Self {
+        Self {
+            name: None,
+            code_id,
+            param_size: bytes[Self::OFFSET_PARAM_SIZE] as usize,
+            stack_in_heap_size: bytes[Self::OFFSET_STACK_IN_HEAP_SIZE] as usize,
+            stack_size: bytes[Self::OFFSET_STACK_SIZE] as usize,
+            pos: u16::from_le_bytes(
+                bytes[Self::OFFSET_POS..Self::OFFSET_POS + 2]
+                    .try_into()
+                    .unwrap(),
+            ) as usize,
+            ref_start: u16::from_le_bytes(
+                bytes[Self::OFFSET_REF_START..Self::OFFSET_REF_START + 2]
+                    .try_into()
+                    .unwrap(),
+            ) as usize,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; 8] {
+        let mut bytes = [0u8; 8];
+
+        bytes[Self::OFFSET_STACK_IN_HEAP_SIZE] = self.stack_in_heap_size as u8;
+        bytes[Self::OFFSET_STACK_SIZE] = self.stack_size as u8;
+        bytes[Self::OFFSET_PARAM_SIZE] = self.param_size as u8;
+        bytes[Self::OFFSET_POS..Self::OFFSET_POS + 2]
+            .copy_from_slice(&(self.pos as u16).to_le_bytes());
+        bytes[Self::OFFSET_REF_START..Self::OFFSET_REF_START + 2]
+            .copy_from_slice(&(self.ref_start as u16).to_le_bytes());
+
+        bytes
     }
 }
 
@@ -723,18 +769,11 @@ impl BytecodeBuilder {
 
         for func in &functions {
             let base = self.code.len();
+
             self.code.reserve(8);
-            self.code.write_u8(
-                base + FUNC_OFFSET_STACK_IN_HEAP_SIZE,
-                func.stack_in_heap_size,
-            );
-            self.code
-                .write_u8(base + FUNC_OFFSET_STACK_SIZE, func.stack_size);
-            self.code
-                .write_u8(base + FUNC_OFFSET_PARAM_SIZE, func.param_size);
-            self.code.write_u16(base + FUNC_OFFSET_POS, func.pos);
-            self.code
-                .write_u16(base + FUNC_OFFSET_REF_START, func.ref_start);
+
+            let bytes = func.to_bytes();
+            self.code.write_bytes(base, &bytes);
         }
     }
 
@@ -745,7 +784,7 @@ impl BytecodeBuilder {
             panic!("too many functions");
         }
 
-        if let Entry::Vacant(entry) = self.functions.entry(func.name) {
+        if let Entry::Vacant(entry) = self.functions.entry(func.name()) {
             // Set ID
             func.code_id = self.func_count as u16;
             self.func_count += 1;
@@ -761,7 +800,7 @@ impl BytecodeBuilder {
             .functions
             .get_mut(&func_id)
             .expect("the function header must be added");
-        func.pos = self.code.len() as u16;
+        func.pos = self.code.len();
 
         // Write instruction bytes
         for inst in &insts.insts {
@@ -770,7 +809,7 @@ impl BytecodeBuilder {
 
         self.code.align(8);
 
-        func.ref_start = self.code.len() as u16;
+        func.ref_start = self.code.len();
 
         // Push refs
         for int_ref in insts.refs.drain(..) {
@@ -870,5 +909,22 @@ mod tests {
 
         assert_eq!(expected, insts.insts);
         assert_eq!(vec![606060, 505050], insts.refs);
+    }
+
+    #[test]
+    fn func_to_bytes() {
+        let func = Function {
+            name: None,
+            code_id: 30,
+            stack_in_heap_size: 10,
+            stack_size: 20,
+            param_size: 12,
+            pos: 19,
+            ref_start: 41395,
+        };
+        let bytes = func.to_bytes();
+        let actual = Function::from_bytes(30, bytes);
+
+        assert_eq!(func, actual);
     }
 }

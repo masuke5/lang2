@@ -277,15 +277,12 @@ impl<'a> Analyzer<'a> {
         let new_var_size = type_size_nocheck(&ty);
 
         let loc = if is_escaped {
-            let loc = VariableLoc::StackInHeap(
-                current_func.stack_in_heap_size as usize + 1,
-                self.var_level,
-            );
-            current_func.stack_in_heap_size += new_var_size as u8;
+            let loc = VariableLoc::StackInHeap(current_func.stack_in_heap_size + 1, self.var_level);
+            current_func.stack_in_heap_size += new_var_size;
             loc
         } else {
             let loc = VariableLoc::Stack(current_func.stack_size as isize);
-            current_func.stack_size += new_var_size as u8;
+            current_func.stack_size += new_var_size;
             loc
         };
 
@@ -1224,7 +1221,7 @@ impl<'a> Analyzer<'a> {
                 translate::assign_stmt(lhs, rhs)
             }
             Stmt::Return(expr) => {
-                let func_name = code.get_function(self.current_func).unwrap().name;
+                let func_name = code.get_function(self.current_func).unwrap().name();
 
                 // Check if is outside function
                 if func_name == *reserved_id::MAIN_FUNC {
@@ -1427,7 +1424,7 @@ impl<'a> Analyzer<'a> {
             }
 
             if let Some((header, func)) = self.generate_function_header(&func) {
-                let func_name = func.name;
+                let func_name = func.name();
                 code.insert_function_header(func);
 
                 let func_id = code.get_function(func_name).unwrap().code_id;
@@ -1596,10 +1593,10 @@ impl<'a> Analyzer<'a> {
 
             let loc = if param.is_escaped {
                 // Copy the parameter to heap if escaped
-                let heap_loc = func.stack_in_heap_size as usize + 1;
+                let heap_loc = func.stack_in_heap_size + 1;
 
                 insts.append(translate::escaped_param(&param.ty, loc, heap_loc));
-                func.stack_in_heap_size += type_size_nocheck(&param.ty) as u8;
+                func.stack_in_heap_size += type_size_nocheck(&param.ty);
 
                 VariableLoc::StackInHeap(heap_loc, self.var_level)
             } else {
@@ -1884,7 +1881,7 @@ impl<'a> Analyzer<'a> {
 
         for func in &program.main.functions {
             if let Some((header, func)) = self.generate_function_header(&func) {
-                let func_name = func.name;
+                let func_name = func.name();
 
                 code.insert_function_header(func);
                 module_header.functions.insert(

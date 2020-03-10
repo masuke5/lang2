@@ -8,7 +8,7 @@ use std::time::Instant;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bytecode;
-use crate::bytecode::{opcode, opcode_name, Bytecode};
+use crate::bytecode::{opcode, opcode_name, Bytecode, Function};
 use crate::gc::Gc;
 use crate::module::Module;
 use crate::sema::ModuleBody;
@@ -31,15 +31,6 @@ macro_rules! push {
         $self.sp += 1;
         $self.stack[$self.sp] = $value;
     };
-}
-
-#[derive(Debug, Clone)]
-struct Function {
-    stack_in_heap_size: usize,
-    stack_size: usize,
-    param_size: usize,
-    pos: usize,
-    ref_start: usize,
 }
 
 #[derive(Debug)]
@@ -282,20 +273,13 @@ impl VM {
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
-            let stack_in_heap_size =
-                bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_IN_HEAP_SIZE) as usize;
-            let stack_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_STACK_SIZE) as usize;
-            let param_size = bytecode.read_u8(base + bytecode::FUNC_OFFSET_PARAM_SIZE) as usize;
-            let pos = bytecode.read_u16(base + bytecode::FUNC_OFFSET_POS) as usize;
-            let ref_start = bytecode.read_u16(base + bytecode::FUNC_OFFSET_REF_START) as usize;
 
-            self.functions[module_id].push(Function {
-                stack_in_heap_size,
-                stack_size,
-                param_size,
-                pos,
-                ref_start,
-            });
+            let mut bytes = [0; 8];
+            bytecode.read_bytes(base, &mut bytes);
+
+            let func = Function::from_bytes(i as u16, bytes);
+
+            self.functions[module_id].push(func);
         }
     }
 
