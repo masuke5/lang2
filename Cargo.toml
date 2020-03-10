@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["masuke5 <s.zerogoichi@gmail.com>"]
 edition = "2018"
 
+[features]
+vmdebug = []
+
 [dependencies]
 pretty_assertions = "0.6.1"
 clap = "2"

@@ -1,5 +1,4 @@
-use std::mem;
-use std::mem::size_of;
+use std::mem::{self, size_of, MaybeUninit};
 use std::ptr;
 use std::slice;
 use std::str;
@@ -21,6 +20,12 @@ const STACK_SIZE: usize = 10000;
 macro_rules! pop {
     ($self:ident) => {{
         let v = $self.stack[$self.sp];
+
+        #[cfg(feature = "vmdebug")]
+        {
+            $self.stack[$self.sp] = Value::zero();
+        }
+
         $self.sp -= 1;
         v
     }};
@@ -124,7 +129,11 @@ impl VM {
             fp: 0,
             sp: 0,
             ep: ptr::null(),
-            stack: unsafe { mem::zeroed() },
+            stack: if cfg!(feature = "vmdebug") {
+                unsafe { MaybeUninit::zeroed().assume_init() }
+            } else {
+                unsafe { MaybeUninit::uninit().assume_init() }
+            },
             functions: Vec::new(),
             current_func: 0,
             current_module: 0,

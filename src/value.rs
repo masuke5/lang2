@@ -41,6 +41,10 @@ impl Value {
         ptr as _
     }
 
+    pub const fn zero() -> Self {
+        Self(0)
+    }
+
     #[inline]
     pub fn new_u64(value: u64) -> Self {
         Self(value << 1)
