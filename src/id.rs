@@ -1,10 +1,11 @@
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::RwLock;
 
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
-pub struct Id(u32);
+pub struct Id(NonZeroUsize);
 
 impl fmt::Debug for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -28,7 +29,11 @@ impl IdMap {
         match str_map.get(id_str) {
             Some(id) => *id,
             None => {
-                let id = Id(id_map.len() as u32);
+                // Add 1 to avoid 0
+                let id = id_map.len() + 1;
+                let id = unsafe { NonZeroUsize::new_unchecked(id) };
+                let id = Id(id);
+
                 id_map.insert(id, id_str.to_string());
                 str_map.insert(id_str.to_string(), id);
                 id
