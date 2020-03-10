@@ -728,6 +728,10 @@ impl<'a> Parser<'a> {
         self.blocks_builder.push();
 
         while !self.consume(&Token::Rbrace) {
+            if self.consume(&Token::Semicolon) {
+                continue;
+            }
+
             let (is_expr, stmt) = self.parse_stmt_without_expr();
             if is_expr {
                 let expr = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
