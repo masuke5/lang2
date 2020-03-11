@@ -376,6 +376,10 @@ impl VM {
         // Allocate stack frame
         self.fp = self.sp + 1;
         self.sp += func.stack_size;
+
+        // Avoid to target unintialized region for GC
+        // Remove this but work
+        // self.clear_stack(self.fp, self.sp);
     }
 
     fn panic(&self, message: &str) -> ! {
@@ -403,6 +407,17 @@ impl VM {
     fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8) -> u64 {
         let ref_start = self.current_func().ref_start;
         bytecode.read_u64(ref_start + ref_id as usize * 8)
+    }
+
+    // start..=end
+    fn clear_stack(&mut self, start: usize, end: usize) {
+        assert!(start <= end);
+        assert!(end < STACK_SIZE);
+
+        unsafe {
+            let ptr = self.stack.as_mut_ptr();
+            ptr.add(start).write_bytes(0, end - start);
+        }
     }
 
     #[allow(clippy::cognitive_complexity)]
@@ -494,6 +509,9 @@ impl VM {
         self.ip = func.pos;
         self.fp = 1;
         self.sp = func.stack_size + 1;
+
+        // Avoid to target unintialized region for GC
+        self.clear_stack(self.fp, self.sp);
 
         let mut current_bytecode = bytecodes[0].as_ref().unwrap();
 
