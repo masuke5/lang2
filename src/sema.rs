@@ -21,7 +21,7 @@ macro_rules! try_some {
 
 macro_rules! fn_to_expect {
     ($fn_name:ident, $type_name:tt, $ty:ty, $pat:pat => $expr:expr,) => {
-        fn $fn_name<'a>(ty: &'a Type, span: Span) -> Option<&'a $ty> {
+        fn $fn_name<'a>(ty: &'a Type, span: &Span) -> Option<&'a $ty> {
             match ty {
                 $pat => $expr,
                 _ => {
@@ -29,7 +29,7 @@ macro_rules! fn_to_expect {
                         concat!("expected type `", $type_name, "` but got type `{}`"),
                         ty
                     );
-                    ErrorList::push(Error::new(&msg, span));
+                    ErrorList::push(Error::new(&msg, &span));
                     None
                 }
             }
@@ -256,7 +256,7 @@ impl<'a> Analyzer<'a> {
         match type_size(ty) {
             Some(size) => size,
             None => {
-                error!(span, "the size of type `{}` cannot be calculated", ty);
+                error!(&span, "the size of type `{}` cannot be calculated", ty);
                 0
             }
         }
@@ -388,7 +388,7 @@ impl<'a> Analyzer<'a> {
                     )),
                     ty => {
                         error!(
-                            span.clone(),
+                            &span.clone(),
                             "expected type `struct` or `*struct` but got type `{}`", ty
                         );
                         None
@@ -397,7 +397,7 @@ impl<'a> Analyzer<'a> {
             }
             ty => {
                 error!(
-                    span.clone(),
+                    &span.clone(),
                     "expected type `struct` or `*struct` but got type `{}`", ty
                 );
                 None
@@ -489,7 +489,7 @@ impl<'a> Analyzer<'a> {
         let (mut arg_ty, mut return_ty) = match &ty {
             Type::App(TypeCon::Arrow, types) => (types[0].clone(), types[1].clone()),
             ty => {
-                error!(func_span, "expected type `function` but got `{}`", ty);
+                error!(&func_span, "expected type `function` but got `{}`", ty);
                 return None;
             }
         };
@@ -535,7 +535,7 @@ impl<'a> Analyzer<'a> {
 
                     // Check size of the tuples
                     if types.len() != exprs.len() {
-                        error!(
+                        error!(&
                             expr.span,
                             "expected that tuple size will be `{}` but the number of expressions `{}`",
                             types.len(),
@@ -639,7 +639,7 @@ impl<'a> Analyzer<'a> {
                         fields.into_iter().zip(tys.into_iter()).collect()
                     }
                     ty => {
-                        error!(expr.span.clone(), "type `{}` is not struct", ty);
+                        error!(&expr.span.clone(), "type `{}` is not struct", ty);
                         return None;
                     }
                 };
@@ -667,7 +667,7 @@ impl<'a> Analyzer<'a> {
                         }
                     } else {
                         error!(
-                            expr.span.clone(),
+                            &expr.span.clone(),
                             "missing field `{}`",
                             IdMap::name(fields[i].0)
                         );
@@ -728,9 +728,9 @@ impl<'a> Analyzer<'a> {
                         let types = match &ty {
                             Type::App(TypeCon::Pointer(is_mutable_), tys) => {
                                 is_mutable = *is_mutable_;
-                                expect_tuple(&tys[0], comp_expr.span.clone())?
+                                expect_tuple(&tys[0], &comp_expr.span.clone())?
                             }
-                            ty => expect_tuple(ty, comp_expr.span.clone())?,
+                            ty => expect_tuple(ty, &comp_expr.span.clone())?,
                         };
 
                         match types.get(i) {
@@ -742,7 +742,7 @@ impl<'a> Analyzer<'a> {
                                 (ty.clone(), offset)
                             }
                             None => {
-                                error!(expr.span, "error");
+                                error!(&expr.span, "error");
                                 return None;
                             }
                         }
@@ -756,7 +756,7 @@ impl<'a> Analyzer<'a> {
                             Some(i) => i,
                             None => {
                                 error!(
-                                    expr.span,
+                                    &expr.span,
                                     "no field in `{}`: `{}`",
                                     comp_expr.ty,
                                     IdMap::name(name)
@@ -806,13 +806,13 @@ impl<'a> Analyzer<'a> {
                         match &tys[0] {
                             Type::App(TypeCon::Array(_), tys) => (tys[0].clone(), true),
                             ty => {
-                                error!(expr.span.clone(), "expected array but got type `{}`", ty);
+                                error!(&expr.span.clone(), "expected array but got type `{}`", ty);
                                 return None;
                             }
                         }
                     }
                     ty => {
-                        error!(expr.span.clone(), "expected array but got type `{}`", ty);
+                        error!(&expr.span.clone(), "expected array but got type `{}`", ty);
                         return None;
                     }
                 };
@@ -842,7 +842,7 @@ impl<'a> Analyzer<'a> {
                 let entry = match self.find_var(name) {
                     Some(v) => v,
                     None => {
-                        error!(expr.span.clone(), "undefined variable or function");
+                        error!(&expr.span.clone(), "undefined variable or function");
                         return None;
                     }
                 };
@@ -869,7 +869,7 @@ impl<'a> Analyzer<'a> {
                 let (header, func_id, module_id) = match self.find_external_func(&path) {
                     Some(t) => t,
                     None => {
-                        error!(expr.span, "undefined function `{}`", path);
+                        error!(&expr.span, "undefined function `{}`", path);
                         return None;
                     }
                 };
@@ -891,7 +891,7 @@ impl<'a> Analyzer<'a> {
                 match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {}
                     (lty, rty) => {
-                        error!(expr.span.clone(), "{} && {}", lty, rty);
+                        error!(&expr.span.clone(), "{} && {}", lty, rty);
                     }
                 }
 
@@ -906,7 +906,7 @@ impl<'a> Analyzer<'a> {
                 match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {}
                     (lty, rty) => {
-                        error!(expr.span.clone(), "{} || {}", lty, rty);
+                        error!(&expr.span.clone(), "{} || {}", lty, rty);
                     }
                 }
 
@@ -946,7 +946,7 @@ impl<'a> Analyzer<'a> {
                     (BinOp::NotEqual, Type::App(TypeCon::Pointer(_), _), Type::Null) => Type::Bool,
                     _ => {
                         error!(
-                            expr.span.clone(),
+                            &expr.span.clone(),
                             "`{} {} {}`", lhs.ty, binop_symbol, rhs.ty
                         );
                         return None;
@@ -969,7 +969,7 @@ impl<'a> Analyzer<'a> {
                 let expr = self.walk_expr_with_unwrap(code, *expr)?;
 
                 if is_mutable && !expr.is_mutable {
-                    error!(expr.span, "this expression is immutable");
+                    error!(&expr.span, "this expression is immutable");
                     return None;
                 }
 
@@ -1006,7 +1006,7 @@ impl<'a> Analyzer<'a> {
                         ));
                     }
                     ty => {
-                        error!(expr.span, "expected type `pointer` but got type `{}`", ty);
+                        error!(&expr.span, "expected type `pointer` but got type `{}`", ty);
                         return None;
                     }
                 }
@@ -1019,7 +1019,7 @@ impl<'a> Analyzer<'a> {
                         (translate::negative(expr), ty)
                     },
                     ty => {
-                        error!(expr.span, "expected type `int` or `float` but got type `{}`", ty);
+                        error!(&expr.span, "expected type `int` or `float` but got type `{}`", ty);
                         return None;
                     },
                 }
@@ -1089,7 +1089,7 @@ impl<'a> Analyzer<'a> {
                     Type::Poly(vars, ty) => {
                         if vars.len() != tyargs.len() {
                             error!(
-                                expr.span,
+                                &expr.span,
                                 "the expression takes {} parameters but got {} arguments",
                                 vars.len(),
                                 tyargs.len()
@@ -1103,7 +1103,7 @@ impl<'a> Analyzer<'a> {
                     }
                     ty => {
                         error!(
-                            expr.span,
+                            &expr.span,
                             "The expression with type `{}` cannot be apply", ty
                         );
                         return None;
@@ -1161,7 +1161,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Expr(expr) => {
                 // An expression that doesn't have side effects is unnecessary
                 if !Self::expr_has_side_effects(&expr.kind) {
-                    warn!(expr.span, "Unnecessary expression");
+                    warn!(&expr.span, "Unnecessary expression");
                     InstList::new()
                 } else {
                     let expr = self.walk_expr(code, expr)?;
@@ -1207,12 +1207,12 @@ impl<'a> Analyzer<'a> {
                 let rhs = self.walk_expr_with_conversion(code, *rhs, &lhs.ty)?;
 
                 if !lhs.is_lvalue {
-                    error!(lhs.span, "unassignable expression");
+                    error!(&lhs.span, "unassignable expression");
                     return None;
                 }
 
                 if !lhs.is_mutable {
-                    error!(lhs.span, "immutable expression");
+                    error!(&lhs.span, "immutable expression");
                     return None;
                 }
 
@@ -1225,7 +1225,7 @@ impl<'a> Analyzer<'a> {
 
                 // Check if is outside function
                 if func_name == *reserved_id::MAIN_FUNC {
-                    error!(stmt.span, "return statement outside function");
+                    error!(&stmt.span, "return statement outside function");
                     return None;
                 }
 
@@ -1277,7 +1277,7 @@ impl<'a> Analyzer<'a> {
                             insert(*module_id, *name, *name);
                         }
                     }
-                    _ => error!(range_span.clone(), "undefined module `{}`", spath),
+                    _ => error!(&range_span.clone(), "undefined module `{}`", spath),
                 }
             }
             ImportRangePath::Path(spath) | ImportRangePath::Renamed(spath, _)
@@ -1292,7 +1292,7 @@ impl<'a> Analyzer<'a> {
                 // Get the module path from `spath`
                 let module_path = spath.parent();
                 if module_path.is_none() {
-                    error!(range_span.clone(), "undefined module `{}`", spath);
+                    error!(&range_span.clone(), "undefined module `{}`", spath);
                     return;
                 }
 
@@ -1303,7 +1303,7 @@ impl<'a> Analyzer<'a> {
                 let (module_id, _) = match self.module_headers.get(&module_path) {
                     Some(t) => t,
                     None => {
-                        error!(range_span.clone(), "undefined module `{}`", spath);
+                        error!(&range_span.clone(), "undefined module `{}`", spath);
                         return;
                     }
                 };
@@ -1362,7 +1362,7 @@ impl<'a> Analyzer<'a> {
                 }
                 None => {
                     error!(
-                        span.clone(),
+                        &span.clone(),
                         "undefined function or type `{}`",
                         IdMap::name(original_name)
                     );
@@ -1417,7 +1417,7 @@ impl<'a> Analyzer<'a> {
         for func in funcs {
             if self.variables.contains_key(&func.name.kind) {
                 error!(
-                    func.name.span.clone(),
+                    &func.name.span.clone(),
                     "A function or variable with the same name exists"
                 );
                 continue;
@@ -1483,7 +1483,7 @@ impl<'a> Analyzer<'a> {
                 } else if self.tycons.contains(name) {
                     Some(Type::App(TypeCon::UnsizedNamed(name), Vec::new()))
                 } else {
-                    error!(ty.span, "undefined type `{}`", IdMap::name(name));
+                    error!(&ty.span, "undefined type `{}`", IdMap::name(name));
                     None
                 }
             }
@@ -1519,7 +1519,7 @@ impl<'a> Analyzer<'a> {
                     Some(size) => TypeCon::Named(name.kind, size),
                     None if self.tycons.contains(name.kind) => TypeCon::UnsizedNamed(name.kind),
                     None => {
-                        error!(name.span, "undefined type `{}`", IdMap::name(name.kind));
+                        error!(&name.span, "undefined type `{}`", IdMap::name(name.kind));
                         return None;
                     }
                 };

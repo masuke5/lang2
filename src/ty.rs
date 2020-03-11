@@ -342,7 +342,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
         (a, b) => {
-            error!(span.clone(), "`{}` and `{}` are not equivalent", a, b);
+            error!(&span.clone(), "`{}` and `{}` are not equivalent", a, b);
             None
         }
     }

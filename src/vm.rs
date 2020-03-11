@@ -132,7 +132,10 @@ impl VM {
             stack: if cfg!(feature = "vmdebug") {
                 unsafe { MaybeUninit::zeroed().assume_init() }
             } else {
-                unsafe { MaybeUninit::uninit().assume_init() }
+                #[allow(clippy::uninit_assumed_init)]
+                unsafe {
+                    MaybeUninit::uninit().assume_init()
+                }
             },
             functions: Vec::new(),
             current_func: 0,

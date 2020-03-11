@@ -167,7 +167,7 @@ impl<'a> Parser<'a> {
         if !self.consume(&expected) {
             let token = self.peek().clone();
             error!(
-                token.span,
+                &token.span,
                 "expected `{}` but got `{}`", expected, token.kind
             );
 
@@ -190,7 +190,10 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let token = self.peek().clone();
-                error!(token.span, "expected `identifier` but got `{}`", token.kind);
+                error!(
+                    &token.span,
+                    "expected `identifier` but got `{}`", token.kind
+                );
 
                 self.skip_to(skip);
                 if let Token::Identifier(_) = self.peek().kind {
@@ -400,7 +403,7 @@ impl<'a> Parser<'a> {
             Token::Number(size) => match usize::try_from(size) {
                 Ok(size) => size,
                 Err(_) => {
-                    error!(self.peek().span.clone(), "too large");
+                    error!(&self.peek().span, "too large");
                     0
                 }
             },
@@ -471,7 +474,7 @@ impl<'a> Parser<'a> {
             Token::If => self.parse_if_expr(),
             _ => {
                 error!(
-                    token.span,
+                    &token.span,
                     "expected `number`, `identifier`, `true`, `false` or `(` but got `{}`",
                     self.peek().kind
                 );
@@ -491,7 +494,7 @@ impl<'a> Parser<'a> {
                         self.next();
 
                         if n < 0 {
-                            error!(self.peek().span.clone(), "field of negative number");
+                            error!(&self.peek().span.clone(), "field of negative number");
                             return None;
                         }
 
@@ -506,7 +509,7 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         error!(
-                            self.peek().span.clone(),
+                            &self.peek().span.clone(),
                             "expected `number` but got `{}`",
                             self.peek().kind
                         );
@@ -776,7 +779,7 @@ impl<'a> Parser<'a> {
 
     fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
         if self.peek().kind != Token::Lbrace {
-            error!(self.peek().span.clone(), "expected block");
+            error!(&self.peek().span.clone(), "expected block");
             return None;
         }
 
@@ -1006,12 +1009,12 @@ impl<'a> Parser<'a> {
                         }
                     }
                     Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                        error!(span.clone(), "Not found module `{}`", module_path);
+                        error!(&span.clone(), "Not found module `{}`", module_path);
                         return false;
                     }
                     Err(err) => {
                         error!(
-                            span.clone(),
+                            &span.clone(),
                             "Unable to load module {}: {}", module_path, err
                         );
                         return false;
@@ -1027,7 +1030,7 @@ impl<'a> Parser<'a> {
                     return self.load_module(&path, span, false);
                 }
                 _ => {
-                    error!(span.clone(), "Cannot find module `{}`", module_path);
+                    error!(&span.clone(), "Cannot find module `{}`", module_path);
                     return false;
                 }
             }
@@ -1218,7 +1221,7 @@ impl<'a> Parser<'a> {
             Token::Number(size) => match usize::try_from(size) {
                 Ok(size) => size,
                 Err(_) => {
-                    error!(self.peek().span.clone(), "too large");
+                    error!(&self.peek().span.clone(), "too large");
                     0
                 }
             },
@@ -1306,7 +1309,7 @@ impl<'a> Parser<'a> {
             Token::Lbracket => self.parse_type_array(), // array
             _ => {
                 error!(
-                    self.peek().span.clone(),
+                    &self.peek().span.clone(),
                     "expected `(`, `[`, `*`, `int`, `bool`, `string`, `struct` or `identifier` but got `{}`",
                     self.peek().kind
                 );

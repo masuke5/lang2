@@ -16,14 +16,14 @@ pub enum Level {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Error {
+pub struct Error<'a> {
     pub level: Level,
     pub msg: String,
-    pub span: Span,
+    pub span: &'a Span,
 }
 
-impl Error {
-    pub fn new(msg: &str, span: Span) -> Self {
+impl<'a> Error<'a> {
+    pub fn new(msg: &str, span: &'a Span) -> Self {
         Self {
             level: Level::Error,
             msg: msg.to_string(),
@@ -31,7 +31,7 @@ impl Error {
         }
     }
 
-    pub fn new_warning(msg: &str, span: Span) -> Self {
+    pub fn new_warning(msg: &str, span: &'a Span) -> Self {
         Self {
             level: Level::Warning,
             msg: msg.to_string(),
@@ -40,7 +40,7 @@ impl Error {
     }
 }
 
-impl fmt::Display for Error {
+impl<'a> fmt::Display for Error<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -77,7 +77,7 @@ lazy_static! {
 }
 
 impl ErrorList {
-    fn print_error(error: Error) {
+    fn print_error(error: Error<'_>) {
         let mut file_cache = FILE_CACHE.write().expect("FILE_CACHE poisoned");
         let es = error.span;
 
@@ -163,7 +163,7 @@ impl ErrorList {
         }
     }
 
-    pub fn push(error: Error) {
+    pub fn push(error: Error<'_>) {
         if let Level::Error = &error.level {
             HAS_ERRORS.store(true, Ordering::Relaxed);
         }

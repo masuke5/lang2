@@ -41,6 +41,7 @@ impl Value {
         ptr as _
     }
 
+    #[allow(dead_code)]
     pub const fn zero() -> Self {
         Self(0)
     }

@@ -46,16 +46,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn error(&mut self, msg: &str) {
-        let error = Error::new(
-            msg,
-            Span {
-                file: self.file,
-                start_line: self.start_line,
-                start_col: self.start_col,
-                end_line: self.line,
-                end_col: self.col,
-            },
-        );
+        let span = Span {
+            file: self.file,
+            start_line: self.start_line,
+            start_col: self.start_col,
+            end_line: self.line,
+            end_col: self.col,
+        };
+        let error = Error::new(msg, &span);
         ErrorList::push(error);
     }
 
