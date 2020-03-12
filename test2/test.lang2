@@ -46,6 +46,13 @@ test_eq "short-circuit evalution in &&" 384123 a;
 a = 384123 || add_3 (&mut a) = 5312;
 test_eq "short-circuit evalution in ||" 384123 a;
 
+let mut d = 30;
+let c: *int = &mut d;
+test_eq "pointer weakening" 384123 a;
+
+let c: (int, *int) = (4649, &mut d);
+test_eq "pointer weakening in tuple" 30 (*c.1);
+
 fn add_3(n: *mut int): int = {
     *n := 3095;
     5312

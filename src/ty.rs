@@ -282,10 +282,6 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
     if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
         let ok = match (a_tycon, b_tycon) {
-            (TypeCon::Pointer(false), TypeCon::Pointer(false)) => true,
-            (TypeCon::Pointer(true), TypeCon::Pointer(false)) => false,
-            (TypeCon::Pointer(false), TypeCon::Pointer(true)) => true,
-            (TypeCon::Pointer(true), TypeCon::Pointer(true)) => true,
             (TypeCon::Named(a, _), TypeCon::UnsizedNamed(b)) if a == b => true,
             (TypeCon::UnsizedNamed(a), TypeCon::Named(b, _)) if a == b => true,
             (a, b) => a == b,

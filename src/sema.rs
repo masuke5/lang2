@@ -526,6 +526,16 @@ impl<'a> Analyzer<'a> {
                     Some(expr)
                 }
             }
+            // Weaken pointer
+            Type::App(TypeCon::Pointer(false), _) => {
+                let mut expr = self.walk_expr(code, expr)?;
+
+                if let Type::App(TypeCon::Pointer(true), types) = expr.ty {
+                    expr.ty = Type::App(TypeCon::Pointer(false), types);
+                }
+
+                Some(expr)
+            }
             _ => match expr.kind {
                 Expr::Tuple(exprs) => {
                     let types = match ty {
