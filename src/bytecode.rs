@@ -6,6 +6,7 @@ use std::str;
 
 use crate::id::Id;
 use crate::utils;
+use crate::value::Lang2Str;
 
 #[allow(dead_code)]
 pub mod opcode {
@@ -230,6 +231,10 @@ impl Bytecode {
         }
     }
 
+    pub unsafe fn read_str(&self, pos: usize) -> Lang2Str {
+        Lang2Str::from_bytes_ptr(&self.bytes[pos])
+    }
+
     bfn_write!(u8, push_u8, write_u8);
     bfn_write!(i8, push_i8, write_i8);
     bfn_write!(u16, push_u16, write_u16);
@@ -252,12 +257,28 @@ impl Bytecode {
         }
     }
 
+    pub fn push_str(&mut self, s: &str) {
+        self.push_u64(s.len() as u64);
+        self.push_bytes(s.as_bytes());
+    }
+
     pub fn write_bytes(&mut self, pos: usize, bytes: &[u8]) {
         unsafe {
             let dst = self.bytes.as_mut_ptr().add(pos);
             let src = bytes.as_ptr();
             ptr::copy_nonoverlapping(src, dst, bytes.len());
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn write_str(&mut self, pos: usize, s: &str) {
+        let necessary_bytes = mem::size_of::<u64>() + s.len();
+        if pos + necessary_bytes >= self.len() {
+            panic!("not enough bytes");
+        }
+
+        self.write_u64(pos, s.len() as u64);
+        self.write_bytes(pos + mem::size_of::<u64>(), s.as_bytes());
     }
 
     pub fn reserve(&mut self, size_in_bytes: usize) {
@@ -393,19 +414,13 @@ impl Bytecode {
             let loc = self.read_u16(string_map_start + i * 2) as usize;
             print!("{:<width$}  ", loc, width = index_len);
 
-            // Read the string length
-            let len = self.read_u64(loc) as usize;
-
-            // Read the string bytes
-            let mut buf = vec![0; len];
-            self.read_bytes(loc + 8, &mut buf[..]);
-
-            let raw = str::from_utf8(&buf).unwrap();
+            // Read the string
+            let s = unsafe { self.read_str(loc) };
 
             println!(
                 "{:<width$} \"{}\"",
                 i,
-                utils::escape_string(raw),
+                utils::escape_string(s.as_str()),
                 width = count_len
             );
         }
@@ -418,19 +433,13 @@ impl Bytecode {
             let loc = self.read_u16(module_map_start + i * 2) as usize;
             print!("{:<width$}  ", loc, width = index_len);
 
-            // Read the string length
-            let len = self.read_u16(loc) as usize;
-
-            // Read the string bytes
-            let mut buf = vec![0; len];
-            self.read_bytes(loc + 2, &mut buf[..]);
-
-            let raw = str::from_utf8(&buf).unwrap();
+            // Read the module name
+            let s = unsafe { self.read_str(loc) };
 
             println!(
                 "{:<width$} import {}",
                 i,
-                utils::escape_string(raw),
+                utils::escape_string(s.as_str()),
                 width = count_len
             );
         }
@@ -713,10 +722,8 @@ impl BytecodeBuilder {
                 self.code.len() as u16,
             );
 
-            // Write the string length and bytes
-            self.code.push_u64(string.len() as u64);
-            self.code.push_bytes(string.as_bytes());
-
+            // Write the string
+            self.code.push_str(&string);
             self.code.align(8);
         }
     }
@@ -748,9 +755,7 @@ impl BytecodeBuilder {
                 self.code.len() as u16,
             );
 
-            self.code.push_u16(name.len() as u16);
-            self.code.push_bytes(name.as_bytes());
-
+            self.code.push_str(name);
             self.code.align(8);
         }
     }

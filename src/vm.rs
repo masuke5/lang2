@@ -1,6 +1,5 @@
 use std::mem::{self, size_of, MaybeUninit};
 use std::ptr;
-use std::slice;
 use std::str;
 use std::time::Instant;
 
@@ -302,14 +301,10 @@ impl VM {
             let loc = bytecode.read_u16(module_map_start + i * 2) as usize;
 
             // Read module name
-            let len = bytecode.read_u16(loc) as usize;
-
-            let mut buf = vec![0; len];
-            bytecode.read_bytes(loc + 2, &mut buf[..]);
-            let name = str::from_utf8(&buf[..]).expect("invalid module name");
+            let name = unsafe { bytecode.read_str(loc) };
 
             // Get global id and push it
-            let global_id = all_global_ids[name];
+            let global_id = all_global_ids[name.as_str()];
             modules.push(global_id);
         }
 
@@ -542,25 +537,18 @@ impl VM {
                         current_bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 
                     // Read the string length
-                    let len = current_bytecode.read_u64(loc) as usize;
+                    let s = unsafe { current_bytecode.read_str(loc) };
 
-                    let size = len + size_of::<u64>();
+                    // Allocate a region for the string
+                    let size = s.len() as usize + size_of::<u64>();
                     let mut region = self
                         .gc
                         .alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
 
-                    // Read the string bytes
+                    // Write the string
                     unsafe {
-                        let region = region.as_mut();
-
-                        // Write the string length
-                        let len_ptr = region.as_mut_ptr::<u64>();
-                        *len_ptr = len as u64;
-
-                        // Write the string bytes
-                        let bytes_ptr = region.as_mut_ptr::<u8>().add(size_of::<u64>());
-                        let mut bytes = slice::from_raw_parts_mut(bytes_ptr, len);
-                        current_bytecode.read_bytes(loc + size_of::<u64>(), &mut bytes);
+                        let str_ptr = region.as_mut().as_mut_ptr::<Lang2String>();
+                        (*str_ptr).write_string(s.as_str());
                     }
 
                     unsafe {

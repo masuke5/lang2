@@ -110,6 +110,44 @@ impl Value {
     }
 }
 
+pub struct Lang2Str {
+    len: u64,
+    bytes: *const u8,
+}
+
+impl Lang2Str {
+    pub unsafe fn from_bytes_ptr(ptr: *const u8) -> Self {
+        // Check if ptr is aligned
+        if (ptr as usize) % 8 != 0 {
+            panic!("the pointer is not aligned");
+        }
+
+        #[allow(clippy::cast_ptr_alignment)]
+        let len = *(ptr as *const u64);
+
+        // Check if is valid UTF-8 string
+        let bytes_ptr = ptr.add(mem::size_of::<u64>());
+        let bytes = slice::from_raw_parts(bytes_ptr, len as usize);
+        str::from_utf8(bytes).unwrap();
+
+        Self {
+            len,
+            bytes: bytes_ptr,
+        }
+    }
+
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    pub fn as_str(&self) -> &str {
+        unsafe {
+            let bytes = slice::from_raw_parts(self.bytes, self.len as usize);
+            str::from_utf8_unchecked(bytes)
+        }
+    }
+}
+
 #[repr(C)]
 pub struct Lang2String {
     pub len: usize,
@@ -128,7 +166,7 @@ impl fmt::Display for Lang2String {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = unsafe {
             let bytes = slice::from_raw_parts(self.bytes.as_ptr(), self.len);
-            str::from_utf8_unchecked(bytes)
+            str::from_utf8(bytes).unwrap()
         };
 
         f.write_str(s)
