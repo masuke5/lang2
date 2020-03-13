@@ -1690,7 +1690,10 @@ impl<'a> Analyzer<'a> {
 
         self.push_scope();
         self.push_type_scope();
-        self.var_level += 1;
+
+        if func.has_escaped_variables {
+            self.var_level += 1;
+        }
 
         let header = match self.variables.get(&func.name.kind) {
             Some(Entry::Function(h)) => &h.header,
@@ -1739,7 +1742,10 @@ impl<'a> Analyzer<'a> {
 
         self.function_insts.push_back((func.name.kind, insts));
 
-        self.var_level -= 1;
+        if func.has_escaped_variables {
+            self.var_level -= 1;
+        }
+
         self.pop_type_scope();
         self.pop_scope();
     }

@@ -345,14 +345,18 @@ impl VM {
     fn call(&mut self, global_module_id: usize, func_id: usize, closure_ep: Option<*const Value>) {
         assert_ne!(self.ep, ptr::null());
 
-        // Allocate stack frame in heap
+        // Save EP
         push!(self, Value::new_ptr_to_heap(self.ep));
 
+        // Alloc stack frame in heap if necessary
         let stack_in_heap_size = self.functions[global_module_id][func_id].stack_in_heap_size;
-
-        let parent_ep = closure_ep.unwrap_or(self.ep);
-        let new_ep = self.alloc_stack_frame_in_heap(stack_in_heap_size, parent_ep);
-        self.ep = new_ep;
+        if stack_in_heap_size > 0 {
+            let parent_ep = closure_ep.unwrap_or(self.ep);
+            let new_ep = self.alloc_stack_frame_in_heap(stack_in_heap_size, parent_ep);
+            self.ep = new_ep;
+        } else if let Some(closure_ep) = closure_ep {
+            self.ep = closure_ep;
+        }
 
         let func = &self.functions[global_module_id][func_id];
 
