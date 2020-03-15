@@ -13,6 +13,7 @@ use crate::sema::ModuleBody;
 use crate::value::{Lang2String, Value};
 
 pub const SELF_MODULE_ID: usize = 0x7fff_ffff;
+pub const CALL_STACK_SIZE: usize = 5;
 
 const STACK_SIZE: usize = 10000;
 
@@ -32,8 +33,9 @@ macro_rules! pop {
 
 macro_rules! push {
     ($self:ident, $value:expr) => {
+        $self.stack[$self.sp + 1] = $value;
+        // Add SP after copy $value because don't work as intended if $value contains SP
         $self.sp += 1;
-        $self.stack[$self.sp] = $value;
     };
 }
 
@@ -115,7 +117,6 @@ pub struct VM {
 
     // global id -> all functions in the module
     functions: Vec<Vec<Function>>,
-    current_func: usize,
     current_module: usize,
 }
 
@@ -130,7 +131,6 @@ impl VM {
             ep: ptr::null(),
             stack: unsafe { MaybeUninit::zeroed().assume_init() },
             functions: Vec::new(),
-            current_func: 0,
             current_module: 0,
         }
     }
@@ -162,18 +162,18 @@ impl VM {
     }
 
     fn dump_stack(&self, stop: usize) {
-        let current_is_main = self.current_func == 0;
+        let current_is_main = self.fp == 1;
         let saved_ep = if !current_is_main {
             Some(self.fp - 5)
         } else {
             None
         };
-        let saved_module_id = if !current_is_main {
+        let saved_sp = if !current_is_main {
             Some(self.fp - 4)
         } else {
             None
         };
-        let saved_func_id = if !current_is_main {
+        let saved_module_id = if !current_is_main {
             Some(self.fp - 3)
         } else {
             None
@@ -199,10 +199,6 @@ impl VM {
                 print!("(sp) ");
             }
 
-            if Some(i) == saved_func_id {
-                print!("[fid] ");
-            }
-
             if Some(i) == saved_module_id {
                 print!("[mid] ");
             }
@@ -217,6 +213,10 @@ impl VM {
 
             if Some(i) == saved_ep {
                 print!("[ep]");
+            }
+
+            if Some(i) == saved_sp {
+                print!("[sp] ");
             }
 
             if i > stop {
@@ -311,10 +311,6 @@ impl VM {
         modules
     }
 
-    fn current_func(&self) -> &Function {
-        &self.functions[self.current_module][self.current_func]
-    }
-
     fn main_func(&self) -> &Function {
         &self.functions[0][0]
     }
@@ -355,9 +351,9 @@ impl VM {
 
         let func = &self.functions[global_module_id][func_id];
 
+        push!(self, Value::new_u64((self.sp - 1 - func.param_size) as u64));
+
         push!(self, Value::new_u64(self.current_module as u64));
-        push!(self, Value::new_u64(self.current_func as u64));
-        self.current_func = func_id;
         self.current_module = global_module_id;
 
         push!(self, Value::new_u64(self.ip as u64));
@@ -371,7 +367,7 @@ impl VM {
     }
 
     fn panic(&self, message: &str) -> ! {
-        eprintln!("PANIC AT RUNTIME: {}", message);
+        eprintln!("PANICKED AT RUNTIME: {}", message);
         std::process::exit(10)
     }
 
@@ -386,14 +382,12 @@ impl VM {
     }
 
     #[inline]
-    fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8) -> i64 {
-        let ref_start = self.current_func().ref_start;
+    fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8, ref_start: usize) -> i64 {
         bytecode.read_i64(ref_start + ref_id as usize * 8)
     }
 
     #[inline]
-    fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8) -> u64 {
-        let ref_start = self.current_func().ref_start;
+    fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8, ref_start: usize) -> u64 {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
 
@@ -449,6 +443,17 @@ impl VM {
             }
         }
 
+        // ref start per module
+        let mut ref_start = Vec::with_capacity(all_modules.len());
+        for bytecode in &bytecodes {
+            if let Some(bytecode) = bytecode {
+                let rs = bytecode.read_u16(bytecode::POS_REF_START) as usize;
+                ref_start.push(Some(rs));
+            } else {
+                ref_start.push(None);
+            }
+        }
+
         self.functions.resize(all_modules.len(), Vec::new());
 
         // module id -> local id -> global id
@@ -477,8 +482,6 @@ impl VM {
             panic!("bytecodes need an entrypoint");
         }
 
-        self.current_func = 0;
-
         let func = self.main_func().clone();
         self.ep = self.alloc_stack_frame_in_heap(func.stack_in_heap_size, self.ep);
         self.stack[0] = Value::new_ptr_to_heap(self.ep);
@@ -496,14 +499,13 @@ impl VM {
             }
 
             if cfg!(debug_assertions) && enable_trace {
-                let func = self.current_func();
                 print!("{}  ", self.ip);
                 current_bytecode.dump_inst(
                     opcode,
                     arg,
                     self.ip - 2,
-                    func.ref_start,
                     string_map_start[self.current_module].unwrap(),
+                    ref_start[self.current_module].unwrap(),
                 );
             }
 
@@ -524,7 +526,11 @@ impl VM {
                     self.sp += count;
                 }
                 opcode::INT => {
-                    let value = self.get_ref_value_i64(current_bytecode, arg);
+                    let value = self.get_ref_value_i64(
+                        current_bytecode,
+                        arg,
+                        ref_start[self.current_module].unwrap(),
+                    );
                     push!(self, Value::new_i64(value));
                 }
                 opcode::TINY_INT => {
@@ -612,7 +618,11 @@ impl VM {
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
                 }
                 opcode::DUPLICATE => {
-                    let value = self.get_ref_value_u64(current_bytecode, arg);
+                    let value = self.get_ref_value_u64(
+                        current_bytecode,
+                        arg,
+                        ref_start[self.current_module].unwrap(),
+                    );
                     let size = (value >> 32) as usize; // upper 32 bits
                     let count = (value as u32) as usize; // lower 32 bits
 
@@ -837,19 +847,14 @@ impl VM {
 
                     // Restore stack frame
                     self.fp = pop!(self).as_u64() as usize;
-
                     self.ip = pop!(self).as_u64() as usize;
-                    let prev_func = pop!(self).as_u64() as usize;
-                    let prev_module = pop!(self).as_u64() as usize;
 
-                    self.ep = pop!(self).as_ptr();
-
-                    // Pop arguments
-                    self.sp -= self.current_func().param_size;
-
-                    self.current_func = prev_func;
-                    self.current_module = prev_module;
+                    self.current_module = pop!(self).as_u64() as usize;
                     current_bytecode = &bytecodes[self.current_module].as_ref().unwrap();
+
+                    let old_sp = pop!(self).as_u64() as usize;
+                    self.ep = pop!(self).as_ptr();
+                    self.sp = old_sp;
                 }
                 opcode::CALL_NATIVE => {
                     unimplemented!();

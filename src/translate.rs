@@ -1,5 +1,5 @@
 use crate::ast::BinOp;
-use crate::bytecode::{opcode, InstList};
+use crate::bytecode::{opcode, BytecodeBuilder, InstList};
 use crate::sema::ExprInfo;
 use crate::ty::{type_size_nocheck, Type, TypeCon};
 use crate::vm::SELF_MODULE_ID;
@@ -101,13 +101,18 @@ fn push_copy_inst(insts: &mut InstList, ty: &Type) {
     push_copy_inst_with_size(insts, size);
 }
 
-fn push_store_insts(insts: &mut InstList, loc: &RelativeVariableLoc, ty: &Type) {
+fn push_store_insts(
+    code: &mut BytecodeBuilder,
+    insts: &mut InstList,
+    loc: &RelativeVariableLoc,
+    ty: &Type,
+) {
     let size = type_size_nocheck(ty);
-    push_load_insts(insts, loc);
+    push_load_insts(code, insts, loc);
     insts.push(opcode::STORE, size as u8);
 }
 
-fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
+fn push_load_insts(code: &mut BytecodeBuilder, insts: &mut InstList, loc: &RelativeVariableLoc) {
     match loc {
         RelativeVariableLoc::Stack(loc) => {
             insts.push(opcode::LOAD_REF, loc.to_le_bytes()[0]);
@@ -116,28 +121,30 @@ fn push_load_insts(insts: &mut InstList, loc: &RelativeVariableLoc) {
             if *level == 0 {
                 insts.push(opcode::LOAD_HEAP, loc.to_le_bytes()[0]);
             } else {
-                push_u64_insts(insts, *level as u64);
+                push_u64_insts(code, insts, *level as u64);
                 insts.push(opcode::LOAD_HEAP_TRACE, loc.to_le_bytes()[0]);
             }
         }
     }
 }
 
-pub fn push_i64_insts(insts: &mut InstList, n: i64) {
+pub fn push_i64_insts(code: &mut BytecodeBuilder, insts: &mut InstList, n: i64) {
     if let Ok(n) = n.try_into() {
         let [n] = i8::to_le_bytes(n);
         insts.push(opcode::TINY_INT, n);
     } else {
-        insts.push_ref_i64(opcode::INT, n);
+        let index = code.new_ref_i64(n);
+        insts.push(opcode::INT, index as u8);
     }
 }
 
-pub fn push_u64_insts(insts: &mut InstList, n: u64) {
+pub fn push_u64_insts(code: &mut BytecodeBuilder, insts: &mut InstList, n: u64) {
     if let Ok(n) = n.try_into() {
         let [n] = i8::to_le_bytes(n);
         insts.push(opcode::TINY_INT, n);
     } else {
-        insts.push_ref_u64(opcode::INT, n);
+        let index = code.new_ref_u64(n);
+        insts.push(opcode::INT, index as u8);
     }
 }
 
@@ -176,12 +183,18 @@ pub fn unwrap(mut insts: InstList, ty: &Type) -> InstList {
     insts
 }
 
-pub fn escaped_param(ty: &Type, loc: isize, heap_loc: usize) -> InstList {
+pub fn escaped_param(
+    code: &mut BytecodeBuilder,
+    ty: &Type,
+    loc: isize,
+    heap_loc: usize,
+) -> InstList {
     let mut insts = InstList::new();
 
-    push_load_insts(&mut insts, &RelativeVariableLoc::Stack(loc));
+    push_load_insts(code, &mut insts, &RelativeVariableLoc::Stack(loc));
     push_copy_inst(&mut insts, ty);
     push_store_insts(
+        code,
         &mut insts,
         &RelativeVariableLoc::StackInHeap(heap_loc, 0),
         &ty,
@@ -192,9 +205,9 @@ pub fn escaped_param(ty: &Type, loc: isize, heap_loc: usize) -> InstList {
 
 // Expression
 
-pub fn literal_int(n: i64) -> InstList {
+pub fn literal_int(code: &mut BytecodeBuilder, n: i64) -> InstList {
     let mut insts = InstList::new();
-    push_i64_insts(&mut insts, n);
+    push_i64_insts(code, &mut insts, n);
     insts
 }
 
@@ -222,7 +235,7 @@ pub fn literal_null() -> InstList {
     insts
 }
 
-pub fn literal_array(expr: ExprInfo, arr_len: usize) -> InstList {
+pub fn literal_array(code: &mut BytecodeBuilder, expr: ExprInfo, arr_len: usize) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
 
@@ -230,7 +243,8 @@ pub fn literal_array(expr: ExprInfo, arr_len: usize) -> InstList {
         let element_size = type_size_nocheck(&expr.ty);
         let count = (arr_len - 1) as u64;
         let arg: u64 = ((element_size as u64) << 32) | count;
-        insts.push_ref_u64(opcode::DUPLICATE, arg);
+        let index = code.new_ref_u64(arg);
+        insts.push(opcode::DUPLICATE, index as u8);
     }
 
     insts
@@ -249,6 +263,7 @@ pub fn literal_tuple(expr: ExprInfo) -> InstList {
 }
 
 pub fn field(
+    code: &mut BytecodeBuilder,
     loc: Option<RelativeVariableLoc>,
     should_deref: bool,
     comp_expr: ExprInfo,
@@ -257,8 +272,8 @@ pub fn field(
     let mut insts = comp_expr.insts;
 
     if let Some(loc) = loc {
-        push_store_insts(&mut insts, &loc, &comp_expr.ty);
-        push_load_insts(&mut insts, &loc);
+        push_store_insts(code, &mut insts, &loc, &comp_expr.ty);
+        push_load_insts(code, &mut insts, &loc);
     }
 
     if should_deref {
@@ -279,6 +294,7 @@ pub fn field(
 }
 
 pub fn subscript(
+    code: &mut BytecodeBuilder,
     loc: Option<RelativeVariableLoc>,
     should_deref: bool,
     expr: ExprInfo,
@@ -288,8 +304,8 @@ pub fn subscript(
     let mut insts = expr.insts;
 
     if let Some(loc) = loc {
-        push_store_insts(&mut insts, &loc, &expr.ty);
-        push_load_insts(&mut insts, &loc);
+        push_store_insts(code, &mut insts, &loc, &expr.ty);
+        push_load_insts(code, &mut insts, &loc);
     }
 
     if should_deref {
@@ -302,7 +318,7 @@ pub fn subscript(
 
     let elem_size = type_size_nocheck(element_ty);
     if elem_size > 1 {
-        push_i64_insts(&mut insts, elem_size as i64);
+        push_i64_insts(code, &mut insts, elem_size as i64);
         insts.push_noarg(opcode::BINOP_MUL);
     }
 
@@ -311,20 +327,20 @@ pub fn subscript(
     insts
 }
 
-pub fn variable(loc: &RelativeVariableLoc) -> InstList {
+pub fn variable(code: &mut BytecodeBuilder, loc: &RelativeVariableLoc) -> InstList {
     let mut insts = InstList::new();
-    push_load_insts(&mut insts, loc);
+    push_load_insts(code, &mut insts, loc);
     insts
 }
 
-pub fn func_pos(module_id: Option<u16>, func_id: u16) -> InstList {
+pub fn func_pos(code: &mut BytecodeBuilder, module_id: Option<u16>, func_id: u16) -> InstList {
     let mut insts = InstList::new();
 
     let arg = match module_id {
         Some(module_id) => ((module_id as u64) << 32) | func_id as u64,
         None => ((SELF_MODULE_ID as u64) << 32) | func_id as u64,
     };
-    insts.push_ref_u64(opcode::INT, arg);
+    push_u64_insts(code, &mut insts, arg);
 
     // Push the pointer to stack in heap
     insts.push_noarg(opcode::EP);
@@ -460,10 +476,14 @@ pub fn address(expr: ExprInfo) -> InstList {
     insts
 }
 
-pub fn address_no_lvalue(expr: ExprInfo, loc: &RelativeVariableLoc) -> InstList {
+pub fn address_no_lvalue(
+    code: &mut BytecodeBuilder,
+    expr: ExprInfo,
+    loc: &RelativeVariableLoc,
+) -> InstList {
     let mut insts = expr.insts;
-    push_store_insts(&mut insts, loc, &expr.ty);
-    push_load_insts(&mut insts, &loc);
+    push_store_insts(code, &mut insts, loc, &expr.ty);
+    push_load_insts(code, &mut insts, &loc);
     insts.push_noarg(opcode::POINTER);
     insts
 }
@@ -547,10 +567,14 @@ pub fn while_stmt(cond: ExprInfo, body: InstList) -> InstList {
     })
 }
 
-pub fn bind_stmt(loc: &RelativeVariableLoc, expr: ExprInfo) -> InstList {
+pub fn bind_stmt(
+    code: &mut BytecodeBuilder,
+    loc: &RelativeVariableLoc,
+    expr: ExprInfo,
+) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
-    push_store_insts(&mut insts, loc, &expr.ty);
+    push_store_insts(code, &mut insts, loc, &expr.ty);
     insts
 }
 
@@ -563,6 +587,7 @@ pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
 }
 
 pub fn return_stmt(
+    code: &mut BytecodeBuilder,
     loc: &RelativeVariableLoc,
     expr: Option<ExprInfo>,
     return_ty: &Type,
@@ -572,7 +597,7 @@ pub fn return_stmt(
     if let Some(expr) = expr {
         insts.append(expr.insts);
         push_copy_inst(&mut insts, return_ty);
-        push_store_insts(&mut insts, loc, return_ty);
+        push_store_insts(code, &mut insts, loc, return_ty);
     }
 
     insts.push_noarg(opcode::RETURN);

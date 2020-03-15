@@ -145,10 +145,11 @@ pub fn opcode_name(opcode: u8) -> &'static str {
 pub const HEADER: [u8; 4] = *b"L2BC";
 pub const POS_FUNC_COUNT: usize = 4;
 pub const POS_STRING_COUNT: usize = 5;
-pub const POS_MODULE_COUNT: usize = 13;
 pub const POS_FUNC_MAP_START: usize = 6;
 pub const POS_STRING_MAP_START: usize = 8;
 pub const POS_MODULE_MAP_START: usize = 10;
+pub const POS_MODULE_COUNT: usize = 13;
+pub const POS_REF_START: usize = 14;
 
 macro_rules! bfn_read {
     ($ty:ty, $name:ident) => {
@@ -198,14 +199,7 @@ impl Bytecode {
         }
 
         self.push_bytes(&HEADER);
-        self.push_bytes(&[
-            0, // the number of function
-            0, // the number of string
-            0, // funcmap_start (2byte)
-            0, 0, // string_map_start (2byte)
-            0, 0, // the number of module
-            0, 0, 0, 0, 0,
-        ]);
+        self.reserve(16);
     }
 
     pub fn len(&self) -> usize {
@@ -302,8 +296,8 @@ impl Bytecode {
         opcode: u8,
         arg: u8,
         ip: usize,
-        ref_start: usize,
         string_map_start: usize,
+        ref_start: usize,
     ) {
         print!("{} ", opcode_name(opcode));
 
@@ -318,19 +312,11 @@ impl Bytecode {
             }
             opcode::STRING => {
                 let string_id = arg as usize;
-                // Read string location from string map
+
                 let loc = self.read_u16(string_map_start + string_id * 2) as usize;
-                // Read string length
-                let len = self.read_u64(loc) as usize;
+                let s = unsafe { self.read_str(loc) };
 
-                // Read string bytes
-                let mut buf = vec![0; len];
-                self.read_bytes(loc + 8, &mut buf[..]);
-
-                // Convert to string
-                let raw = str::from_utf8(&buf).unwrap();
-
-                let escaped_string = utils::escape_string(&raw);
+                let escaped_string = utils::escape_string(s.as_str());
                 println!("{} (\"{}\") ({})", string_id, escaped_string, loc);
             }
             opcode::TRUE => println!(),
@@ -448,8 +434,7 @@ impl Bytecode {
         let func_map_start = self.read_u16(POS_FUNC_MAP_START) as usize;
         let func_count = self.read_u8(POS_FUNC_COUNT) as usize;
 
-        type Func = (u16, usize, usize, usize, usize); // id, stack_size, param_size, pos, ref_start
-        let mut functions: Vec<Func> = Vec::new();
+        let mut functions: Vec<Function> = Vec::new();
 
         for j in 0..func_count {
             let loc = func_map_start + j * 8;
@@ -466,19 +451,14 @@ impl Bytecode {
             println!("  stack_size: {}", func.stack_size);
             println!("  param_size: {}", func.param_size);
             println!("  pos: {}", func.pos);
-            println!("  ref_start: {}", func.ref_start);
 
-            functions.push((
-                func_id,
-                func.stack_size,
-                func.param_size,
-                func.pos,
-                func.ref_start,
-            ));
+            functions.push(func);
         }
 
-        for (id, _, _, pos, ref_start) in functions {
-            println!("FUNC {}:", id);
+        let ref_start = self.read_u16(POS_REF_START) as usize;
+
+        for Function { code_id, pos, .. } in functions {
+            println!("FUNC {}:", code_id);
 
             let mut inst = [0u8; 2];
             let mut i = 0;
@@ -489,7 +469,7 @@ impl Bytecode {
             while inst[0] != opcode::END {
                 print!("{:<width$}  ", pos + i * 2, width = index_len);
 
-                self.dump_inst(inst[0], inst[1], pos + i * 2, ref_start, string_map_start);
+                self.dump_inst(inst[0], inst[1], pos + i * 2, string_map_start, ref_start);
 
                 i += 1;
                 self.read_bytes(pos + i * 2, &mut inst);
@@ -506,7 +486,6 @@ pub struct Function {
     pub stack_size: usize,
     pub param_size: usize,
     pub pos: usize,
-    pub ref_start: usize,
 }
 
 impl Function {
@@ -514,7 +493,6 @@ impl Function {
     pub const OFFSET_STACK_SIZE: usize = 1;
     pub const OFFSET_PARAM_SIZE: usize = 2;
     pub const OFFSET_POS: usize = 4;
-    pub const OFFSET_REF_START: usize = 6;
 
     pub fn new(name: Id, param_size: usize) -> Self {
         Self {
@@ -524,7 +502,6 @@ impl Function {
             stack_in_heap_size: 0,
             stack_size: 0,
             pos: 0,
-            ref_start: 0,
         }
     }
 
@@ -545,11 +522,6 @@ impl Function {
                     .try_into()
                     .unwrap(),
             ) as usize,
-            ref_start: u16::from_le_bytes(
-                bytes[Self::OFFSET_REF_START..Self::OFFSET_REF_START + 2]
-                    .try_into()
-                    .unwrap(),
-            ) as usize,
         }
     }
 
@@ -561,8 +533,6 @@ impl Function {
         bytes[Self::OFFSET_PARAM_SIZE] = self.param_size as u8;
         bytes[Self::OFFSET_POS..Self::OFFSET_POS + 2]
             .copy_from_slice(&(self.pos as u16).to_le_bytes());
-        bytes[Self::OFFSET_REF_START..Self::OFFSET_REF_START + 2]
-            .copy_from_slice(&(self.ref_start as u16).to_le_bytes());
 
         bytes
     }
@@ -571,14 +541,12 @@ impl Function {
 #[derive(Debug)]
 pub struct InstList {
     pub insts: LinkedList<[u8; 2]>,
-    refs: Vec<u64>,
 }
 
 impl InstList {
     pub fn new() -> Self {
         InstList {
             insts: LinkedList::new(),
-            refs: Vec::new(),
         }
     }
 
@@ -590,36 +558,14 @@ impl InstList {
 
     #[inline]
     pub fn append(&mut self, mut insts: InstList) {
-        // Update ref id and label ids
-        for [opcode, arg] in &mut insts.insts {
-            match *opcode {
-                opcode::INT | opcode::DUPLICATE => {
-                    *arg += self.refs.len() as u8;
-                }
-                _ => {}
-            }
-        }
-
         self.insts.append(&mut insts.insts);
-        self.refs.append(&mut insts.refs);
     }
 
     #[inline]
     #[allow(dead_code)]
     pub fn prepend(&mut self, mut insts: InstList) {
-        // Update ref id and label ids
-        for [opcode, arg] in &mut insts.insts {
-            match *opcode {
-                opcode::INT | opcode::DUPLICATE => {
-                    *arg += self.refs.len() as u8;
-                }
-                _ => {}
-            }
-        }
-
         mem::swap(&mut self.insts, &mut insts.insts);
         self.insts.append(&mut insts.insts);
-        self.refs.append(&mut insts.refs);
     }
 
     #[inline]
@@ -645,30 +591,6 @@ impl InstList {
     }
 
     #[inline]
-    pub fn push_ref_u64(&mut self, opcode: u8, arg: u64) {
-        let arg = self.new_ref_u64(arg);
-        // TODO: Add support for values above u8
-        self.push(opcode, arg as u8);
-    }
-
-    #[inline]
-    pub fn push_ref_i64(&mut self, opcode: u8, arg: i64) {
-        let arg = self.new_ref_i64(arg);
-        // TODO: Add support for values above u8
-        self.push(opcode, arg as u8);
-    }
-
-    pub fn new_ref_u64(&mut self, value: u64) -> usize {
-        self.refs.push(value);
-        self.refs.len() - 1
-    }
-
-    pub fn new_ref_i64(&mut self, value: i64) -> usize {
-        self.refs.push(unsafe { mem::transmute(value) });
-        self.refs.len() - 1
-    }
-
-    #[inline]
     pub fn len(&self) -> usize {
         self.insts.len()
     }
@@ -680,6 +602,7 @@ pub struct BytecodeBuilder {
     functions: HashMap<Id, Function>,
     func_count: usize,
     modules: Vec<String>,
+    refs: Vec<u64>,
 }
 
 impl BytecodeBuilder {
@@ -692,7 +615,18 @@ impl BytecodeBuilder {
             functions: HashMap::new(),
             func_count: 0,
             modules: Vec::new(),
+            refs: Vec::new(),
         }
+    }
+
+    pub fn new_ref_u64(&mut self, value: u64) -> usize {
+        self.refs.push(value);
+        self.refs.len() - 1
+    }
+
+    pub fn new_ref_i64(&mut self, value: i64) -> usize {
+        self.refs.push(unsafe { mem::transmute(value) });
+        self.refs.len() - 1
     }
 
     fn write_strings(&mut self, strings: &[String]) {
@@ -701,6 +635,8 @@ impl BytecodeBuilder {
         }
 
         self.code.write_u8(POS_STRING_COUNT, strings.len() as u8);
+
+        self.code.align(8);
 
         let string_map_start = self.code.len();
         self.code
@@ -711,10 +647,9 @@ impl BytecodeBuilder {
         // Reserve for string map
         self.code
             .reserve(strings.len() * mem::size_of::<StringId>());
-
-        // Write strings
         self.code.align(8);
 
+        // Write strings
         for (i, string) in strings.iter().enumerate() {
             // Write the string location to string map
             self.code.write_u16(
@@ -729,11 +664,6 @@ impl BytecodeBuilder {
     }
 
     fn write_modules(&mut self) {
-        // Limit to 4 bits for CALL_EXTERN
-        if self.modules.len() > 0b1111 {
-            panic!("too many modules");
-        }
-
         self.code
             .write_u8(POS_MODULE_COUNT, self.modules.len() as u8);
 
@@ -782,6 +712,16 @@ impl BytecodeBuilder {
         }
     }
 
+    fn write_refs(&mut self) {
+        self.code.align(8);
+
+        self.code.write_u16(POS_REF_START, self.code.len() as u16);
+
+        for value in &self.refs {
+            self.code.push_u64(*value);
+        }
+    }
+
     // Function
 
     pub fn insert_function_header(&mut self, mut func: Function) {
@@ -813,13 +753,6 @@ impl BytecodeBuilder {
         }
 
         self.code.align(8);
-
-        func.ref_start = self.code.len();
-
-        // Push refs
-        for int_ref in insts.refs.drain(..) {
-            self.code.push_u64(int_ref);
-        }
     }
 
     pub fn get_function(&self, id: Id) -> Option<&Function> {
@@ -839,6 +772,7 @@ impl BytecodeBuilder {
         self.write_strings(strings);
         self.write_modules();
         self.write_funcs();
+        self.write_refs();
 
         self.code
     }
@@ -866,54 +800,52 @@ mod tests {
     fn instlist_append() {
         let mut insts = InstList::new();
         insts.push(opcode::TINY_INT, 30);
-        insts.push_ref_u64(opcode::INT, 505050);
+        insts.push(opcode::TINY_INT, 50);
 
         let mut insts2 = InstList::new();
         insts2.push_noarg(opcode::BINOP_ADD);
-        insts2.push_ref_u64(opcode::INT, 606060);
+        insts2.push(opcode::INT, 60);
         insts2.push_noarg(opcode::BINOP_MUL);
 
         insts.append(insts2);
 
         let expected: LinkedList<[u8; 2]> = vec![
             [opcode::TINY_INT, 30],
-            [opcode::INT, 0],
+            [opcode::TINY_INT, 50],
             [opcode::BINOP_ADD, 0],
-            [opcode::INT, 1],
+            [opcode::TINY_INT, 60],
             [opcode::BINOP_MUL, 0],
         ]
         .into_iter()
         .collect();
 
         assert_eq!(expected, insts.insts);
-        assert_eq!(vec![505050, 606060], insts.refs);
     }
 
     #[test]
     fn instlist_prepend() {
         let mut insts = InstList::new();
         insts.push_noarg(opcode::BINOP_ADD);
-        insts.push_ref_u64(opcode::INT, 606060);
+        insts.push(opcode::TINY_INT, 50);
         insts.push_noarg(opcode::BINOP_MUL);
 
         let mut insts2 = InstList::new();
         insts2.push(opcode::TINY_INT, 30);
-        insts2.push_ref_u64(opcode::INT, 505050);
+        insts2.push(opcode::TINY_INT, 60);
 
         insts.prepend(insts2);
 
         let expected: LinkedList<[u8; 2]> = vec![
             [opcode::TINY_INT, 30],
-            [opcode::INT, 1],
+            [opcode::TINY_INT, 60],
             [opcode::BINOP_ADD, 0],
-            [opcode::INT, 0],
+            [opcode::TINY_INT, 50],
             [opcode::BINOP_MUL, 0],
         ]
         .into_iter()
         .collect();
 
         assert_eq!(expected, insts.insts);
-        assert_eq!(vec![606060, 505050], insts.refs);
     }
 
     #[test]
@@ -925,7 +857,6 @@ mod tests {
             stack_size: 20,
             param_size: 12,
             pos: 19,
-            ref_start: 41395,
         };
         let bytes = func.to_bytes();
         let actual = Function::from_bytes(30, bytes);

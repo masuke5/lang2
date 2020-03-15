@@ -12,6 +12,7 @@ use crate::translate;
 use crate::translate::RelativeVariableLoc;
 use crate::ty::*;
 use crate::utils::HashMapWithScope;
+use crate::vm::CALL_STACK_SIZE;
 
 macro_rules! try_some {
     ($($var:ident),*) => {
@@ -607,7 +608,7 @@ impl<'a> Analyzer<'a> {
     #[allow(clippy::cognitive_complexity)]
     fn walk_expr(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (insts, ty) = match expr.kind {
-            Expr::Literal(Literal::Number(n)) => (translate::literal_int(n), Type::Int),
+            Expr::Literal(Literal::Number(n)) => (translate::literal_int(code, n), Type::Int),
             Expr::Literal(Literal::String(i)) => {
                 let ty = Type::App(TypeCon::Pointer(false), vec![Type::String]);
                 (translate::literal_str(i), ty)
@@ -708,7 +709,7 @@ impl<'a> Analyzer<'a> {
                 let ty = expr.ty.clone();
 
                 (
-                    translate::literal_array(expr, size),
+                    translate::literal_array(code, expr, size),
                     Type::App(TypeCon::Array(size), vec![ty]),
                 )
             }
@@ -784,6 +785,7 @@ impl<'a> Analyzer<'a> {
                 };
 
                 let insts = translate::field(
+                    code,
                     loc.map(|loc| self.relative_loc(&loc)),
                     should_deref,
                     comp_expr,
@@ -833,6 +835,7 @@ impl<'a> Analyzer<'a> {
                 let is_lvalue = expr.is_lvalue;
                 let is_mutable = expr.is_mutable;
                 let insts = translate::subscript(
+                    code,
                     loc.map(|loc| self.relative_loc(&loc)),
                     should_deref,
                     expr,
@@ -859,12 +862,12 @@ impl<'a> Analyzer<'a> {
 
                 let (insts, ty, is_mutable) = match entry {
                     Entry::Variable(var) => (
-                        translate::variable(&self.relative_loc(&var.loc)),
+                        translate::variable(code, &self.relative_loc(&var.loc)),
                         var.ty.clone(),
                         var.is_mutable,
                     ),
                     Entry::Function(fh) => {
-                        let insts = translate::func_pos(fh.module_id, fh.func_id);
+                        let insts = translate::func_pos(code, fh.module_id, fh.func_id);
                         let ty = generate_func_type(
                             &fh.header.params,
                             &fh.header.return_ty,
@@ -889,7 +892,7 @@ impl<'a> Analyzer<'a> {
                     ty = Type::App(TypeCon::Arrow, vec![param_ty.clone(), ty]);
                 }
 
-                let insts = translate::func_pos(module_id, func_id);
+                let insts = translate::func_pos(code, module_id, func_id);
                 (insts, ty)
             }
             Expr::BinOp(BinOp::And, lhs, rhs) => {
@@ -995,7 +998,7 @@ impl<'a> Analyzer<'a> {
                         false,
                     );
 
-                    let insts = translate::address_no_lvalue(expr, &self.relative_loc(&loc));
+                    let insts = translate::address_no_lvalue(code, expr, &self.relative_loc(&loc));
                     (insts, ty)
                 } else {
                     let insts = translate::address(expr);
@@ -1210,7 +1213,7 @@ impl<'a> Analyzer<'a> {
                     is_escaped,
                 );
 
-                translate::bind_stmt(&self.relative_loc(&loc), expr)
+                translate::bind_stmt(code, &self.relative_loc(&loc), expr)
             }
             Stmt::Assign(lhs, rhs) => {
                 let lhs = self.walk_expr(code, lhs)?;
@@ -1253,7 +1256,12 @@ impl<'a> Analyzer<'a> {
                 unify(&stmt.span, &return_var_ty, return_ty);
 
                 let return_var = self.get_return_var();
-                translate::return_stmt(&self.relative_loc(&return_var.loc), expr, &return_var.ty)
+                translate::return_stmt(
+                    code,
+                    &self.relative_loc(&return_var.loc),
+                    expr,
+                    &return_var.ty,
+                )
             }
         };
 
@@ -1591,21 +1599,25 @@ impl<'a> Analyzer<'a> {
     // parameters to heap
     fn insert_params_as_variables(
         &mut self,
-        func: &mut Function,
+        code: &mut BytecodeBuilder,
+        func_name: Id,
         params: Vec<Param>,
         return_ty: &Type,
     ) -> Option<InstList> {
         let mut insts = InstList::new();
 
-        let mut loc = -5isize; // fp, ip, mid, fid, ep
+        let mut loc = -(CALL_STACK_SIZE as isize);
         for param in params.into_iter().rev() {
             loc -= type_size_nocheck(&param.ty) as isize;
 
             let loc = if param.is_escaped {
                 // Copy the parameter to heap if escaped
+                let func = code.get_function(func_name).unwrap();
                 let heap_loc = func.stack_in_heap_size + 1;
 
-                insts.append(translate::escaped_param(&param.ty, loc, heap_loc));
+                insts.append(translate::escaped_param(code, &param.ty, loc, heap_loc));
+
+                let func = code.get_function_mut(func_name).unwrap();
                 func.stack_in_heap_size += type_size_nocheck(&param.ty);
 
                 VariableLoc::StackInHeap(heap_loc, self.var_level)
@@ -1720,11 +1732,11 @@ impl<'a> Analyzer<'a> {
             })
             .collect();
 
-        let code_func = code.get_function_mut(func.name.kind).unwrap();
-        let param_insts = match self.insert_params_as_variables(code_func, params, &return_ty) {
-            Some(insts) => insts,
-            None => return,
-        };
+        let param_insts =
+            match self.insert_params_as_variables(code, func.name.kind, params, &return_ty) {
+                Some(insts) => insts,
+                None => return,
+            };
 
         let body = match self.walk_expr(code, func.body) {
             Some(e) => e,
@@ -1734,8 +1746,12 @@ impl<'a> Analyzer<'a> {
         unify(&body.span, &return_ty, &body.ty);
 
         let return_var = self.get_return_var();
-        let body_insts =
-            translate::return_stmt(&self.relative_loc(&return_var.loc), Some(body), &return_ty);
+        let body_insts = translate::return_stmt(
+            code,
+            &self.relative_loc(&return_var.loc),
+            Some(body),
+            &return_ty,
+        );
 
         let mut insts = param_insts;
         insts.append(body_insts);
