@@ -19,7 +19,8 @@ const STACK_SIZE: usize = 10000;
 
 macro_rules! pop {
     ($self:ident) => {{
-        let v = $self.stack[$self.sp];
+        #[allow(unused_unsafe)]
+        let v = unsafe { *$self.stack.get_unchecked($self.sp) };
 
         #[cfg(feature = "vmdebug")]
         {
@@ -32,10 +33,21 @@ macro_rules! pop {
 }
 
 macro_rules! push {
-    ($self:ident, $value:expr) => {
-        $self.stack[$self.sp + 1] = $value;
+    ($self:ident, $value:expr) => {{
+        check_stack_overflow!($self, 1);
+
+        *(unsafe { $self.stack.get_unchecked_mut($self.sp + 1) }) = $value;
+
         // Add SP after copy $value because don't work as intended if $value contains SP
         $self.sp += 1;
+    }};
+}
+
+macro_rules! check_stack_overflow {
+    ($self:ident, $add:expr) => {
+        if $self.sp + $add >= STACK_SIZE {
+            $self.panic("stack overflow");
+        }
     };
 }
 
@@ -437,9 +449,9 @@ impl VM {
         for bytecode in &bytecodes {
             if let Some(bytecode) = bytecode {
                 let sms = bytecode.read_u16(bytecode::POS_STRING_MAP_START) as usize;
-                string_map_start.push(Some(sms));
+                string_map_start.push(sms);
             } else {
-                string_map_start.push(None);
+                string_map_start.push(0);
             }
         }
 
@@ -448,9 +460,9 @@ impl VM {
         for bytecode in &bytecodes {
             if let Some(bytecode) = bytecode {
                 let rs = bytecode.read_u16(bytecode::POS_REF_START) as usize;
-                ref_start.push(Some(rs));
+                ref_start.push(rs);
             } else {
-                ref_start.push(None);
+                ref_start.push(0);
             }
         }
 
@@ -494,9 +506,6 @@ impl VM {
 
         loop {
             let [opcode, arg] = self.next_inst(current_bytecode);
-            if opcode == opcode::END {
-                break;
-            }
 
             if cfg!(debug_assertions) && enable_trace {
                 print!("{}  ", self.ip);
@@ -504,8 +513,8 @@ impl VM {
                     opcode,
                     arg,
                     self.ip - 2,
-                    string_map_start[self.current_module].unwrap(),
-                    ref_start[self.current_module].unwrap(),
+                    string_map_start[self.current_module],
+                    ref_start[self.current_module],
                 );
             }
 
@@ -518,6 +527,8 @@ impl VM {
                 opcode::ZERO => {
                     let count = arg as usize;
 
+                    check_stack_overflow!(self, count);
+
                     unsafe {
                         let dst: *mut _ = &mut self.stack[self.sp + 1];
                         ptr::write_bytes(dst, 0, count);
@@ -526,11 +537,9 @@ impl VM {
                     self.sp += count;
                 }
                 opcode::INT => {
-                    let value = self.get_ref_value_i64(
-                        current_bytecode,
-                        arg,
-                        ref_start[self.current_module].unwrap(),
-                    );
+                    let ref_start = unsafe { *ref_start.get_unchecked(self.current_module) };
+                    let value = self.get_ref_value_i64(current_bytecode, arg, ref_start);
+
                     push!(self, Value::new_i64(value));
                 }
                 opcode::TINY_INT => {
@@ -538,7 +547,8 @@ impl VM {
                     push!(self, Value::new_i64(n as i64));
                 }
                 opcode::STRING => {
-                    let string_map_start = string_map_start[self.current_module].unwrap();
+                    let string_map_start =
+                        unsafe { string_map_start.get_unchecked(self.current_module) };
                     let loc =
                         current_bytecode.read_u16(string_map_start + arg as usize * 2) as usize;
 
@@ -557,12 +567,9 @@ impl VM {
                         (*str_ptr).write_string(s.as_str());
                     }
 
-                    unsafe {
-                        push!(
-                            self,
-                            Value::new_ptr_to_heap(region.as_mut().as_ptr::<Value>())
-                        );
-                    }
+                    let value =
+                        unsafe { Value::new_ptr_to_heap(region.as_mut().as_ptr::<Value>()) };
+                    push!(self, value);
                 }
                 opcode::TRUE => {
                     push!(self, Value::new_true());
@@ -592,6 +599,8 @@ impl VM {
 
                     let value_ref = pop!(self);
 
+                    check_stack_overflow!(self, size);
+
                     unsafe {
                         let value_ref = value_ref.as_ptr();
                         let dst = &mut self.stack[self.sp + 1];
@@ -618,11 +627,10 @@ impl VM {
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
                 }
                 opcode::DUPLICATE => {
-                    let value = self.get_ref_value_u64(
-                        current_bytecode,
-                        arg,
-                        ref_start[self.current_module].unwrap(),
-                    );
+                    // Get argument from ref
+                    let ref_start = unsafe { *ref_start.get_unchecked(self.current_module) };
+                    let value = self.get_ref_value_u64(current_bytecode, arg, ref_start);
+
                     let size = (value >> 32) as usize; // upper 32 bits
                     let count = (value as u32) as usize; // lower 32 bits
 
@@ -643,7 +651,7 @@ impl VM {
                         self.panic("out of bounds");
                     }
 
-                    let value = &mut self.stack[loc];
+                    let value = &self.stack[loc];
                     push!(self, Value::new_ptr(value));
                 }
                 opcode::EP => {
@@ -874,6 +882,9 @@ impl VM {
                         self.ip = ip_after_jump_to(self.ip, arg);
                     }
                 }
+                opcode::END => {
+                    break;
+                }
                 _ => {
                     panic!("Unknown opcode (0x{:x})", opcode);
                 }
@@ -892,7 +903,7 @@ impl VM {
             }
         }
 
-        if enable_measure {
+        if cfg!(enable_measure) {
             let total = self.performance.total;
             // Print as CSV
             for (opcode, p) in &self.performance.insts {
