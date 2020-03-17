@@ -186,8 +186,8 @@ test_eq "nested tuple indexing" 132 ((52, 93012, 341), (5, 132), 63).1.1;
 let tuple = ((52, 93012, 341), (5, 132, 9), 63);
 test_eq "variable tuple indexing" 9 tuple.1.2;
 
-test "function passed a tuple" (check_tuple (5, 3, 8));
-test_eq "function returning a tuple" 12 (double (3, 6)).1;
+test "pass a tuple to function" (check_tuple (5, 3, 8));
+test_eq "return tuple" 12 (double (3, 6)).1;
 
 fn check_tuple(t: (int, int, int,)): bool = t.0 = 5 && t.1 = 3 && t.2 = 8;
 fn double(t: (int, int)): (int, int) = (t.0 * 2, t.1 * 2); 
@@ -256,7 +256,8 @@ test_eq "struct in heap" 11 person.child.age_in_months;
 person.age := person.age - 1;
 test_eq "assign to struct in heap" 999999 person.age;
 
-test_eq "function returning pointer to local variable" 30 (*(return_ptr ()));
+test_eq "return pointer to local variable" 30 (*(return_ptr ()));
+test_eq "return pointer to copied argument" 40 (*(return_ptr_to_copied_arg 40));
 
 let mut heap = 913395;
 let mut stack = 13041;
@@ -270,6 +271,8 @@ fn return_ptr(): *int = {
     let a= 30;
     &30
 }
+
+fn return_ptr_to_copied_arg(arg: int): *int = &arg;
 
 ## array ##
 
