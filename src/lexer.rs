@@ -163,7 +163,6 @@ impl<'a> Lexer<'a> {
             "false" => Token::False,
             "type" => Token::Type,
             "struct" => Token::Struct,
-            "new" => Token::New,
             "import" => Token::Import,
             "as" => Token::As,
             "__null__" => Token::Null,

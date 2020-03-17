@@ -250,7 +250,7 @@ test_eq "struct field 3" 8 person.child.age_in_months;
 
 ## heap ##
 
-let person = new mut Person:{ name: "aaaaaaaaa", age: 1000000, child: Child:{ age: 999950, age_in_months: 11 } };
+let person = &mut Person:{ name: "aaaaaaaaa", age: 1000000, child: Child:{ age: 999950, age_in_months: 11 } };
 test_eq "struct in heap" 11 person.child.age_in_months;
 
 person.age := person.age - 1;
@@ -361,7 +361,7 @@ test_eq "mutually importing" 243 (pow 3 5);
 let file = File:{
     name: "a.txt",
     created_at: 1583562987,
-    parent: new Dir:{
+    parent: &Dir:{
         first_file: __null__,
     },
 };

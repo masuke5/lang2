@@ -18,7 +18,7 @@ fn list_new<T>(): List<T> = {
 }
 
 fn list_push_front<T>(l: *mut List<T>, value: T) = {
-    l.front := new mut Node:<T>{
+    l.front := &mut Node:<T>{
         value: value,
         next: l.front,
     };

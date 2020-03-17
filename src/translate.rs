@@ -538,13 +538,6 @@ pub fn negative(expr: ExprInfo) -> InstList {
     insts
 }
 
-pub fn alloc(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-    insts.push(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
-    insts
-}
-
 pub fn copy_in_heap(mut insts: InstList, ty: &Type, inner_ty: &Type) -> InstList {
     push_copy_inst(&mut insts, ty);
     insts.push_noarg(opcode::DEREFERENCE);

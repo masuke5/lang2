@@ -616,16 +616,6 @@ impl<'a> Parser<'a> {
                 let span = Span::merge(&symbol_span, &expr.span);
                 Some(spanned(Expr::Address(Box::new(expr), is_mutable), span))
             }
-            Token::New => {
-                let symbol_span = self.peek().span.clone();
-                self.next();
-
-                let is_mutable = self.consume(&Token::Mut);
-                let expr = parse(self)?;
-
-                let span = Span::merge(&symbol_span, &expr.span);
-                Some(spanned(Expr::Alloc(Box::new(expr), is_mutable), span))
-            }
             _ => parse(self),
         }
     }

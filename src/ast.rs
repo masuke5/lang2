@@ -263,7 +263,6 @@ pub enum Expr {
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
-    Alloc(Box<Spanned<Expr>>, bool),
     Block(Block),
     If(
         Box<Spanned<Expr>>,
@@ -518,14 +517,6 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
         }
         Expr::Negative(expr_) => {
             println!("neg {}", span_to_string(&expr.span));
-            dump_expr(&expr_, strings, depth + 1);
-        }
-        Expr::Alloc(expr_, is_mutable) => {
-            println!(
-                "new{} {}",
-                format_bool(*is_mutable, " mut"),
-                span_to_string(&expr.span)
-            );
             dump_expr(&expr_, strings, depth + 1);
         }
         Expr::Block(block) => {

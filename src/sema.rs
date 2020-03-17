@@ -1082,13 +1082,6 @@ impl<'a> Analyzer<'a> {
                     },
                 }
             }
-            Expr::Alloc(expr, is_mutable) => {
-                let expr = self.walk_expr_with_unwrap(code, *expr)?;
-
-                let ty = Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty.clone()]);
-                let insts = translate::alloc(expr);
-                (insts, ty)
-            }
             Expr::Block(block) => {
                 self.push_scope();
 
@@ -1201,7 +1194,6 @@ impl<'a> Analyzer<'a> {
             | Dereference(expr)
             | Address(expr, _)
             | Negative(expr)
-            | Alloc(expr, _)
             | App(expr, _) => Self::expr_has_side_effects(&expr.kind),
             If(cond, then, els) => {
                 Self::expr_has_side_effects(&cond.kind)

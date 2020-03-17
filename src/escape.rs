@@ -82,10 +82,9 @@ impl<'a> Finder<'a> {
                 self.find_expr(&mut func_expr.kind);
                 self.find_expr(&mut arg_expr.kind);
             }
-            Expr::Dereference(expr)
-            | Expr::Negative(expr)
-            | Expr::Alloc(expr, _)
-            | Expr::App(expr, _) => self.find_expr(&mut expr.kind),
+            Expr::Dereference(expr) | Expr::Negative(expr) | Expr::App(expr, _) => {
+                self.find_expr(&mut expr.kind)
+            }
             Expr::Block(block) => {
                 self.find_block(block);
             }
