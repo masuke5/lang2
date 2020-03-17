@@ -265,7 +265,8 @@ pub fn literal_tuple(expr: ExprInfo) -> InstList {
 pub fn field(
     code: &mut BytecodeBuilder,
     loc: Option<RelativeVariableLoc>,
-    should_deref: bool,
+    is_in_heap: bool,
+    is_pointer: bool,
     comp_expr: ExprInfo,
     offset: usize,
 ) -> InstList {
@@ -276,7 +277,19 @@ pub fn field(
         push_load_insts(code, &mut insts, &loc);
     }
 
-    if should_deref {
+    if is_in_heap {
+        if is_pointer {
+            push_copy_inst(
+                &mut insts,
+                &Type::App(TypeCon::Pointer(false), vec![comp_expr.ty.clone()]),
+            );
+        } else {
+            push_copy_inst(&mut insts, &comp_expr.ty);
+        }
+        insts.push_noarg(opcode::DEREFERENCE);
+    }
+
+    if is_pointer {
         push_copy_inst(&mut insts, &comp_expr.ty);
         insts.push_noarg(opcode::DEREFERENCE);
     }
@@ -296,7 +309,8 @@ pub fn field(
 pub fn subscript(
     code: &mut BytecodeBuilder,
     loc: Option<RelativeVariableLoc>,
-    should_deref: bool,
+    is_in_heap: bool,
+    is_pointer: bool,
     expr: ExprInfo,
     subscript_expr: ExprInfo,
     element_ty: &Type,
@@ -308,7 +322,19 @@ pub fn subscript(
         push_load_insts(code, &mut insts, &loc);
     }
 
-    if should_deref {
+    if is_in_heap {
+        if is_pointer {
+            push_copy_inst(
+                &mut insts,
+                &Type::App(TypeCon::Pointer(false), vec![expr.ty.clone()]),
+            );
+        } else {
+            push_copy_inst(&mut insts, &expr.ty);
+        }
+        insts.push_noarg(opcode::DEREFERENCE);
+    }
+
+    if is_pointer {
         push_copy_inst(&mut insts, &expr.ty);
         insts.push_noarg(opcode::DEREFERENCE);
     }
@@ -472,6 +498,11 @@ pub fn call(
 
 pub fn address(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
+    if let Type::App(TypeCon::InHeap, _) = &expr.ty {
+        // Dereference if `expr.ty` is InHeap
+        push_copy_inst(&mut insts, &expr.ty);
+    }
+
     insts.push_noarg(opcode::POINTER);
     insts
 }
@@ -482,8 +513,13 @@ pub fn address_no_lvalue(
     loc: &RelativeVariableLoc,
 ) -> InstList {
     let mut insts = expr.insts;
-    push_store_insts(code, &mut insts, loc, &expr.ty);
+    insts.push(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
+
+    let ty = Type::App(TypeCon::Pointer(false), vec![expr.ty]);
+
+    push_store_insts(code, &mut insts, loc, &ty);
     push_load_insts(code, &mut insts, &loc);
+    push_copy_inst(&mut insts, &ty);
     insts.push_noarg(opcode::POINTER);
     insts
 }
@@ -506,6 +542,13 @@ pub fn alloc(expr: ExprInfo) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
     insts.push(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
+    insts
+}
+
+pub fn copy_in_heap(mut insts: InstList, ty: &Type, inner_ty: &Type) -> InstList {
+    push_copy_inst(&mut insts, ty);
+    insts.push_noarg(opcode::DEREFERENCE);
+    push_copy_inst(&mut insts, inner_ty);
     insts
 }
 
@@ -574,14 +617,24 @@ pub fn bind_stmt(
 ) -> InstList {
     let mut insts = expr.insts;
     push_copy_inst(&mut insts, &expr.ty);
+
+    if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+        insts.push(opcode::ALLOC, type_size_nocheck(&types[0]) as u8);
+    }
+
     push_store_insts(code, &mut insts, loc, &expr.ty);
     insts
 }
 
-pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
+pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo, is_in_heap: bool) -> InstList {
     let mut insts = rhs.insts;
     push_copy_inst(&mut insts, &rhs.ty);
+
     insts.append(lhs.insts);
+    if is_in_heap {
+        push_copy_inst(&mut insts, &lhs.ty);
+    }
+
     insts.push(opcode::STORE, type_size_nocheck(&rhs.ty) as u8);
     insts
 }

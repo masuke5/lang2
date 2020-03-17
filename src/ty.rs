@@ -203,6 +203,7 @@ pub enum TypeCon {
     Named(Id, usize),
     UnsizedNamed(Id),
     Wrapped,
+    InHeap,
 }
 
 impl fmt::Display for TypeCon {
@@ -226,6 +227,7 @@ impl fmt::Display for TypeCon {
             Self::Named(name, size) => write!(f, "{}{{size={}}}", IdMap::name(*name), size),
             Self::UnsizedNamed(name) => write!(f, "{}{{size=?}} ", IdMap::name(*name)),
             Self::Wrapped => write!(f, "wrapped"),
+            Self::InHeap => write!(f, "in_heap"),
         }
     }
 }
@@ -338,7 +340,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
         (a, b) => {
-            error!(&span.clone(), "`{}` and `{}` are not equivalent", a, b);
+            error!(&span.clone(), "`{}` is not equivalent to `{}`", a, b);
             None
         }
     }
@@ -370,9 +372,10 @@ pub fn type_size(ty: &Type) -> Option<usize> {
             let ty = expand_unique(ty.clone());
             type_size(&ty)
         }
-        Type::App(_, tys) => {
+        Type::App(TypeCon::InHeap, _) => Some(1),
+        Type::App(_, types) => {
             let mut size = 0;
-            for ty in tys {
+            for ty in types {
                 size += type_size(ty)?;
             }
 
@@ -410,6 +413,13 @@ pub fn expand_wrap(ty: Type) -> Type {
             expand_wrap(subst(*body, &map))
         }
         Type::App(TypeCon::Wrapped, types) => expand_wrap(types[0].clone()),
+        ty => ty,
+    }
+}
+
+pub fn expand_inheap(ty: Type) -> Type {
+    match ty {
+        Type::App(TypeCon::InHeap, mut types) => types.drain(..).next().unwrap(),
         ty => ty,
     }
 }

@@ -256,6 +256,21 @@ test_eq "struct in heap" 11 person.child.age_in_months;
 person.age := person.age - 1;
 test_eq "assign to struct in heap" 999999 person.age;
 
+test_eq "function returning pointer to local variable" 30 (*(return_ptr ()));
+
+let mut heap = 913395;
+let mut stack = 13041;
+let ptr = &heap;
+
+heap := stack;
+
+test_eq "assign to variable in heap" 13041 heap;
+
+fn return_ptr(): *int = {
+    let a= 30;
+    &30
+}
+
 ## array ##
 
 let mut arr = [3; 10];

@@ -31,20 +31,25 @@ impl<'a> Finder<'a> {
             self.push_scope();
 
             for param in &mut func.params {
-                self.variables.insert(param.name, &mut param.is_escaped);
+                self.variables.insert(param.name, &mut param.is_in_heap);
             }
             self.find_expr(&mut func.body.kind);
 
-            // Check for variables or arguments to escape
-            let current_level = self.variables.level();
-            let has_escaped_variables = self
-                .variables
-                .iter()
-                .filter(|(level, _, _)| *level == current_level)
-                .any(|(_, _, is_escaped)| **is_escaped);
-            func.has_escaped_variables = has_escaped_variables;
-
             self.pop_scope();
+        }
+    }
+
+    fn mark(&mut self, expr: &'a mut Expr) {
+        match expr {
+            Expr::Variable(name, _) => {
+                if let Some(is_heapvar) = self.variables.get_mut(&name) {
+                    **is_heapvar = true;
+                }
+            }
+            Expr::Field(expr, _) => {
+                self.mark(&mut expr.kind);
+            }
+            _ => {}
         }
     }
 
@@ -69,15 +74,6 @@ impl<'a> Finder<'a> {
                 self.find_expr(&mut lhs.kind);
                 self.find_expr(&mut rhs.kind);
             }
-            Expr::Variable(name, is_escaped) => {
-                let current_level = self.variables.level();
-                if let Some((escaped, level)) = self.variables.get_mut_with_level(&name) {
-                    if level < current_level {
-                        **escaped = true;
-                        *is_escaped = true;
-                    }
-                }
-            }
             Expr::Call(func_expr, arg_expr) => {
                 self.find_expr(&mut func_expr.kind);
                 self.find_expr(&mut arg_expr.kind);
@@ -96,6 +92,9 @@ impl<'a> Finder<'a> {
                     self.find_expr(&mut els.kind);
                 }
             }
+            Expr::Address(expr, _) => {
+                self.mark(&mut expr.kind);
+            }
             _ => {}
         }
     }
@@ -103,9 +102,9 @@ impl<'a> Finder<'a> {
     fn find_stmt(&mut self, stmt: &'a mut Stmt) {
         match stmt {
             Stmt::Expr(expr) => self.find_expr(&mut expr.kind),
-            Stmt::Bind(name, _, expr, _, is_escaped, _) => {
+            Stmt::Bind(name, _, expr, _, _, is_in_heap) => {
                 self.find_expr(&mut expr.kind);
-                self.variables.insert(*name, is_escaped);
+                self.variables.insert(*name, is_in_heap);
             }
             Stmt::Return(Some(expr)) => {
                 self.find_expr(&mut expr.kind);

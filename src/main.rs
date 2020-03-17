@@ -15,6 +15,7 @@ mod ast;
 mod bytecode;
 mod escape;
 mod gc;
+mod heapvar;
 mod id;
 mod lexer;
 mod module;
@@ -87,6 +88,7 @@ fn execute(
 
     for program in module_buffers.values_mut() {
         escape::find(program);
+        heapvar::find(program);
     }
 
     if matches.is_present("dump-ast") {

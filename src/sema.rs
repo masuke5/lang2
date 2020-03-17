@@ -576,9 +576,17 @@ impl<'a> Analyzer<'a> {
                 _ => {
                     let mut expr = self.walk_expr(code, expr)?;
 
-                    // if `ty` is not wrapped and `expr.ty` is wrapped
+                    // If `ty` is not in heap and `expr.ty` is in heap
+                    if let Type::App(TypeCon::InHeap, _) = ty {
+                        // Do nothing
+                    } else if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+                        expr.insts = translate::copy_in_heap(expr.insts, &expr.ty, &types[0]);
+                        expr.ty = types[0].clone();
+                    }
+
+                    // If `ty` is not wrapped and `expr.ty` is wrapped
                     if let Type::App(TypeCon::Wrapped, _) = ty {
-                        // Does nothing
+                        // Do nothing
                     } else if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
                         expr.insts = translate::unwrap(expr.insts, &expr.ty);
                         expr.ty = types[0].clone();
@@ -588,6 +596,26 @@ impl<'a> Analyzer<'a> {
                 }
             },
         }
+    }
+
+    fn walk_expr_with_unwrap_and_deref(
+        &mut self,
+        code: &mut BytecodeBuilder,
+        expr: Spanned<Expr>,
+    ) -> Option<ExprInfo> {
+        let mut expr = self.walk_expr(code, expr)?;
+
+        if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+            expr.insts = translate::copy_in_heap(expr.insts, &expr.ty, &types[0]);
+            expr.ty = types[0].clone();
+        }
+
+        if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
+            expr.insts = translate::unwrap(expr.insts, &expr.ty);
+            expr.ty = types[0].clone();
+        }
+
+        Some(expr)
     }
 
     fn walk_expr_with_unwrap(
@@ -726,9 +754,17 @@ impl<'a> Analyzer<'a> {
                 };
 
                 let ty = self.expand_name(comp_expr.ty.clone())?;
-                let ty = expand_wrap(ty);
+                let mut ty = expand_wrap(ty);
 
-                let should_deref = match &ty {
+                let is_in_heap = match ty {
+                    Type::App(TypeCon::InHeap, types) => {
+                        ty = types[0].clone();
+                        true
+                    }
+                    _ => false,
+                };
+
+                let is_pointer = match &ty {
                     Type::App(TypeCon::Pointer(_), _) => true,
                     _ => false,
                 };
@@ -787,7 +823,8 @@ impl<'a> Analyzer<'a> {
                 let insts = translate::field(
                     code,
                     loc.map(|loc| self.relative_loc(&loc)),
-                    should_deref,
+                    is_in_heap,
+                    is_pointer,
                     comp_expr,
                     offset,
                 );
@@ -810,7 +847,12 @@ impl<'a> Analyzer<'a> {
                     None
                 };
 
-                let (ty, should_deref) = match expr.ty.clone() {
+                let (ty, is_in_heap) = match &expr.ty {
+                    Type::App(TypeCon::InHeap, types) => (types[0].clone(), true),
+                    _ => (expr.ty.clone(), false),
+                };
+
+                let (ty, is_pointer) = match ty {
                     Type::App(TypeCon::Array(_), tys) => (tys[0].clone(), false),
                     Type::App(TypeCon::Pointer(is_mutable), tys) => {
                         expr.is_mutable = is_mutable;
@@ -837,7 +879,8 @@ impl<'a> Analyzer<'a> {
                 let insts = translate::subscript(
                     code,
                     loc.map(|loc| self.relative_loc(&loc)),
-                    should_deref,
+                    is_in_heap,
+                    is_pointer,
                     expr,
                     subscript_expr,
                     &ty,
@@ -926,8 +969,8 @@ impl<'a> Analyzer<'a> {
                 (translate::binop_or(lhs, rhs), Type::Bool)
             }
             Expr::BinOp(binop, lhs, rhs) => {
-                let lhs = self.walk_expr_with_unwrap(code, *lhs);
-                let rhs = self.walk_expr_with_unwrap(code, *rhs);
+                let lhs = self.walk_expr_with_unwrap_and_deref(code, *lhs);
+                let rhs = self.walk_expr_with_unwrap_and_deref(code, *rhs);
                 try_some!(lhs, rhs);
 
                 let binop_symbol = binop.to_symbol();
@@ -981,19 +1024,16 @@ impl<'a> Analyzer<'a> {
             Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr_with_unwrap(code, *expr)?;
 
-                if is_mutable && !expr.is_mutable {
-                    error!(&expr.span, "this expression is immutable");
-                    return None;
-                }
-
-                let ty = Type::App(TypeCon::Pointer(is_mutable), vec![expr.ty.clone()]);
+                let inner_type = expand_inheap(expr.ty.clone());
+                let ty = Type::App(TypeCon::Pointer(is_mutable), vec![inner_type]);
 
                 if !expr.is_lvalue {
+                    // Store `expr` and return the pointer to it if `expr` is not lvalue
                     let temp = self.gen_temp_id();
                     let loc = self.new_var_in_current_func(
                         code,
                         temp,
-                        expr.ty.clone(),
+                        Type::App(TypeCon::InHeap, vec![expr.ty.clone()]),
                         is_mutable,
                         false,
                     );
@@ -1001,6 +1041,11 @@ impl<'a> Analyzer<'a> {
                     let insts = translate::address_no_lvalue(code, expr, &self.relative_loc(&loc));
                     (insts, ty)
                 } else {
+                    if is_mutable && !expr.is_mutable {
+                        error!(&expr.span, "this expression is immutable");
+                        return None;
+                    }
+
                     let insts = translate::address(expr);
                     (insts, ty)
                 }
@@ -1191,8 +1236,8 @@ impl<'a> Analyzer<'a> {
 
                 translate::while_stmt(cond, body)
             }
-            Stmt::Bind(name, ty, expr, is_mutable, is_escaped) => {
-                let expr = match ty {
+            Stmt::Bind(name, ty, expr, is_mutable, is_escaped, is_in_heap) => {
+                let mut expr = match ty {
                     Some(ty) => {
                         let ty = self.walk_type(ty)?;
                         let mut expr = self.walk_expr_with_conversion(code, *expr, &ty)?;
@@ -1205,6 +1250,10 @@ impl<'a> Analyzer<'a> {
                     None => self.walk_expr(code, *expr)?,
                 };
 
+                if is_in_heap {
+                    expr.ty = Type::App(TypeCon::InHeap, vec![expr.ty]);
+                }
+
                 let loc = self.new_var_in_current_func(
                     code,
                     name,
@@ -1216,7 +1265,14 @@ impl<'a> Analyzer<'a> {
                 translate::bind_stmt(code, &self.relative_loc(&loc), expr)
             }
             Stmt::Assign(lhs, rhs) => {
-                let lhs = self.walk_expr(code, lhs)?;
+                let mut lhs = self.walk_expr(code, lhs)?;
+                let is_in_heap = if let Type::App(TypeCon::InHeap, types) = &mut lhs.ty {
+                    lhs.ty = types[0].clone();
+                    true
+                } else {
+                    false
+                };
+
                 let rhs = self.walk_expr_with_conversion(code, *rhs, &lhs.ty)?;
 
                 if !lhs.is_lvalue {
@@ -1231,7 +1287,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&rhs.span, &lhs.ty, &rhs.ty)?;
 
-                translate::assign_stmt(lhs, rhs)
+                translate::assign_stmt(lhs, rhs, is_in_heap)
             }
             Stmt::Return(expr) => {
                 let func_name = code.get_function(self.current_func).unwrap().name();

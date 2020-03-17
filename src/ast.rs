@@ -275,8 +275,15 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
-    // name, type, initial expression, is mutable, is escaped
-    Bind(Id, Option<Spanned<AstType>>, Box<Spanned<Expr>>, bool, bool),
+    // name, type, initial expression, is mutable, is escaped, should store in heap
+    Bind(
+        Id,
+        Option<Spanned<AstType>>,
+        Box<Spanned<Expr>>,
+        bool,
+        bool,
+        bool,
+    ),
     Expr(Spanned<Expr>),
     Return(Option<Spanned<Expr>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
@@ -289,6 +296,7 @@ pub struct Param {
     pub ty: Spanned<AstType>,
     pub is_mutable: bool,
     pub is_escaped: bool,
+    pub is_in_heap: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -543,11 +551,12 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
     print!("{}", "  ".repeat(depth));
 
     match &stmt.kind {
-        Stmt::Bind(name, ty, expr, is_mutable, is_escaped) => {
+        Stmt::Bind(name, ty, expr, is_mutable, is_escaped, is_heapvar) => {
             print!(
-                "let{}{} ",
+                "let{}{}{} ",
                 format_bool(*is_mutable, " mut"),
-                format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m")
+                format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"),
+                format_bool(*is_heapvar, " \x1b[32min heap\x1b[0m")
             );
             print!("{}", IdMap::name(*name));
             if let Some(ty) = ty {

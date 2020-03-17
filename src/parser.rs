@@ -716,7 +716,7 @@ impl<'a> Parser<'a> {
         let span = Span::merge(&let_span, semicolon_span);
 
         Some(spanned(
-            Stmt::Bind(name, ty, Box::new(expr), is_mutable, false),
+            Stmt::Bind(name, ty, Box::new(expr), is_mutable, false, false),
             span,
         ))
     }
@@ -1339,7 +1339,9 @@ impl<'a> Parser<'a> {
             name,
             ty,
             is_mutable,
+            // These are set in module "escape" and "heapvar"
             is_escaped: false,
+            is_in_heap: false,
         })
     }
 
@@ -1392,6 +1394,7 @@ impl<'a> Parser<'a> {
                 ty: spanned(AstType::Unit, self.prev().span.clone()),
                 is_mutable: false,
                 is_escaped: false,
+                is_in_heap: false,
             });
         }
 
