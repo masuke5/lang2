@@ -10,6 +10,16 @@ pub struct Span {
 }
 
 impl Span {
+    pub fn zero(file: Id) -> Self {
+        Self {
+            file,
+            start_line: 0,
+            start_col: 0,
+            end_line: 0,
+            end_col: 0,
+        }
+    }
+
     pub fn merge(left: &Span, right: &Span) -> Span {
         Span {
             file: left.file,

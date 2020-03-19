@@ -310,16 +310,7 @@ impl<'a> Lexer<'a> {
             self.skip_whitespace();
         }
 
-        tokens.push(Spanned::<Token>::new(
-            Token::EOF,
-            Span {
-                file: self.file,
-                start_line: 0,
-                end_line: 0,
-                start_col: 0,
-                end_col: 0,
-            },
-        ));
+        tokens.push(Spanned::<Token>::new(Token::EOF, Span::zero(self.file)));
 
         tokens
     }

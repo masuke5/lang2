@@ -804,7 +804,7 @@ mod tests {
 
         let mut insts2 = InstList::new();
         insts2.push_noarg(opcode::BINOP_ADD);
-        insts2.push(opcode::INT, 60);
+        insts2.push(opcode::TINY_INT, 60);
         insts2.push_noarg(opcode::BINOP_MUL);
 
         insts.append(insts2);

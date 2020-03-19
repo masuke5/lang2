@@ -602,7 +602,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_symbol_path_from_path() {
+    fn from_path() {
         let root = env::current_dir().unwrap();
         let path = PathBuf::from("test2/test.lang2");
         let actual = SymbolPath::from_path(&root, &path);
@@ -612,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn test_import_range_to_paths() {
+    fn to_paths() {
         type IR = ImportRange;
         let id = IdMap::new_id;
 

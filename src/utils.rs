@@ -303,12 +303,30 @@ pub fn span_to_string(span: &Span) -> String {
 }
 
 pub fn align(x: usize, n: usize) -> usize {
+    if n == 0 {
+        panic!("cannot align by zero");
+    }
+
     (x + (n - 1)) & !(n - 1)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_align() {
+        assert_eq!(16, align(9, 8));
+        assert_eq!(0, align(0, 8));
+        assert_eq!(16, align(16, 8));
+        assert_eq!(8, align(5, 8));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_align_by_zero() {
+        assert_eq!(3, align(3, 0));
+    }
 
     #[test]
     fn iter() {

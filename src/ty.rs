@@ -239,44 +239,37 @@ impl fmt::Debug for TypeCon {
 }
 
 pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
+    type T = Type;
+    type TC = TypeCon;
+
     match ty {
-        Type::Int => Type::Int,
-        Type::Bool => Type::Bool,
-        Type::String => Type::String,
-        Type::Unit => Type::Unit,
-        Type::Null => Type::Null,
-        Type::Var(var) => match map.iter().find(|(v, _)| var == **v) {
+        T::Int | T::Bool | T::String | T::Unit | T::Null => ty,
+        T::Var(var) => match map.iter().find(|(v, _)| var == **v) {
             Some((_, ty)) => ty.clone(),
-            None => Type::Var(var),
+            None => T::Var(var),
         },
-        Type::App(TypeCon::Fun(params, body), tys) => {
-            let mut map_in_func = FxHashMap::default();
-            for (param, ty) in params.into_iter().zip(tys.into_iter()) {
-                map_in_func.insert(param, ty);
-            }
+        T::App(TC::Fun(params, body), tys) => {
+            let map_in_func: FxHashMap<TypeVar, T> =
+                params.into_iter().zip(tys.into_iter()).collect();
 
             let body = subst(*body, &map_in_func);
             subst(body, map)
         }
-        Type::App(tycon, tys) => {
-            let mut new_tys = Vec::with_capacity(tys.len());
-            for ty in tys {
-                new_tys.push(subst(ty, &map));
-            }
-
-            Type::App(tycon, new_tys)
+        T::App(tycon, tys) => {
+            let new_tys: Vec<T> = tys.into_iter().map(|ty| subst(ty, &map)).collect();
+            T::App(tycon, new_tys)
         }
-        Type::Poly(vars, ty) => {
+        T::Poly(vars, ty) => {
             let mut new_map = FxHashMap::default();
             let mut new_vars = Vec::with_capacity(vars.len());
             for var in vars {
                 new_vars.push(TypeVar::new());
-                new_map.insert(var, Type::Var(*new_vars.last().unwrap()));
+                new_map.insert(var, T::Var(*new_vars.last().unwrap()));
             }
 
             let ty = subst(*ty, &new_map);
             let ty = subst(ty, map);
-            Type::Poly(new_vars, Box::new(ty))
+            T::Poly(new_vars, Box::new(ty))
         }
     }
 }
@@ -284,8 +277,12 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
     if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
         let ok = match (a_tycon, b_tycon) {
-            (TypeCon::Named(a, _), TypeCon::UnsizedNamed(b)) if a == b => true,
-            (TypeCon::UnsizedNamed(a), TypeCon::Named(b, _)) if a == b => true,
+            (TypeCon::Named(a, _), TypeCon::UnsizedNamed(b))
+            | (TypeCon::UnsizedNamed(a), TypeCon::Named(b, _))
+                if a == b =>
+            {
+                true
+            }
             (a, b) => a == b,
         };
 
@@ -324,10 +321,11 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
             Some(())
         }
         (Type::Poly(vars1, ty1), Type::Poly(vars2, ty2)) => {
-            let mut map = FxHashMap::default();
-            for (var1, var2) in vars1.iter().zip(vars2.iter()) {
-                map.insert(var2.clone(), Type::Var(*var1));
-            }
+            let map: FxHashMap<TypeVar, Type> = vars2
+                .iter()
+                .copied()
+                .zip(vars1.iter().map(|v| Type::Var(*v)))
+                .collect();
 
             unify(span, ty1, &subst(*ty2.clone(), &map))?;
             Some(())
@@ -668,6 +666,180 @@ mod tests {
                 ],
             )
         );
+    }
+
+    #[test]
+    fn test_subst() {
+        assert_eq!(Type::Int, subst(Type::Int, &FxHashMap::default()));
+    }
+
+    #[test]
+    fn test_subst_with_tyfun() {
+        let a = TypeVar::new();
+        let b = TypeVar::new();
+        assert_eq!(
+            Type::App(TypeCon::Pointer(false), vec![Type::Bool]),
+            subst(
+                // (fn a => Pointer(a))(b)
+                Type::App(
+                    TypeCon::Fun(
+                        vec![a],
+                        Box::new(Type::App(TypeCon::Pointer(false), vec![Type::Var(a)]))
+                    ),
+                    vec![Type::Var(b)]
+                ),
+                // b = Bool
+                &[(b, Type::Bool)].iter().cloned().collect(),
+            )
+        );
+    }
+
+    #[test]
+    fn test_subst_with_app() {
+        let a = TypeVar::new();
+        assert_eq!(
+            Type::App(TypeCon::Tuple, vec![Type::Unit, Type::Unit]),
+            subst(
+                Type::App(TypeCon::Tuple, vec![Type::Var(a), Type::Var(a)]),
+                &[(a, Type::Unit)].iter().cloned().collect(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_subst_with_poly() {
+        let a = TypeVar::new();
+        let ty = subst(
+            Type::Poly(
+                vec![a],
+                Box::new(Type::App(TypeCon::Pointer(true), vec![Type::Var(a)])),
+            ),
+            &[(a, Type::Bool)].iter().cloned().collect(),
+        );
+
+        assert!(match ty {
+            Type::Poly(params, box Type::App(TypeCon::Pointer(true), types)) => match &types[0] {
+                Type::Var(var) if params[0] == *var && *var != a => true,
+                _ => false,
+            },
+            _ => false,
+        });
+    }
+
+    #[test]
+    fn test_unify() {
+        let span = Span::zero(*crate::id::reserved_id::TEST);
+        assert!(unify(&span, &Type::Int, &Type::Int).is_some());
+    }
+
+    #[test]
+    fn test_unify_with_named() {
+        let span = Span::zero(*crate::id::reserved_id::TEST);
+        let id = IdMap::new_id("test");
+        assert!(unify(
+            &span,
+            &Type::App(TypeCon::Named(id, 0), vec![]),
+            &Type::App(TypeCon::Named(id, 0), vec![]),
+        )
+        .is_some());
+
+        assert!(unify(
+            &span,
+            &Type::App(TypeCon::Named(id, 0), vec![]),
+            &Type::App(TypeCon::UnsizedNamed(id), vec![]),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn test_unify_with_pointer_and_null() {
+        let span = Span::zero(*crate::id::reserved_id::TEST);
+        assert!(unify(
+            &span,
+            &Type::App(TypeCon::Pointer(false), vec![Type::Int]),
+            &Type::Null,
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn test_unify_with_tyfun() {
+        let span = Span::zero(*crate::id::reserved_id::TEST);
+        let a = TypeVar::new();
+        let b = TypeVar::new();
+        let c = TypeVar::new();
+        assert!(unify(
+            &span,
+            // (fn a => Pointer(a))(b)
+            &Type::App(
+                TypeCon::Fun(
+                    vec![a],
+                    Box::new(Type::App(TypeCon::Pointer(false), vec![Type::Var(a)]))
+                ),
+                vec![Type::Var(b)]
+            ),
+            // (fn c => Pointer(c))(b)
+            &Type::App(
+                TypeCon::Fun(
+                    vec![c],
+                    Box::new(Type::App(TypeCon::Pointer(false), vec![Type::Var(c)]))
+                ),
+                vec![Type::Var(b)]
+            ),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn test_unify_with_unique() {
+        let span = Span::zero(*crate::id::reserved_id::TEST);
+
+        let u1 = Unique::new();
+        let u2 = Unique::new();
+
+        // The same unique but the tycon is different
+        assert!(unify(
+            &span,
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u1), vec![]),
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Wrapped), u1), vec![]),
+        )
+        .is_some());
+
+        // Different unique
+        assert!(unify(
+            &span,
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u1), vec![]),
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u2), vec![]),
+        )
+        .is_none());
+
+        // The same unique and the same tycon
+        assert!(unify(
+            &span,
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u2), vec![]),
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u2), vec![]),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn test_unify_with_poly() {
+        let span = Span::zero(*crate::id::reserved_id::TEST);
+
+        let a = TypeVar::new();
+        let b = TypeVar::new();
+        assert!(unify(
+            &span,
+            &Type::Poly(
+                vec![a],
+                Box::new(Type::App(TypeCon::Pointer(true), vec![Type::Var(a)]))
+            ),
+            &Type::Poly(
+                vec![b],
+                Box::new(Type::App(TypeCon::Pointer(true), vec![Type::Var(b)]))
+            ),
+        )
+        .is_some());
     }
 
     #[test]
