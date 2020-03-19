@@ -99,7 +99,7 @@ impl ErrorList {
         };
 
         // Print the error position and message
-        println!(
+        eprintln!(
             "{}{}\x1b[0m: {}:{}:{}-{}:{}: \x1b[97m{}\x1b[0m",
             color,
             label,
@@ -120,7 +120,7 @@ impl ErrorList {
             } else {
                 input[line].len() as u32
             };
-            println!(
+            eprintln!(
                 "{}",
                 if line >= input.len() {
                     ""
@@ -154,7 +154,7 @@ impl ErrorList {
 
             let (start, length) = (start as usize, length as usize);
 
-            println!(
+            eprintln!(
                 "{}{}{}\x1b[0m",
                 " ".repeat(start),
                 color,
