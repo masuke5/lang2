@@ -106,6 +106,7 @@ pub struct Parser<'a> {
     imported_modules: FxHashSet<SymbolPath>,
     loaded_modules: FxHashSet<SymbolPath>,
     native_modules: &'a ModuleContainer,
+    impls: Vec<Impl>,
 
     blocks_builder: BlockBuilder,
 }
@@ -127,6 +128,7 @@ impl<'a> Parser<'a> {
             imported_modules: FxHashSet::default(),
             loaded_modules,
             native_modules,
+            impls: Vec::new(),
             blocks_builder: BlockBuilder::new(),
         }
     }
@@ -1457,6 +1459,30 @@ impl<'a> Parser<'a> {
         Some(AstTypeDef { name, ty, var_ids })
     }
 
+    fn parse_defs_in_impl(&mut self, impl_: &mut Impl) -> Option<()> {
+        if let Token::Fn = self.peek().kind {
+            let func = self.parse_fn_decl()?;
+            impl_.functions.push(func);
+        }
+
+        Some(())
+    }
+
+    fn parse_impl(&mut self) -> Option<Impl> {
+        let target = self.expect_identifier(&[Token::Rbrace])?;
+        let target = Spanned::new(target, self.prev().span.clone());
+
+        self.expect(&Token::Lbrace, &[Token::Lbrace]);
+
+        let mut impl_ = Impl::new(target);
+
+        while !self.consume(&Token::Rbrace) {
+            self.parse_defs_in_impl(&mut impl_);
+        }
+
+        Some(impl_)
+    }
+
     pub fn parse(mut self, module_path: &SymbolPath) -> FxHashMap<SymbolPath, Program> {
         self.imported_modules
             .insert(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
@@ -1465,6 +1491,13 @@ impl<'a> Parser<'a> {
 
         while self.peek().kind != Token::EOF {
             if self.consume(&Token::Semicolon) {
+                continue;
+            }
+
+            if self.consume(&Token::Impl) {
+                if let Some(impl_) = self.parse_impl() {
+                    self.impls.push(impl_);
+                }
                 continue;
             }
 
@@ -1484,6 +1517,7 @@ impl<'a> Parser<'a> {
                 main: block,
                 strings: self.strings,
                 imported_modules: self.imported_modules.into_iter().collect(),
+                impls: self.impls,
             },
         );
 
