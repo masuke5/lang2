@@ -17,6 +17,7 @@ mod escape;
 mod gc;
 mod heapvar;
 pub mod id;
+mod ir;
 mod lexer;
 mod module;
 mod parser;
