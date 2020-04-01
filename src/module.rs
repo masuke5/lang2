@@ -34,10 +34,24 @@ pub struct FunctionHeader {
 }
 
 #[derive(Debug, Clone)]
+pub struct Implementation {
+    pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
+}
+
+impl Implementation {
+    pub fn new() -> Self {
+        Self {
+            functions: FxHashMap::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ModuleHeader {
     pub path: SymbolPath,
     pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
     pub types: FxHashMap<Id, Option<TypeCon>>,
+    pub impls: FxHashMap<Id, Implementation>,
 }
 
 impl ModuleHeader {
@@ -46,6 +60,7 @@ impl ModuleHeader {
             path: path.clone(),
             functions: FxHashMap::default(),
             types: FxHashMap::default(),
+            impls: FxHashMap::default(),
         }
     }
 }
@@ -147,6 +162,7 @@ impl ModuleBuilder {
             path,
             functions: self.func_headers,
             types: FxHashMap::default(),
+            impls: FxHashMap::default(),
         };
 
         ModuleWithChild {

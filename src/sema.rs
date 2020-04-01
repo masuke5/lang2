@@ -6,7 +6,7 @@ use crate::ast::{Param as AstParam, *};
 use crate::bytecode::{Bytecode, BytecodeBuilder, Function, InstList};
 use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
-use crate::module::{FunctionHeader, Module, ModuleContainer, ModuleHeader};
+use crate::module::{FunctionHeader, Implementation, Module, ModuleContainer, ModuleHeader};
 use crate::span::{Span, Spanned};
 use crate::translate;
 use crate::translate::RelativeVariableLoc;
@@ -167,6 +167,7 @@ pub struct Analyzer<'a> {
     types: HashMapWithScope<Id, Type>,
     tycons: TypeDefinitions,
     tycon_spans: HashMapWithScope<Id, Span>,
+    impls: FxHashMap<Id, Implementation>,
 
     variables: HashMapWithScope<Id, Entry>,
     next_temp_num: u32,
@@ -187,6 +188,7 @@ impl<'a> Analyzer<'a> {
             types: HashMapWithScope::new(),
             tycons: TypeDefinitions::new(),
             tycon_spans: HashMapWithScope::new(),
+            impls: FxHashMap::default(),
             current_func: *reserved_id::MAIN_FUNC,
             next_temp_num: 0,
             function_insts: LinkedList::new(),
@@ -194,6 +196,7 @@ impl<'a> Analyzer<'a> {
             _phantom: &std::marker::PhantomData,
         };
         slf.push_type_scope();
+        slf.push_scope();
 
         slf
     }
@@ -340,26 +343,64 @@ impl<'a> Analyzer<'a> {
         self.variables.get(&id)
     }
 
-    fn find_external_func(&self, path: &SymbolPath) -> Option<(&FunctionHeader, u16, Option<u16>)> {
+    fn find_external_entry(&self, path: &SymbolPath) -> Option<ImportedEntry> {
         // header, code id, module id
         assert!(!path.is_empty());
 
+        // m1::m2::Type::func
+        // m1::func
+
         let module_path = path.parent().unwrap();
-        let func_id = path.tail().unwrap().id;
+        let entry_name = path.tail().unwrap().id;
 
         if module_path.is_empty() {
-            None
-        } else {
-            if !self.visible_modules.contains(&module_path) {
-                return None;
-            }
+            return None;
+        }
 
-            // Get the function from the module
-            let (module_id, module) = self.module_headers.get(&module_path)?;
-            module
-                .functions
-                .get(&func_id)
-                .map(|(func_id, fh)| (fh, *func_id, Some(*module_id)))
+        match self.module_headers.get(&module_path) {
+            // Find a function or a type of `entry_id`
+            Some((module_id, module)) => {
+                // Not imported modules are invisible
+                if !self.visible_modules.contains(&module_path) {
+                    return None;
+                }
+
+                if let Some(tycon) = module.types.get(&entry_name) {
+                    let tycon = tycon.as_ref().unwrap();
+                    return Some(ImportedEntry::Type(entry_name, tycon.clone()));
+                }
+
+                let (func_id, header) = module.functions.get(&entry_name)?;
+                let header = FunctionHeaderWithId::new(*module_id, *func_id, header.clone());
+
+                Some(ImportedEntry::Function(entry_name, header))
+            }
+            // `path` may be a method
+            None => {
+                let type_name = module_path.tail()?.id;
+                let module_path = module_path.parent()?;
+                let func_name = entry_name;
+
+                if module_path.is_empty() {
+                    let (func_id, header) =
+                        self.impls.get(&type_name)?.functions.get(&func_name)?;
+                    let header = FunctionHeaderWithId::new_self(header.clone(), *func_id);
+
+                    Some(ImportedEntry::Function(func_name, header))
+                } else {
+                    // Not imported modules are invisible
+                    if !self.visible_modules.contains(&module_path) {
+                        return None;
+                    }
+
+                    let (module_id, module) = self.module_headers.get(&module_path)?;
+                    let (func_id, header) =
+                        module.impls.get(&type_name)?.functions.get(&func_name)?;
+                    let header = FunctionHeaderWithId::new(*module_id, *func_id, header.clone());
+
+                    Some(ImportedEntry::Function(func_name, header))
+                }
+            }
         }
     }
 
@@ -922,8 +963,17 @@ impl<'a> Analyzer<'a> {
                 return Some(ExprInfo::new_lvalue(insts, ty, expr.span, is_mutable));
             }
             Expr::Path(path) => {
-                let (header, func_id, module_id) = match self.find_external_func(&path) {
-                    Some(t) => t,
+                let FunctionHeaderWithId {
+                    module_id,
+                    func_id,
+                    header,
+                    ..
+                } = match self.find_external_entry(&path) {
+                    Some(ImportedEntry::Function(_, h)) => h,
+                    Some(ImportedEntry::Type(_, _)) => {
+                        error!(&expr.span, "`{}` is a type", path);
+                        return None;
+                    }
                     None => {
                         error!(&expr.span, "undefined function `{}`", path);
                         return None;
@@ -1212,12 +1262,10 @@ impl<'a> Analyzer<'a> {
                 // An expression that doesn't have side effects is unnecessary
                 if !Self::expr_has_side_effects(&expr.kind) {
                     warn!(&expr.span, "Unnecessary expression");
-                    InstList::new()
-                } else {
-                    let expr = self.walk_expr(code, expr)?;
-
-                    translate::expr_stmt(expr)
                 }
+
+                let expr = self.walk_expr(code, expr)?;
+                translate::expr_stmt(expr)
             }
             Stmt::While(cond, stmt) => {
                 let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
@@ -1522,7 +1570,10 @@ impl<'a> Analyzer<'a> {
 
         // Walk the function bodies in the statements
         for func in block.functions {
-            self.walk_function(code, func);
+            if let Some(Entry::Function(header)) = self.variables.get(&func.name.kind) {
+                let header = header.header.clone();
+                self.walk_function(code, func, &header);
+            }
         }
 
         let result_expr = result_expr?;
@@ -1745,7 +1796,12 @@ impl<'a> Analyzer<'a> {
         Some((header, bc_func))
     }
 
-    fn walk_function(&mut self, code: &mut BytecodeBuilder, func: AstFunction) {
+    fn walk_function(
+        &mut self,
+        code: &mut BytecodeBuilder,
+        func: AstFunction,
+        header: &FunctionHeader,
+    ) {
         self.current_func = func.name.kind;
 
         self.push_scope();
@@ -1754,12 +1810,6 @@ impl<'a> Analyzer<'a> {
         if func.has_escaped_variables {
             self.var_level += 1;
         }
-
-        let header = match self.variables.get(&func.name.kind) {
-            Some(Entry::Function(h)) => &h.header,
-            // To reach there means the function header may be not inserted by errors
-            _ => return,
-        };
 
         let return_ty = header.return_ty.clone();
 
@@ -1812,6 +1862,48 @@ impl<'a> Analyzer<'a> {
 
         self.pop_type_scope();
         self.pop_scope();
+    }
+
+    // =========================================
+    // Implementation
+    // =========================================
+
+    fn insert_impl_headers(&mut self, code: &mut BytecodeBuilder, implementation: &Impl) {
+        let mut new_impl = Implementation::new();
+
+        for func in &implementation.functions {
+            if let Some((header, func)) = self.generate_function_header(&func) {
+                let func_name = func.name();
+
+                code.insert_function_header(func);
+                new_impl.functions.insert(
+                    func_name,
+                    (code.get_function(func_name).unwrap().code_id, header),
+                );
+            }
+        }
+
+        self.impls.insert(implementation.target.kind, new_impl);
+    }
+
+    fn walk_impl(&mut self, code: &mut BytecodeBuilder, implementation: Impl) {
+        let impl_header = match self.impls.get(&implementation.target.kind) {
+            Some(imp) => imp,
+            None => return,
+        };
+
+        assert_eq!(impl_header.functions.len(), implementation.functions.len());
+
+        let iter = impl_header
+            .functions
+            .clone()
+            .into_iter()
+            .map(|(_, (_, h))| h)
+            .zip(implementation.functions.into_iter());
+
+        for (header, func) in iter {
+            self.walk_function(code, func, &header);
+        }
     }
 
     // =========================================
@@ -1929,21 +2021,6 @@ impl<'a> Analyzer<'a> {
             self.insert_type_header(tydef);
         }
 
-        // Walk the type definitions
-        for tydef in &program.main.types {
-            self.walk_type_def(tydef.clone());
-        }
-
-        if let Err(ids) = self.tycons.resolve() {
-            for id in ids {
-                // TODO:
-                eprintln!(
-                    "error: The type `{}` could not be calculated",
-                    IdMap::name(id)
-                )
-            }
-        }
-
         // Insert main function header
         let header = FunctionHeader {
             params: Vec::new(),
@@ -1958,6 +2035,27 @@ impl<'a> Analyzer<'a> {
                 header,
             ),
         );
+
+        for implementation in &program.impls {
+            if self.tycons.contains(implementation.target.kind) {
+                self.insert_impl_headers(code, implementation);
+            }
+        }
+
+        // Walk the type definitions
+        for tydef in &program.main.types {
+            self.walk_type_def(tydef.clone());
+        }
+
+        if let Err(ids) = self.tycons.resolve() {
+            for id in ids {
+                // TODO:
+                eprintln!(
+                    "error: The type `{}` could not be calculated",
+                    IdMap::name(id)
+                )
+            }
+        }
 
         for func in &program.main.functions {
             if let Some((header, func)) = self.generate_function_header(&func) {
@@ -1983,6 +2081,11 @@ impl<'a> Analyzer<'a> {
             kind: range,
             span: program.main.result_expr.span.clone(),
         });
+
+        // The headers are already inserted in Self::insert_public_functions
+        for implementation in program.impls {
+            self.walk_impl(&mut code, implementation);
+        }
 
         // Main statements
         let insts = self.walk_block(&mut code, program.main);
