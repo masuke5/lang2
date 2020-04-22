@@ -16,7 +16,7 @@ macro_rules! write_iter {
     }};
 }
 
-pub fn format_iter<I: Iterator>(mut iter: I) -> String
+pub fn format_iter_delimiter<I: Iterator>(mut iter: I, delimiter: &str) -> String
 where
     <I as Iterator>::Item: Display,
 {
@@ -25,11 +25,18 @@ where
     if let Some(first) = iter.next() {
         s += &format!("{}", first);
         for value in iter {
-            s += &format!(", {}", value);
+            s += &format!("{}{}", delimiter, value);
         }
     }
 
     s
+}
+
+pub fn format_iter<I: Iterator>(iter: I) -> String
+where
+    <I as Iterator>::Item: Display,
+{
+    format_iter_delimiter(iter, ", ")
 }
 
 pub fn format_bool(b: bool, s: &str) -> &str {

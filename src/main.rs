@@ -66,6 +66,7 @@ fn main() {
                 .long("dump-ast")
                 .help("Dumps AST"),
         )
+        .arg(Arg::with_name("dump-ir").long("dump-ir").help("Dumps IR"))
         .arg(
             Arg::with_name("dump-insts")
                 .long("dump-insts")
@@ -89,6 +90,8 @@ fn main() {
         ExecuteMode::DumpAST
     } else if matches.is_present("dump-insts") {
         ExecuteMode::DumpInstruction
+    } else if matches.is_present("dump-ir") {
+        ExecuteMode::DumpIR
     } else {
         ExecuteMode::Normal
     };

@@ -1,4 +1,4 @@
-#![feature(box_patterns, drain_filter)]
+#![feature(box_syntax, box_patterns, drain_filter)]
 #![warn(rust_2018_idioms, unused_import_braces)]
 #![deny(trivial_casts, trivial_numeric_casts, elided_lifetimes_in_paths)]
 
@@ -40,12 +40,12 @@ use module::ModuleContainer;
 use parser::Parser;
 use sema::ModuleBody;
 use token::dump_token;
-use vm::VM;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExecuteMode {
     DumpToken,
     DumpAST,
+    DumpIR,
     DumpInstruction,
     Normal,
 }
@@ -147,38 +147,51 @@ impl ExecuteOption {
             return;
         }
 
-        // Analyze semantics and translate to a bytecode
+        // Analyze semantics and translate to IR
 
         let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container);
-
-        if self.mode == ExecuteMode::DumpInstruction {
+        if self.mode == ExecuteMode::DumpIR {
             for (name, body) in module_bodies {
-                if let ModuleBody::Normal(bytecode) = body {
+                if let ModuleBody::Normal(functions) = body {
                     println!("--- {}", name);
-                    bytecode.dump();
+                    for (name, func) in functions {
+                        println!("FUNC {}:", IdMap::name(name));
+                        ir::dump_expr(&func.body);
+                    }
                 }
             }
-
-            return;
         }
+
+        // Generate bytecode
+
+        // if self.mode == ExecuteMode::DumpInstruction {
+        //     for (name, body) in module_bodies {
+        //         if let ModuleBody::Normal(bytecode) = body {
+        //             println!("--- {}", name);
+        //             bytecode.dump();
+        //         }
+        //     }
+
+        //     return;
+        // }
 
         if ErrorList::has_error() {
             return;
         }
 
-        let mut new_module_bodies = Vec::with_capacity(module_bodies.len());
-        let main_body = module_bodies
-            .remove(&IdMap::name(self.main_module_name))
-            .unwrap();
+        // let mut new_module_bodies = Vec::with_capacity(module_bodies.len());
+        // let main_body = module_bodies
+        //     .remove(&IdMap::name(self.main_module_name))
+        //     .unwrap();
 
-        // After push the main bytecode, push the other bytecodes
-        new_module_bodies.push((IdMap::name(self.main_module_name), main_body));
-        for (name, body) in module_bodies {
-            new_module_bodies.push((name, body));
-        }
+        // // After push the main bytecode, push the other bytecodes
+        // new_module_bodies.push((IdMap::name(self.main_module_name), main_body));
+        // for (name, body) in module_bodies {
+        //     new_module_bodies.push((name, body));
+        // }
 
-        // Execute the bytecode
-        let mut vm = VM::new();
-        vm.run(new_module_bodies, self.enable_trace, self.enable_measure);
+        // // Execute the bytecode
+        // let mut vm = VM::new();
+        // vm.run(new_module_bodies, self.enable_trace, self.enable_measure);
     }
 }

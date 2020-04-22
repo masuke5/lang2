@@ -1,10 +1,7 @@
 use crate::ast::BinOp;
-use crate::bytecode::{opcode, BytecodeBuilder, InstList};
+use crate::ir::{BinOp as IRBinOp, CodeBuf, Expr, Label, Stmt, VariableLoc};
 use crate::sema::ExprInfo;
 use crate::ty::{type_size_nocheck, Type, TypeCon};
-use crate::vm::SELF_MODULE_ID;
-use std::convert::TryInto;
-use std::mem;
 
 #[derive(Debug)]
 pub enum RelativeVariableLoc {
@@ -12,143 +9,16 @@ pub enum RelativeVariableLoc {
     StackInHeap(usize, usize),
 }
 
-struct Label(u8, Option<usize>);
-
-impl Label {
-    fn id(&self) -> u8 {
-        self.0
-    }
-
-    fn set_here(&mut self, insts: &InstList) {
-        self.1 = Some(insts.len());
-    }
-
-    fn loc(&self) -> Option<usize> {
-        self.1
-    }
-}
-
-macro_rules! with_label {
-    ([$($ident:ident),+], $insts:expr) => {
-        {
-            let_label!(0, label_locations, $($ident,)*);
-
-            let mut insts = $insts;
-
-            // Resolve jump destinations
-            for (i, [opcode, arg]) in insts.insts.iter_mut().enumerate() {
-                if (*opcode & 0b10000000) != 0 {
-                    *opcode &= 0b01111111;
-                    match *opcode {
-                        opcode::JUMP | opcode::JUMP_IF_FALSE | opcode::JUMP_IF_TRUE => {
-                            match label_locations[*arg as usize].loc() {
-                                Some(loc) => {
-                                    let relative_loc = loc as i32 - i as i32;
-                                    *arg = i8::to_le_bytes(relative_loc as i8)[0];
-                                },
-                                None => panic!("label {} is not resolved", *arg),
-                            }
-                        },
-                        _ => {},
-                    }
-                }
-            }
-
-            insts
+impl RelativeVariableLoc {
+    fn as_ir_loc(&self) -> VariableLoc {
+        match self {
+            Self::Stack(loc) => VariableLoc::Local(*loc),
+            Self::StackInHeap(loc, level) => VariableLoc::Heap(*loc, *level),
         }
     }
 }
 
-macro_rules! let_label {
-    ($id:expr, $locs:ident) => { let mut $locs: [Label; $id] = unsafe { mem::zeroed() }; };
-    ($id:expr, $locs:ident,) => { let mut $locs: [Label; $id] = unsafe { mem::zeroed() }; };
-    ($id:expr, $locs:ident, $name:ident, $($rest:ident,)*) => {
-        let_label!($id + 1, $locs, $($rest,)*);
-        $locs[$id] = Label($id, None);
-        let $name = unsafe { &mut *$locs.as_mut_ptr().add($id) };
-    };
-}
-
-fn push_copy_inst_with_size(insts: &mut InstList, size: usize) {
-    if insts.len() < 1 {
-        return;
-    }
-
-    let [opcode, arg] = insts.prev_inst();
-    let loc = i8::from_le_bytes([arg]);
-
-    match opcode {
-        opcode::LOAD_REF if loc >= -16 && loc <= 15 && size <= 0b111 => {
-            let arg = (loc << 3) | size as i8;
-            insts.replace_last_with(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
-        }
-        opcode::DEREFERENCE => {
-            insts.replace_last_with(opcode::COPY, size as u8);
-        }
-        opcode::LOAD_REF
-        | opcode::LOAD_HEAP
-        | opcode::LOAD_HEAP_TRACE
-        | opcode::OFFSET
-        | opcode::CONST_OFFSET => {
-            insts.push(opcode::COPY, size as u8);
-        }
-        _ => {}
-    }
-}
-
-fn push_copy_inst(insts: &mut InstList, ty: &Type) {
-    let size = type_size_nocheck(ty);
-    push_copy_inst_with_size(insts, size);
-}
-
-fn push_store_insts(
-    code: &mut BytecodeBuilder,
-    insts: &mut InstList,
-    loc: &RelativeVariableLoc,
-    ty: &Type,
-) {
-    let size = type_size_nocheck(ty);
-    push_load_insts(code, insts, loc);
-    insts.push(opcode::STORE, size as u8);
-}
-
-fn push_load_insts(code: &mut BytecodeBuilder, insts: &mut InstList, loc: &RelativeVariableLoc) {
-    match loc {
-        RelativeVariableLoc::Stack(loc) => {
-            insts.push(opcode::LOAD_REF, loc.to_le_bytes()[0]);
-        }
-        RelativeVariableLoc::StackInHeap(loc, level) => {
-            if *level == 0 {
-                insts.push(opcode::LOAD_HEAP, loc.to_le_bytes()[0]);
-            } else {
-                push_u64_insts(code, insts, *level as u64);
-                insts.push(opcode::LOAD_HEAP_TRACE, loc.to_le_bytes()[0]);
-            }
-        }
-    }
-}
-
-pub fn push_i64_insts(code: &mut BytecodeBuilder, insts: &mut InstList, n: i64) {
-    if let Ok(n) = n.try_into() {
-        let [n] = i8::to_le_bytes(n);
-        insts.push(opcode::TINY_INT, n);
-    } else {
-        let index = code.new_ref_i64(n);
-        insts.push(opcode::INT, index as u8);
-    }
-}
-
-pub fn push_u64_insts(code: &mut BytecodeBuilder, insts: &mut InstList, n: u64) {
-    if let Ok(n) = n.try_into() {
-        let [n] = i8::to_le_bytes(n);
-        insts.push(opcode::TINY_INT, n);
-    } else {
-        let index = code.new_ref_u64(n);
-        insts.push(opcode::INT, index as u8);
-    }
-}
-
-pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
+pub fn wrap(mut expr: Expr, ty: &Type) -> Expr {
     // Don't allow to wrap doubly
     assert!(if let Type::App(TypeCon::Wrapped, _) = ty {
         false
@@ -156,222 +26,166 @@ pub fn wrap(mut insts: InstList, ty: &Type) -> InstList {
         true
     });
 
-    push_copy_inst(&mut insts, ty);
+    expr = Expr::Copy(box expr, type_size_nocheck(ty));
 
     let size = type_size_nocheck(ty);
     if size > 1 {
-        insts.push(opcode::WRAP, size as u8);
+        expr = Expr::Wrap(box expr);
     }
 
-    insts
+    expr
 }
 
-pub fn unwrap(mut insts: InstList, ty: &Type) -> InstList {
+pub fn unwrap(mut expr: Expr, ty: &Type) -> Expr {
     let inner_ty = if let Type::App(TypeCon::Wrapped, types) = ty {
         &types[0]
     } else {
         panic!("not wrapped type: {}", ty);
     };
 
-    push_copy_inst(&mut insts, ty);
+    expr = Expr::Copy(box expr, type_size_nocheck(ty));
 
     let size = type_size_nocheck(inner_ty);
     if size > 1 {
-        insts.push(opcode::UNWRAP, size as u8);
+        expr = Expr::Unwrap(box expr, size);
     }
 
-    insts
+    expr
 }
 
-pub fn escaped_param(
-    code: &mut BytecodeBuilder,
-    ty: &Type,
-    loc: isize,
-    heap_loc: usize,
-) -> InstList {
-    let mut insts = InstList::new();
+pub fn escaped_param(ty: &Type, loc: isize, heap_loc: usize) -> CodeBuf {
+    let mut stmts = CodeBuf::new();
 
-    push_load_insts(code, &mut insts, &RelativeVariableLoc::Stack(loc));
-    push_copy_inst(&mut insts, ty);
-    push_store_insts(
-        code,
-        &mut insts,
-        &RelativeVariableLoc::StackInHeap(heap_loc, 0),
-        &ty,
-    );
+    stmts.push(Stmt::Store(
+        VariableLoc::Heap(heap_loc, 0),
+        Expr::LoadCopy(VariableLoc::Local(loc), type_size_nocheck(ty)),
+    ));
 
-    insts
+    stmts
+}
+
+pub fn copy(expr: Expr, ty: &Type) -> Expr {
+    Expr::Copy(box expr, type_size_nocheck(ty))
 }
 
 // Expression
 
-pub fn literal_int(code: &mut BytecodeBuilder, n: i64) -> InstList {
-    let mut insts = InstList::new();
-    push_i64_insts(code, &mut insts, n);
-    insts
+pub fn literal_int(n: i64) -> Expr {
+    Expr::Int(n)
 }
 
-pub fn literal_str(id: usize) -> InstList {
-    let mut insts = InstList::new();
-    insts.push(opcode::STRING, id as u8);
-    insts
+pub fn literal_str(s: String) -> Expr {
+    Expr::String(s)
 }
 
-pub fn literal_true() -> InstList {
-    let mut insts = InstList::new();
-    insts.push_noarg(opcode::TRUE);
-    insts
+pub fn literal_true() -> Expr {
+    Expr::True
 }
 
-pub fn literal_false() -> InstList {
-    let mut insts = InstList::new();
-    insts.push_noarg(opcode::FALSE);
-    insts
+pub fn literal_false() -> Expr {
+    Expr::False
 }
 
-pub fn literal_null() -> InstList {
-    let mut insts = InstList::new();
-    insts.push(opcode::ZERO, 1);
-    insts
+pub fn literal_null() -> Expr {
+    Expr::Null
 }
 
-pub fn literal_array(code: &mut BytecodeBuilder, expr: ExprInfo, arr_len: usize) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-
-    if arr_len >= 2 {
-        let element_size = type_size_nocheck(&expr.ty);
-        let count = (arr_len - 1) as u64;
-        let arg: u64 = ((element_size as u64) << 32) | count;
-        let index = code.new_ref_u64(arg);
-        insts.push(opcode::DUPLICATE, index as u8);
-    }
-
-    insts
+pub fn literal_array(expr: ExprInfo, arr_len: usize) -> Expr {
+    Expr::Duplicate(box (expr.ir), arr_len)
 }
 
-pub fn literal_struct_field(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-    insts
+pub fn literal_struct_field(expr: ExprInfo) -> Expr {
+    Expr::Copy(box (expr.ir), type_size_nocheck(&expr.ty))
 }
 
-pub fn literal_tuple(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-    insts
+pub fn literal_tuple(expr: ExprInfo) -> Expr {
+    Expr::Copy(box (expr.ir), type_size_nocheck(&expr.ty))
 }
 
 pub fn field(
-    code: &mut BytecodeBuilder,
     loc: Option<RelativeVariableLoc>,
     is_in_heap: bool,
     is_pointer: bool,
     comp_expr: ExprInfo,
     offset: usize,
-) -> InstList {
-    let mut insts = comp_expr.insts;
+) -> Expr {
+    let mut expr = comp_expr.ir;
 
     if let Some(loc) = loc {
-        push_store_insts(code, &mut insts, &loc, &comp_expr.ty);
-        push_load_insts(code, &mut insts, &loc);
+        expr = Expr::Seq(
+            vec![Stmt::Store(loc.as_ir_loc(), expr)],
+            box (Expr::LoadRef(loc.as_ir_loc())),
+        );
     }
 
     if is_in_heap {
         if is_pointer {
-            push_copy_inst(
-                &mut insts,
-                &Type::App(TypeCon::Pointer(false), vec![comp_expr.ty.clone()]),
-            );
+            expr = Expr::Copy(box (expr), 1);
         } else {
-            push_copy_inst(&mut insts, &comp_expr.ty);
+            expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
         }
-        insts.push_noarg(opcode::DEREFERENCE);
     }
 
     if is_pointer {
-        push_copy_inst(&mut insts, &comp_expr.ty);
-        insts.push_noarg(opcode::DEREFERENCE);
+        expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
     }
 
     if let Type::App(TypeCon::Wrapped, _) = &comp_expr.ty {
-        push_copy_inst(&mut insts, &comp_expr.ty);
-        insts.push_noarg(opcode::DEREFERENCE);
+        expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
     }
 
-    if offset > 0 {
-        insts.push(opcode::CONST_OFFSET, offset as u8);
-    }
-
-    insts
+    Expr::Offset(box (expr), box (Expr::Int(offset as i64)))
 }
 
 pub fn subscript(
-    code: &mut BytecodeBuilder,
     loc: Option<RelativeVariableLoc>,
     is_in_heap: bool,
     is_pointer: bool,
     expr: ExprInfo,
     subscript_expr: ExprInfo,
     element_ty: &Type,
-) -> InstList {
-    let mut insts = expr.insts;
+) -> Expr {
+    let mut ir = expr.ir;
 
     if let Some(loc) = loc {
-        push_store_insts(code, &mut insts, &loc, &expr.ty);
-        push_load_insts(code, &mut insts, &loc);
+        ir = Expr::Seq(
+            vec![Stmt::Store(loc.as_ir_loc(), ir)],
+            box (Expr::LoadRef(loc.as_ir_loc())),
+        );
     }
 
     if is_in_heap {
         if is_pointer {
-            push_copy_inst(
-                &mut insts,
-                &Type::App(TypeCon::Pointer(false), vec![expr.ty.clone()]),
-            );
+            ir = Expr::Copy(box (ir), 1);
         } else {
-            push_copy_inst(&mut insts, &expr.ty);
+            ir = Expr::Copy(box (ir), type_size_nocheck(&expr.ty));
         }
-        insts.push_noarg(opcode::DEREFERENCE);
     }
 
     if is_pointer {
-        push_copy_inst(&mut insts, &expr.ty);
-        insts.push_noarg(opcode::DEREFERENCE);
+        ir = Expr::Copy(box ir, type_size_nocheck(&expr.ty));
     }
 
-    insts.append(subscript_expr.insts);
-    push_copy_inst(&mut insts, &subscript_expr.ty);
-
-    let elem_size = type_size_nocheck(element_ty);
-    if elem_size > 1 {
-        push_i64_insts(code, &mut insts, elem_size as i64);
-        insts.push_noarg(opcode::BINOP_MUL);
-    }
-
-    insts.push_noarg(opcode::OFFSET);
-
-    insts
+    // ir[subscript_expr * type_size_nocheck(element_ty)]
+    Expr::Offset(
+        box ir,
+        box Expr::BinOp(
+            IRBinOp::Mul,
+            box Expr::Copy(box subscript_expr.ir, type_size_nocheck(&subscript_expr.ty)),
+            box Expr::Int(type_size_nocheck(element_ty) as i64),
+        ),
+    )
 }
 
-pub fn variable(code: &mut BytecodeBuilder, loc: &RelativeVariableLoc) -> InstList {
-    let mut insts = InstList::new();
-    push_load_insts(code, &mut insts, loc);
-    insts
+pub fn variable(loc: &RelativeVariableLoc) -> Expr {
+    Expr::LoadRef(loc.as_ir_loc())
 }
 
-pub fn func_pos(code: &mut BytecodeBuilder, module_id: Option<u16>, func_id: u16) -> InstList {
-    let mut insts = InstList::new();
-
-    let arg = match module_id {
-        Some(module_id) => ((module_id as u64) << 32) | func_id as u64,
-        None => ((SELF_MODULE_ID as u64) << 32) | func_id as u64,
-    };
-    push_u64_insts(code, &mut insts, arg);
-
-    // Push the pointer to stack in heap
-    insts.push_noarg(opcode::EP);
-
-    insts
+pub fn func_pos(module_id: Option<u16>, func_id: u16) -> Expr {
+    Expr::Record(vec![
+        Expr::FuncPos(module_id.map(|m| m as usize), func_id as usize),
+        Expr::EP,
+    ])
 }
 
 //   lhs
@@ -383,21 +197,22 @@ pub fn func_pos(code: &mut BytecodeBuilder, module_id: Option<u16>, func_id: u16
 // a:
 //   FALSE
 // end:
-pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
-    with_label!([a, end], {
-        let mut insts = lhs.insts;
-        push_copy_inst(&mut insts, &lhs.ty);
-        insts.push_jump(opcode::JUMP_IF_FALSE, a.id());
-        insts.append(rhs.insts);
-        push_copy_inst(&mut insts, &rhs.ty);
-        insts.push_jump(opcode::JUMP_IF_FALSE, a.id());
-        insts.push_noarg(opcode::TRUE);
-        insts.push_jump(opcode::JUMP, end.id());
-        a.set_here(&insts);
-        insts.push_noarg(opcode::FALSE);
-        end.set_here(&insts);
-        insts
-    })
+pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
+    let a = Label::new();
+    let end = Label::new();
+
+    Expr::Seq(
+        vec![
+            Stmt::JumpIfFalse(a, lhs.ir),
+            Stmt::JumpIfFalse(a, rhs.ir),
+            Stmt::Push(Expr::True),
+            Stmt::Jump(end),
+            Stmt::Label(a),
+            Stmt::Push(Expr::False),
+            Stmt::Label(end),
+        ],
+        box Expr::TOS,
+    )
 }
 
 //   lhs
@@ -409,243 +224,171 @@ pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
 // a:
 //   TRUE
 // end:
-pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> InstList {
-    with_label!([a, end], {
-        let mut insts = lhs.insts;
-        push_copy_inst(&mut insts, &lhs.ty);
-        insts.push_jump(opcode::JUMP_IF_TRUE, a.id());
-        insts.append(rhs.insts);
-        push_copy_inst(&mut insts, &rhs.ty);
-        insts.push_jump(opcode::JUMP_IF_TRUE, a.id());
-        insts.push_noarg(opcode::FALSE);
-        insts.push_jump(opcode::JUMP, end.id());
-        a.set_here(&insts);
-        insts.push_noarg(opcode::TRUE);
-        end.set_here(&insts);
-        insts
-    })
+pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
+    let a = Label::new();
+    let end = Label::new();
+
+    Expr::Seq(
+        vec![
+            Stmt::JumpIfTrue(a, lhs.ir),
+            Stmt::JumpIfTrue(a, rhs.ir),
+            Stmt::Push(Expr::False),
+            Stmt::Jump(end),
+            Stmt::Label(a),
+            Stmt::Push(Expr::True),
+            Stmt::Label(end),
+        ],
+        box Expr::TOS,
+    )
 }
 
-pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> InstList {
-    let mut insts = lhs.insts;
-    push_copy_inst(&mut insts, &lhs.ty);
-    insts.append(rhs.insts);
-    push_copy_inst(&mut insts, &rhs.ty);
-
-    // Insert an instruction
-    let opcode = match binop {
-        BinOp::Add => opcode::BINOP_ADD,
-        BinOp::Sub => opcode::BINOP_SUB,
-        BinOp::Mul => opcode::BINOP_MUL,
-        BinOp::Div => opcode::BINOP_DIV,
-        BinOp::LessThan => opcode::BINOP_LT,
-        BinOp::LessThanOrEqual => opcode::BINOP_LE,
-        BinOp::GreaterThan => opcode::BINOP_GT,
-        BinOp::GreaterThanOrEqual => opcode::BINOP_GE,
-        BinOp::Equal => opcode::BINOP_EQ,
-        BinOp::NotEqual => opcode::BINOP_NEQ,
-        binop => panic!("unexpected binop `{}`", binop.to_symbol()),
+pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> Expr {
+    let binop = match binop {
+        BinOp::Add => IRBinOp::Add,
+        BinOp::Sub => IRBinOp::Sub,
+        BinOp::Mul => IRBinOp::Mul,
+        BinOp::Div => IRBinOp::Div,
+        BinOp::LessThan => IRBinOp::LessThan,
+        BinOp::LessThanOrEqual => IRBinOp::LessThanOrEqual,
+        BinOp::GreaterThan => IRBinOp::GreaterThan,
+        BinOp::GreaterThanOrEqual => IRBinOp::GreaterThanOrEqual,
+        BinOp::Equal => IRBinOp::Equal,
+        BinOp::NotEqual => IRBinOp::NotEqual,
+        binop => panic!("unexpected binop: {:?}", binop),
     };
 
-    insts.push_noarg(opcode);
-    insts
+    Expr::BinOp(
+        binop,
+        box Expr::Copy(box lhs.ir, type_size_nocheck(&lhs.ty)),
+        box Expr::Copy(box rhs.ir, type_size_nocheck(&rhs.ty)),
+    )
 }
 
-pub fn arg(insts: &mut InstList, arg_expr: ExprInfo) {
-    insts.append(arg_expr.insts);
-    push_copy_inst(insts, &arg_expr.ty);
+pub fn arg(exprs: &mut Vec<Expr>, arg_expr: ExprInfo) {
+    exprs.push(Expr::Copy(box arg_expr.ir, type_size_nocheck(&arg_expr.ty)));
 }
 
-pub fn call_expr(func: ExprInfo) -> InstList {
-    let mut insts = func.insts;
-    push_copy_inst(&mut insts, &func.ty);
-    insts.push_noarg(opcode::CALL_POS);
-    insts
+pub fn call(return_ty: &Type, func_expr: Expr, arg_expr: Expr) -> Expr {
+    Expr::Call(box func_expr, box arg_expr, type_size_nocheck(return_ty))
 }
 
-pub fn call_func_id(module_id: Option<u16>, func_id: u16) -> InstList {
-    let mut insts = InstList::new();
+pub fn address(expr: ExprInfo) -> Expr {
+    let mut ir = expr.ir;
 
-    if let Some(module_id) = module_id {
-        let arg = ((module_id as u8) << 4) | func_id as u8;
-        insts.push(opcode::CALL_EXTERN, arg);
-    } else {
-        insts.push(opcode::CALL, func_id as u8);
-    }
-
-    insts
-}
-
-pub fn call(
-    return_ty: &Type,
-    func_ty: &Type,
-    args_insts: InstList,
-    call_insts: InstList,
-) -> InstList {
-    let mut insts = InstList::new();
-
-    let return_value_size = type_size_nocheck(return_ty);
-    if return_value_size != 0 {
-        insts.push(opcode::ZERO, type_size_nocheck(return_ty) as u8);
-    }
-
-    insts.append(args_insts);
-    push_copy_inst(&mut insts, func_ty);
-
-    insts.append(call_insts);
-    insts
-}
-
-pub fn address(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
     if let Type::App(TypeCon::InHeap, _) = &expr.ty {
         // Dereference if `expr.ty` is InHeap
-        push_copy_inst(&mut insts, &expr.ty);
+        ir = Expr::Copy(box ir, type_size_nocheck(&expr.ty));
     }
 
-    insts.push_noarg(opcode::POINTER);
-    insts
+    Expr::Pointer(box ir)
 }
 
-pub fn address_no_lvalue(
-    code: &mut BytecodeBuilder,
-    expr: ExprInfo,
-    loc: &RelativeVariableLoc,
-) -> InstList {
-    let mut insts = expr.insts;
-    insts.push(opcode::ALLOC, type_size_nocheck(&expr.ty) as u8);
-
-    let ty = Type::App(TypeCon::Pointer(false), vec![expr.ty]);
-
-    push_store_insts(code, &mut insts, loc, &ty);
-    push_load_insts(code, &mut insts, &loc);
-    push_copy_inst(&mut insts, &ty);
-    insts.push_noarg(opcode::POINTER);
-    insts
+pub fn address_no_lvalue(expr: ExprInfo, loc: &RelativeVariableLoc) -> Expr {
+    Expr::Seq(
+        vec![Stmt::Store(loc.as_ir_loc(), Expr::Alloc(box expr.ir))],
+        box Expr::Pointer(box Expr::LoadCopy(
+            loc.as_ir_loc(),
+            type_size_nocheck(&expr.ty),
+        )),
+    )
 }
 
-pub fn dereference(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-    insts.push_noarg(opcode::DEREFERENCE);
-    insts
+pub fn dereference(expr: ExprInfo) -> Expr {
+    Expr::Dereference(box Expr::Copy(box expr.ir, type_size_nocheck(&expr.ty)))
 }
 
-pub fn negative(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-    insts.push_noarg(opcode::NEGATIVE);
-    insts
+pub fn negative(expr: ExprInfo) -> Expr {
+    Expr::Negative(box Expr::Copy(box expr.ir, type_size_nocheck(&expr.ty)))
 }
 
-pub fn copy_in_heap(mut insts: InstList, ty: &Type, inner_ty: &Type) -> InstList {
-    push_copy_inst(&mut insts, ty);
-    insts.push_noarg(opcode::DEREFERENCE);
-    push_copy_inst(&mut insts, inner_ty);
-    insts
+pub fn copy_in_heap(expr: Expr, ty: &Type, inner_ty: &Type) -> Expr {
+    // **expr
+    Expr::Copy(
+        box Expr::Dereference(box Expr::Copy(box expr, type_size_nocheck(ty))),
+        type_size_nocheck(inner_ty),
+    )
+}
+
+pub fn if_expr(cond: ExprInfo, then: ExprInfo) -> Expr {
+    let end = Label::new();
+
+    Expr::Seq(
+        vec![
+            Stmt::JumpIfFalse(end, copy(cond.ir, &cond.ty)),
+            Stmt::Push(copy(then.ir, &then.ty)),
+            Stmt::Label(end),
+        ],
+        box Expr::TOS,
+    )
+}
+
+pub fn if_else_expr(cond: ExprInfo, then: ExprInfo, els: ExprInfo) -> Expr {
+    let elsl = Label::new();
+    let end = Label::new();
+
+    Expr::Seq(
+        vec![
+            Stmt::JumpIfFalse(elsl, copy(cond.ir, &cond.ty)),
+            Stmt::Push(copy(then.ir, &then.ty)),
+            Stmt::Jump(end),
+            Stmt::Label(elsl),
+            Stmt::Push(copy(els.ir, &then.ty)),
+            Stmt::Label(end),
+        ],
+        box Expr::TOS,
+    )
 }
 
 // Statement
 
-pub fn expr_stmt(expr: ExprInfo) -> InstList {
-    let mut insts = expr.insts;
-    let size = type_size_nocheck(&expr.ty);
-    for _ in 0..size {
-        insts.push_noarg(opcode::POP);
-    }
-    insts
+pub fn expr_stmt(expr: ExprInfo) -> CodeBuf {
+    let mut stmts = CodeBuf::new();
+    stmts.push(Stmt::Discard(expr.ir));
+    stmts
 }
 
-pub fn if_expr(cond: ExprInfo, then: InstList, ty: &Type) -> InstList {
-    with_label!([end], {
-        let mut insts = cond.insts;
-        push_copy_inst(&mut insts, &cond.ty);
-        insts.push_jump(opcode::JUMP_IF_FALSE, end.id());
-        insts.append(then);
-        push_copy_inst(&mut insts, ty);
-        end.set_here(&insts);
-        insts
-    })
+pub fn while_stmt(cond: ExprInfo, body: CodeBuf) -> CodeBuf {
+    let begin = Label::new();
+    let end = Label::new();
+
+    let mut stmts = CodeBuf::new();
+    stmts.push(Stmt::Label(begin));
+    stmts.push(Stmt::JumpIfFalse(end, copy(cond.ir, &cond.ty)));
+    stmts.append(body);
+    stmts.push(Stmt::Jump(begin));
+    stmts.push(Stmt::Label(end));
+
+    stmts
 }
 
-pub fn if_else_expr(cond: ExprInfo, then: InstList, els: InstList, ty: &Type) -> InstList {
-    with_label!([elsl, end], {
-        let mut insts = cond.insts;
-        push_copy_inst(&mut insts, &cond.ty);
-        insts.push_jump(opcode::JUMP_IF_FALSE, elsl.id());
-
-        // Then-clause
-        insts.append(then);
-        push_copy_inst(&mut insts, ty);
-        insts.push_jump(opcode::JUMP, end.id());
-
-        // Else-clause
-        elsl.set_here(&insts);
-        insts.append(els);
-        push_copy_inst(&mut insts, ty);
-        end.set_here(&insts);
-
-        insts
-    })
-}
-
-pub fn while_stmt(cond: ExprInfo, body: InstList) -> InstList {
-    with_label!([begin, end], {
-        let mut insts = InstList::new();
-        begin.set_here(&insts);
-        insts.append(cond.insts);
-        push_copy_inst(&mut insts, &cond.ty);
-        insts.push_jump(opcode::JUMP_IF_FALSE, end.id());
-        insts.append(body);
-        insts.push_jump(opcode::JUMP, begin.id());
-        end.set_here(&insts);
-        insts
-    })
-}
-
-pub fn bind_stmt(
-    code: &mut BytecodeBuilder,
-    loc: &RelativeVariableLoc,
-    expr: ExprInfo,
-) -> InstList {
-    let mut insts = expr.insts;
-    push_copy_inst(&mut insts, &expr.ty);
-
-    if let Type::App(TypeCon::InHeap, types) = &expr.ty {
-        insts.push(opcode::ALLOC, type_size_nocheck(&types[0]) as u8);
+pub fn bind_stmt(loc: &RelativeVariableLoc, expr: ExprInfo) -> CodeBuf {
+    let mut expr_ir = expr.ir;
+    if let Type::App(TypeCon::InHeap, _) = &expr.ty {
+        expr_ir = Expr::Alloc(box expr_ir);
     }
 
-    push_store_insts(code, &mut insts, loc, &expr.ty);
-    insts
+    let mut stmts = CodeBuf::new();
+    stmts.push(Stmt::Store(loc.as_ir_loc(), expr_ir));
+    stmts
 }
 
-pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo, is_in_heap: bool) -> InstList {
-    let mut insts = rhs.insts;
-    push_copy_inst(&mut insts, &rhs.ty);
-
-    insts.append(lhs.insts);
+pub fn assign_stmt(lhs: ExprInfo, rhs: ExprInfo, is_in_heap: bool) -> CodeBuf {
+    let lhs_ty = lhs.ty;
+    let mut lhs = lhs.ir;
     if is_in_heap {
-        push_copy_inst(&mut insts, &lhs.ty);
+        // When is_in_heap is true, lhs is a pointer.
+        lhs = copy(lhs, &lhs_ty);
     }
 
-    insts.push(opcode::STORE, type_size_nocheck(&rhs.ty) as u8);
-    insts
+    let mut stmts = CodeBuf::new();
+    stmts.push(Stmt::StoreFromRef(lhs, copy(rhs.ir, &rhs.ty)));
+    stmts
 }
 
-pub fn return_stmt(
-    code: &mut BytecodeBuilder,
-    loc: &RelativeVariableLoc,
-    expr: Option<ExprInfo>,
-    return_ty: &Type,
-) -> InstList {
-    let mut insts = InstList::new();
+pub fn return_stmt(expr: Option<ExprInfo>, return_ty: &Type) -> CodeBuf {
+    let expr = expr.map(|expr| copy(expr.ir, return_ty));
 
-    if let Some(expr) = expr {
-        insts.append(expr.insts);
-        push_copy_inst(&mut insts, return_ty);
-        push_store_insts(code, &mut insts, loc, return_ty);
-    }
-
-    insts.push_noarg(opcode::RETURN);
-    insts
+    let mut stmts = CodeBuf::new();
+    stmts.push(Stmt::Return(expr));
+    stmts
 }

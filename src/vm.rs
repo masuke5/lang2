@@ -439,7 +439,7 @@ impl VM {
         let bytecodes: Vec<Option<Bytecode>> = module_bodies
             .into_iter()
             .map(|(_, body)| match body {
-                ModuleBody::Normal(bc) => Some(bc),
+                ModuleBody::Normal(bc) => panic!(),
                 ModuleBody::Native(_) => None,
             })
             .collect();
