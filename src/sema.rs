@@ -322,13 +322,6 @@ impl<'a> Analyzer<'a> {
         id
     }
 
-    fn get_return_var(&self) -> &Variable {
-        match self.find_var(*reserved_id::RETURN_VALUE).unwrap() {
-            Entry::Variable(var) => var,
-            Entry::Function(..) => panic!("the return variable should not be a function entry"),
-        }
-    }
-
     // Convert from VariableLoc to RelativeVariableLoc
     fn relative_loc(&self, loc: &VariableLoc) -> RelativeVariableLoc {
         match loc {
@@ -1066,20 +1059,32 @@ impl<'a> Analyzer<'a> {
 
                 // let func_ty = subst(func_ty, &map);
 
-                let func_expr = self.walk_expr(code, *func_expr);
-                let arg_expr = self.walk_expr(code, *arg_expr);
-                try_some!(func_expr, arg_expr);
+                let func_expr = self.walk_expr(code, *func_expr)?;
 
-                let return_ty = match &func_expr.ty {
-                    Type::App(TypeCon::Arrow, types) => &types[1],
+                // Get the argument type and return type
+                let (mut arg_ty, mut return_ty) = match &func_expr.ty {
+                    Type::Poly(_, box Type::App(TypeCon::Arrow, types)) => {
+                        (types[0].clone(), types[1].clone())
+                    }
+                    Type::App(TypeCon::Arrow, types) => (types[0].clone(), types[1].clone()),
                     ty => {
                         error!(&func_expr.span, "expected function but got type `{}`", ty);
                         return None;
                     }
                 };
 
+                let arg_expr = self.walk_expr_with_conversion(code, *arg_expr, &arg_ty)?;
+
+                // Type interface
+                let mut map = FxHashMap::default();
+                Self::insert_type_param(&arg_ty, &arg_expr.ty, &mut map);
+                arg_ty = subst(arg_ty, &map);
+                return_ty = subst(return_ty, &map);
+
+                unify(&arg_expr.span, &arg_ty, &arg_expr.ty);
+
                 let ir = translate::call(&return_ty, func_expr.ir, arg_expr.ir);
-                (ir, return_ty.clone())
+                (ir, return_ty)
             }
             Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr_with_unwrap(code, *expr)?;
@@ -1343,7 +1348,10 @@ impl<'a> Analyzer<'a> {
                     return None;
                 }
 
-                let return_var_ty = self.get_return_var().ty.clone();
+                let return_var_ty = match self.variables.get(&self.current_func).unwrap() {
+                    Entry::Function(header) => header.header.return_ty.clone(),
+                    _ => panic!("{} is not function", IdMap::name(self.current_func)),
+                };
 
                 let expr = match expr {
                     Some(expr) => {
@@ -1356,8 +1364,7 @@ impl<'a> Analyzer<'a> {
                 let return_ty = expr.as_ref().map_or(&Type::Unit, |expr| &expr.ty);
                 unify(&stmt.span, &return_var_ty, return_ty);
 
-                let return_var = self.get_return_var();
-                translate::return_stmt(expr, &return_var.ty)
+                translate::return_stmt(expr, &return_var_ty)
             }
         };
 
@@ -1837,7 +1844,11 @@ impl<'a> Analyzer<'a> {
         // Check return type
         unify(&body.span, &return_ty, &body.ty);
 
-        ir_func.body = IRExpr::Seq(param_stmts, box body.ir);
+        if param_stmts.is_empty() {
+            ir_func.body = body.ir;
+        } else {
+            ir_func.body = IRExpr::Seq(param_stmts, box body.ir);
+        }
         self.ir_funcs.push((func.name.kind, ir_func));
 
         if func.has_escaped_variables {

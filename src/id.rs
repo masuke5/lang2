@@ -63,7 +63,6 @@ pub mod reserved_id {
         pub static ref STD_MODULE: Id = IdMap::new_id("std");
         pub static ref CMD: Id = IdMap::new_id("$cmd");
         pub static ref TEST: Id = IdMap::new_id("$test");
-        pub static ref RETURN_VALUE: Id = IdMap::new_id("$rv");
         pub static ref DUMMY_PARAM: Id = IdMap::new_id("$dummy_param");
     }
 }
