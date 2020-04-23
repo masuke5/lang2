@@ -1,7 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast::{Param as AstParam, *};
-use crate::bytecode::{BytecodeBuilder, Function};
 use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
 use crate::ir::{CodeBuf, Expr as IRExpr, Function as IRFunction, Stmt as IRStmt};
@@ -161,6 +160,7 @@ impl FunctionHeaderWithId {
 pub struct Analyzer<'a> {
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
+    next_module_id: usize,
 
     types: HashMapWithScope<Id, Type>,
     tycons: TypeDefinitions,
@@ -172,6 +172,7 @@ pub struct Analyzer<'a> {
     var_level: usize,
 
     current_func: Id,
+    current_func_index: usize,
     ir_funcs: Vec<(Id, IRFunction)>,
     strings: Vec<String>,
 
@@ -183,11 +184,13 @@ impl<'a> Analyzer<'a> {
         let mut slf = Self {
             visible_modules: FxHashSet::default(),
             module_headers: FxHashMap::default(),
+            next_module_id: 0,
             variables: HashMapWithScope::new(),
             types: HashMapWithScope::new(),
             tycons: TypeDefinitions::new(),
             tycon_spans: HashMapWithScope::new(),
             impls: FxHashMap::default(),
+            current_func_index: 0,
             current_func: *reserved_id::MAIN_FUNC,
             ir_funcs: Vec::new(),
             strings: Vec::new(),
@@ -266,22 +269,28 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn ir_func(&mut self, index: usize) -> &mut IRFunction {
+        &mut self.ir_funcs[index].1
+    }
+
     // ====================================
     //  Variable
     // ====================================
 
     fn new_var(
         &mut self,
-        current_func: &mut Function,
+        current_func: usize,
         id: Id,
         ty: Type,
         is_mutable: bool,
         is_escaped: bool,
     ) -> VariableLoc {
         let new_var_size = type_size_nocheck(&ty);
+        let var_level = self.var_level;
+        let current_func = self.ir_func(current_func);
 
         let loc = if is_escaped {
-            let loc = VariableLoc::StackInHeap(current_func.stack_in_heap_size + 1, self.var_level);
+            let loc = VariableLoc::StackInHeap(current_func.stack_in_heap_size + 1, var_level);
             current_func.stack_in_heap_size += new_var_size;
             loc
         } else {
@@ -301,19 +310,12 @@ impl<'a> Analyzer<'a> {
     #[inline]
     fn new_var_in_current_func(
         &mut self,
-        code: &mut BytecodeBuilder,
         id: Id,
         ty: Type,
         is_mutable: bool,
         is_escaped: bool,
     ) -> VariableLoc {
-        self.new_var(
-            code.get_function_mut(self.current_func).unwrap(),
-            id,
-            ty,
-            is_mutable,
-            is_escaped,
-        )
+        self.new_var(self.current_func_index, id, ty, is_mutable, is_escaped)
     }
 
     fn gen_temp_id(&mut self) -> Id {
@@ -469,87 +471,10 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    // fn walk_call(
-    //     &mut self,
-    //     code: &mut BytecodeBuilder,
-    //     func_expr: Spanned<Expr>,
-    //     arg_expr: Spanned<Expr>,
-    //     map: &mut FxHashMap<TypeVar, Type>,
-    // ) -> Option<(Type, Type, InstList, InstList)> {
-    //     let func_span = func_expr.span.clone();
-    //     let (ty, func_ty, mut insts, func_insts) = match func_expr.kind {
-    //         Expr::Call(func_expr, arg_expr) => self.walk_call(code, *func_expr, *arg_expr, map)?,
-    //         Expr::Variable(name, _) => match self.variables.get(&name) {
-    //             Some(Entry::Function(fh)) => {
-    //                 let ty = generate_func_type(
-    //                     &fh.header.params,
-    //                     &fh.header.return_ty,
-    //                     &fh.header.ty_params,
-    //                 );
-
-    //                 (
-    //                     ty.clone(),
-    //                     ty,
-    //                     InstList::new(),
-    //                     translate::call_func_id(fh.module_id, fh.func_id),
-    //                 )
-    //             }
-    //             _ => {
-    //                 let expr = self.walk_expr(code, func_expr)?;
-    //                 (
-    //                     expr.ty.clone(),
-    //                     expr.ty.clone(),
-    //                     InstList::new(),
-    //                     translate::call_expr(expr),
-    //                 )
-    //             }
-    //         },
-    //         _ => {
-    //             let expr = self.walk_expr(code, func_expr)?;
-    //             (
-    //                 expr.ty.clone(),
-    //                 expr.ty.clone(),
-    //                 InstList::new(),
-    //                 translate::call_expr(expr),
-    //             )
-    //         }
-    //     };
-
-    //     // Unwrap Poly
-    //     let ty = match ty {
-    //         Type::Poly(_, ty) => *ty,
-    //         ty => ty,
-    //     };
-
-    //     let (mut arg_ty, mut return_ty) = match &ty {
-    //         Type::App(TypeCon::Arrow, types) => (types[0].clone(), types[1].clone()),
-    //         ty => {
-    //             error!(&func_span, "expected type `function` but got `{}`", ty);
-    //             return None;
-    //         }
-    //     };
-
-    //     let arg_expr = self.walk_expr_with_conversion(code, arg_expr, &arg_ty)?;
-    //     Self::insert_type_param(&arg_ty, &arg_expr.ty, map);
-    //     arg_ty = subst(arg_ty, &map);
-    //     return_ty = subst(return_ty, &map);
-
-    //     unify(&arg_expr.span, &arg_ty, &arg_expr.ty)?;
-
-    //     translate::arg(&mut insts, arg_expr);
-
-    //     Some((return_ty, func_ty, insts, func_insts))
-    // }
-
-    fn walk_expr_with_conversion(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        expr: Spanned<Expr>,
-        ty: &Type,
-    ) -> Option<ExprInfo> {
+    fn walk_expr_with_conversion(&mut self, expr: Spanned<Expr>, ty: &Type) -> Option<ExprInfo> {
         match ty {
             Type::App(TypeCon::Wrapped, _) => {
-                let expr = self.walk_expr(code, expr)?;
+                let expr = self.walk_expr(expr)?;
 
                 if let Type::App(TypeCon::Wrapped, _) = &expr.ty {
                     Some(expr)
@@ -563,7 +488,7 @@ impl<'a> Analyzer<'a> {
             }
             // Weaken pointer
             Type::App(TypeCon::Pointer(false), _) => {
-                let mut expr = self.walk_expr(code, expr)?;
+                let mut expr = self.walk_expr(expr)?;
 
                 if let Type::App(TypeCon::Pointer(true), types) = expr.ty {
                     expr.ty = Type::App(TypeCon::Pointer(false), types);
@@ -594,7 +519,7 @@ impl<'a> Analyzer<'a> {
                     let mut tys = Vec::new();
 
                     for (expr, ty) in exprs.into_iter().zip(types.iter()) {
-                        let expr = self.walk_expr_with_conversion(code, expr, ty);
+                        let expr = self.walk_expr_with_conversion(expr, ty);
                         if let Some(expr) = expr {
                             tys.push(expr.ty.clone());
                             ir_exprs.push(translate::literal_tuple(expr));
@@ -608,7 +533,7 @@ impl<'a> Analyzer<'a> {
                     ))
                 }
                 _ => {
-                    let mut expr = self.walk_expr(code, expr)?;
+                    let mut expr = self.walk_expr(expr)?;
 
                     // If `ty` is not in heap and `expr.ty` is in heap
                     if let Type::App(TypeCon::InHeap, _) = ty {
@@ -632,12 +557,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_expr_with_unwrap_and_deref(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        expr: Spanned<Expr>,
-    ) -> Option<ExprInfo> {
-        let mut expr = self.walk_expr(code, expr)?;
+    fn walk_expr_with_unwrap_and_deref(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
+        let mut expr = self.walk_expr(expr)?;
 
         if let Type::App(TypeCon::InHeap, types) = &expr.ty {
             expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
@@ -652,12 +573,8 @@ impl<'a> Analyzer<'a> {
         Some(expr)
     }
 
-    fn walk_expr_with_unwrap(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        expr: Spanned<Expr>,
-    ) -> Option<ExprInfo> {
-        let mut expr = self.walk_expr(code, expr)?;
+    fn walk_expr_with_unwrap(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
+        let mut expr = self.walk_expr(expr)?;
 
         if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
             expr.ir = translate::unwrap(expr.ir, &expr.ty);
@@ -668,7 +585,7 @@ impl<'a> Analyzer<'a> {
     }
 
     #[allow(clippy::cognitive_complexity)]
-    fn walk_expr(&mut self, code: &mut BytecodeBuilder, expr: Spanned<Expr>) -> Option<ExprInfo> {
+    fn walk_expr(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (ir, ty) = match expr.kind {
             Expr::Literal(Literal::Number(n)) => (translate::literal_int(n), Type::Int),
             Expr::Literal(Literal::String(i)) => {
@@ -683,7 +600,7 @@ impl<'a> Analyzer<'a> {
                 let mut ir_exprs = Vec::with_capacity(exprs.len());
                 let mut types = Vec::new();
                 for expr in exprs {
-                    let expr = self.walk_expr(code, expr);
+                    let expr = self.walk_expr(expr);
                     if let Some(expr) = expr {
                         types.push(expr.ty.clone());
                         ir_exprs.push(translate::literal_tuple(expr));
@@ -728,7 +645,7 @@ impl<'a> Analyzer<'a> {
                         .map(|(_, expr)| expr);
                     if let Some(expr) = field_expr {
                         if let Some(expr) =
-                            self.walk_expr_with_conversion(code, expr.clone(), &fields[i].1)
+                            self.walk_expr_with_conversion(expr.clone(), &fields[i].1)
                         {
                             Self::insert_type_param(&fields[i].1, &expr.ty, &mut map);
                             for (_, ty) in &mut fields {
@@ -767,7 +684,7 @@ impl<'a> Analyzer<'a> {
                 (IRExpr::Record(ir_exprs), expr_ty)
             }
             Expr::Array(expr, size) => {
-                let expr = self.walk_expr(code, *expr)?;
+                let expr = self.walk_expr(*expr)?;
                 let ty = expr.ty.clone();
 
                 (
@@ -777,12 +694,12 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Field(comp_expr, field) => {
                 let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
-                let comp_expr = self.walk_expr(code, *comp_expr)?;
+                let comp_expr = self.walk_expr(*comp_expr)?;
                 let mut is_mutable = comp_expr.is_mutable;
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
-                    Some(self.new_var_in_current_func(code, id, comp_expr.ty.clone(), false, false))
+                    Some(self.new_var_in_current_func(id, comp_expr.ty.clone(), false, false))
                 } else {
                     None
                 };
@@ -866,16 +783,15 @@ impl<'a> Analyzer<'a> {
             Expr::Subscript(expr, subscript_expr) => {
                 let should_store = Self::expr_push_multiple_values(&expr.kind);
 
-                let expr = self.walk_expr_with_unwrap(code, *expr);
-                let subscript_expr =
-                    self.walk_expr_with_conversion(code, *subscript_expr, &Type::Int);
+                let expr = self.walk_expr_with_unwrap(*expr);
+                let subscript_expr = self.walk_expr_with_conversion(*subscript_expr, &Type::Int);
                 try_some!(expr, subscript_expr);
 
                 let mut expr = expr;
 
                 let loc = if should_store {
                     let id = self.gen_temp_id();
-                    Some(self.new_var_in_current_func(code, id, expr.ty.clone(), false, false))
+                    Some(self.new_var_in_current_func(id, expr.ty.clone(), false, false))
                 } else {
                     None
                 };
@@ -980,8 +896,8 @@ impl<'a> Analyzer<'a> {
                 (ir, ty)
             }
             Expr::BinOp(BinOp::And, lhs, rhs) => {
-                let lhs = self.walk_expr_with_conversion(code, *lhs, &Type::Int);
-                let rhs = self.walk_expr_with_conversion(code, *rhs, &Type::Int);
+                let lhs = self.walk_expr_with_conversion(*lhs, &Type::Int);
+                let rhs = self.walk_expr_with_conversion(*rhs, &Type::Int);
                 try_some!(lhs, rhs);
 
                 // Type check
@@ -995,8 +911,8 @@ impl<'a> Analyzer<'a> {
                 (translate::binop_and(lhs, rhs), Type::Bool)
             }
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
-                let lhs = self.walk_expr_with_conversion(code, *lhs, &Type::Int);
-                let rhs = self.walk_expr_with_conversion(code, *rhs, &Type::Int);
+                let lhs = self.walk_expr_with_conversion(*lhs, &Type::Int);
+                let rhs = self.walk_expr_with_conversion(*rhs, &Type::Int);
                 try_some!(lhs, rhs);
 
                 // Type check
@@ -1010,8 +926,8 @@ impl<'a> Analyzer<'a> {
                 (translate::binop_or(lhs, rhs), Type::Bool)
             }
             Expr::BinOp(binop, lhs, rhs) => {
-                let lhs = self.walk_expr_with_unwrap_and_deref(code, *lhs);
-                let rhs = self.walk_expr_with_unwrap_and_deref(code, *rhs);
+                let lhs = self.walk_expr_with_unwrap_and_deref(*lhs);
+                let rhs = self.walk_expr_with_unwrap_and_deref(*rhs);
                 try_some!(lhs, rhs);
 
                 let binop_symbol = binop.to_symbol();
@@ -1055,11 +971,11 @@ impl<'a> Analyzer<'a> {
             Expr::Call(func_expr, arg_expr) => {
                 // let mut map = FxHashMap::default();
                 // let (ty, func_ty, args_insts, call_insts) =
-                //     self.walk_call(code, *func_expr, *arg_expr, &mut map)?;
+                //     self.walk_call(*func_expr, *arg_expr, &mut map)?;
 
                 // let func_ty = subst(func_ty, &map);
 
-                let func_expr = self.walk_expr(code, *func_expr)?;
+                let func_expr = self.walk_expr(*func_expr)?;
 
                 // Get the argument type and return type
                 let (mut arg_ty, mut return_ty) = match &func_expr.ty {
@@ -1073,7 +989,7 @@ impl<'a> Analyzer<'a> {
                     }
                 };
 
-                let arg_expr = self.walk_expr_with_conversion(code, *arg_expr, &arg_ty)?;
+                let arg_expr = self.walk_expr_with_conversion(*arg_expr, &arg_ty)?;
 
                 // Type interface
                 let mut map = FxHashMap::default();
@@ -1087,7 +1003,7 @@ impl<'a> Analyzer<'a> {
                 (ir, return_ty)
             }
             Expr::Address(expr, is_mutable) => {
-                let expr = self.walk_expr_with_unwrap(code, *expr)?;
+                let expr = self.walk_expr_with_unwrap(*expr)?;
 
                 let inner_type = expand_inheap(expr.ty.clone());
                 let ty = Type::App(TypeCon::Pointer(is_mutable), vec![inner_type]);
@@ -1096,7 +1012,6 @@ impl<'a> Analyzer<'a> {
                     // Store `expr` and return the pointer to it if `expr` is not lvalue
                     let temp = self.gen_temp_id();
                     let loc = self.new_var_in_current_func(
-                        code,
                         temp,
                         Type::App(TypeCon::InHeap, vec![expr.ty.clone()]),
                         is_mutable,
@@ -1116,7 +1031,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Dereference(expr_) => {
-                let expr_ = self.walk_expr_with_unwrap(code, *expr_)?;
+                let expr_ = self.walk_expr_with_unwrap(*expr_)?;
 
                 match expr_.ty.clone() {
                     Type::App(TypeCon::Pointer(is_mutable), tys) => {
@@ -1135,7 +1050,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Negative(expr) => {
-                let expr = self.walk_expr_with_conversion(code, *expr, &Type::Int)?;
+                let expr = self.walk_expr_with_conversion(*expr, &Type::Int)?;
 
                 match expr.ty.clone() {
                     ty @ Type::Int /* | Type::Float */ => {
@@ -1150,15 +1065,15 @@ impl<'a> Analyzer<'a> {
             Expr::Block(block) => {
                 self.push_scope();
 
-                let (ty, ir) = self.walk_block(code, block)?;
+                let (ty, ir) = self.walk_block(block)?;
 
                 self.pop_scope();
 
                 (ir, ty)
             }
             Expr::If(cond, then_expr, None) => {
-                let cond = self.walk_expr_with_conversion(code, *cond, &Type::Bool);
-                let then_expr = self.walk_expr(code, *then_expr);
+                let cond = self.walk_expr_with_conversion(*cond, &Type::Bool);
+                let then_expr = self.walk_expr(*then_expr);
                 try_some!(cond, then_expr);
 
                 unify(&cond.span, &Type::Bool, &cond.ty);
@@ -1166,11 +1081,11 @@ impl<'a> Analyzer<'a> {
                 (translate::if_expr(cond, then_expr), Type::Unit)
             }
             Expr::If(cond, then_expr, Some(else_expr)) => {
-                let cond = self.walk_expr_with_conversion(code, *cond, &Type::Bool);
-                let then = self.walk_expr(code, *then_expr);
+                let cond = self.walk_expr_with_conversion(*cond, &Type::Bool);
+                let then = self.walk_expr(*then_expr);
                 try_some!(cond, then);
 
-                let els = self.walk_expr_with_conversion(code, *else_expr, &then.ty)?;
+                let els = self.walk_expr_with_conversion(*else_expr, &then.ty)?;
 
                 unify(&cond.span, &Type::Bool, &cond.ty);
                 unify(&els.span, &then.ty, &els.ty);
@@ -1179,7 +1094,7 @@ impl<'a> Analyzer<'a> {
                 (translate::if_else_expr(cond, then, els), ty)
             }
             Expr::App(expr, old_tyargs) => {
-                let expr = self.walk_expr(code, *expr);
+                let expr = self.walk_expr(*expr);
 
                 let mut tyargs = Vec::with_capacity(old_tyargs.len());
                 let mut failed = false;
@@ -1266,7 +1181,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_stmt(&mut self, code: &mut BytecodeBuilder, stmt: Spanned<Stmt>) -> Option<CodeBuf> {
+    fn walk_stmt(&mut self, stmt: Spanned<Stmt>) -> Option<CodeBuf> {
         let stmts = match stmt.kind {
             Stmt::Expr(expr) => {
                 // An expression that doesn't have side effects is unnecessary
@@ -1274,12 +1189,12 @@ impl<'a> Analyzer<'a> {
                     warn!(&expr.span, "Unnecessary expression");
                 }
 
-                let expr = self.walk_expr(code, expr)?;
+                let expr = self.walk_expr(expr)?;
                 translate::expr_stmt(expr)
             }
             Stmt::While(cond, stmt) => {
-                let cond = self.walk_expr_with_conversion(code, cond, &Type::Bool);
-                let body = self.walk_stmt(code, *stmt);
+                let cond = self.walk_expr_with_conversion(cond, &Type::Bool);
+                let body = self.walk_stmt(*stmt);
                 try_some!(cond, body);
 
                 unify(&cond.span, &Type::Bool, &cond.ty);
@@ -1290,32 +1205,27 @@ impl<'a> Analyzer<'a> {
                 let mut expr = match ty {
                     Some(ty) => {
                         let ty = self.walk_type(ty)?;
-                        let mut expr = self.walk_expr_with_conversion(code, *expr, &ty)?;
+                        let mut expr = self.walk_expr_with_conversion(*expr, &ty)?;
 
                         unify(&expr.span, &ty, &expr.ty)?;
                         expr.ty = ty;
 
                         expr
                     }
-                    None => self.walk_expr(code, *expr)?,
+                    None => self.walk_expr(*expr)?,
                 };
 
                 if is_in_heap {
                     expr.ty = Type::App(TypeCon::InHeap, vec![expr.ty]);
                 }
 
-                let loc = self.new_var_in_current_func(
-                    code,
-                    name,
-                    expr.ty.clone(),
-                    is_mutable,
-                    is_escaped,
-                );
+                let loc =
+                    self.new_var_in_current_func(name, expr.ty.clone(), is_mutable, is_escaped);
 
                 translate::bind_stmt(&self.relative_loc(&loc), expr)
             }
             Stmt::Assign(lhs, rhs) => {
-                let mut lhs = self.walk_expr(code, lhs)?;
+                let mut lhs = self.walk_expr(lhs)?;
                 let is_in_heap = if let Type::App(TypeCon::InHeap, types) = &mut lhs.ty {
                     lhs.ty = types[0].clone();
                     true
@@ -1323,7 +1233,7 @@ impl<'a> Analyzer<'a> {
                     false
                 };
 
-                let rhs = self.walk_expr_with_conversion(code, *rhs, &lhs.ty)?;
+                let rhs = self.walk_expr_with_conversion(*rhs, &lhs.ty)?;
 
                 if !lhs.is_lvalue {
                     error!(&lhs.span, "unassignable expression");
@@ -1340,10 +1250,8 @@ impl<'a> Analyzer<'a> {
                 translate::assign_stmt(lhs, rhs, is_in_heap)
             }
             Stmt::Return(expr) => {
-                let func_name = code.get_function(self.current_func).unwrap().name();
-
                 // Check if is outside function
-                if func_name == *reserved_id::MAIN_FUNC {
+                if self.current_func_index == 0 {
                     error!(&stmt.span, "return statement outside function");
                     return None;
                 }
@@ -1354,9 +1262,7 @@ impl<'a> Analyzer<'a> {
                 };
 
                 let expr = match expr {
-                    Some(expr) => {
-                        Some(self.walk_expr_with_conversion(code, expr, &return_var_ty)?)
-                    }
+                    Some(expr) => Some(self.walk_expr_with_conversion(expr, &return_var_ty)?),
                     None => None,
                 };
 
@@ -1533,7 +1439,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn insert_func_headers_in_stmts(&mut self, code: &mut BytecodeBuilder, funcs: &[AstFunction]) {
+    fn insert_func_headers_in_stmts(&mut self, funcs: &[AstFunction]) {
         // Insert function headers
         for func in funcs {
             if self.variables.contains_key(&func.name.kind) {
@@ -1544,30 +1450,26 @@ impl<'a> Analyzer<'a> {
                 continue;
             }
 
-            if let Some((header, func)) = self.generate_function_header(&func) {
-                let func_name = func.name();
-                code.insert_function_header(func);
-
-                let func_id = code.get_function(func_name).unwrap().code_id;
-                let fh = FunctionHeaderWithId::new_self(header, func_id);
-                self.variables.insert(func_name, Entry::Function(fh));
+            if let Some((header, func_id)) = self.generate_function_header(&func) {
+                let fh = FunctionHeaderWithId::new_self(header, func_id as u16);
+                self.variables.insert(func.name.kind, Entry::Function(fh));
             }
         }
     }
 
-    fn walk_block(&mut self, code: &mut BytecodeBuilder, block: Block) -> Option<(Type, IRExpr)> {
+    fn walk_block(&mut self, block: Block) -> Option<(Type, IRExpr)> {
         self.insert_extern_module_headers(&block.imports);
         self.insert_type_headers_in_stmts(&block.types);
         self.walk_type_def_in_stmts(block.types);
 
         let _ = self.tycons.resolve();
 
-        self.insert_func_headers_in_stmts(code, &block.functions);
+        self.insert_func_headers_in_stmts(&block.functions);
 
         // Walk the statements
         let mut stmts: Vec<IRStmt> = Vec::new();
         for stmt in block.stmts {
-            let stmt_irs = self.walk_stmt(code, stmt);
+            let stmt_irs = self.walk_stmt(stmt);
             if let Some(stmt_irs) = stmt_irs {
                 for stmt_ir in stmt_irs.iter() {
                     stmts.push(stmt_ir.clone());
@@ -1575,13 +1477,13 @@ impl<'a> Analyzer<'a> {
             }
         }
 
-        let result_expr = self.walk_expr(code, *block.result_expr);
+        let result_expr = self.walk_expr(*block.result_expr);
 
         // Walk the function bodies in the statements
         for func in block.functions {
             if let Some(Entry::Function(header)) = self.variables.get(&func.name.kind) {
                 let header = header.header.clone();
-                self.walk_function(code, func, &header);
+                self.walk_function(func, &header);
             }
         }
 
@@ -1704,10 +1606,7 @@ impl<'a> Analyzer<'a> {
 
     // Insert parameters and return value as variables and return instructions that copy the
     // parameters to heap
-    fn insert_params_as_variables(
-        &mut self,
-        params: Vec<Param>,
-    ) -> Option<(IRFunction, Vec<IRStmt>)> {
+    fn insert_params_as_variables(&mut self, params: Vec<Param>) -> Option<(usize, Vec<IRStmt>)> {
         let mut stmts = Vec::new();
 
         let mut stack_in_heap_size = 0;
@@ -1736,19 +1635,10 @@ impl<'a> Analyzer<'a> {
             self.variables.insert(param.name, var);
         }
 
-        let ir_func = IRFunction {
-            stack_size: 0,
-            stack_in_heap_size,
-            body: IRExpr::Unit,
-        };
-
-        Some((ir_func, stmts))
+        Some((stack_in_heap_size, stmts))
     }
 
-    fn generate_function_header(
-        &mut self,
-        func: &AstFunction,
-    ) -> Option<(FunctionHeader, Function)> {
+    fn generate_function_header(&mut self, func: &AstFunction) -> Option<(FunctionHeader, usize)> {
         self.push_type_scope();
 
         let mut vars = Vec::new();
@@ -1759,7 +1649,6 @@ impl<'a> Analyzer<'a> {
         }
 
         let mut param_types = Vec::new();
-        let mut param_size = 0;
         for AstParam { ty, .. } in &func.params {
             let ty_span = ty.span.clone();
             let mut ty = match self.walk_type(ty.clone()) {
@@ -1768,7 +1657,7 @@ impl<'a> Analyzer<'a> {
             };
             wrap_typevar(&mut ty);
 
-            param_size += Self::type_size_err(ty_span, &ty);
+            Self::type_size_err(ty_span, &ty);
             param_types.push(ty);
         }
 
@@ -1791,18 +1680,17 @@ impl<'a> Analyzer<'a> {
             ty_params: vars,
         };
 
-        // Create a function for the bytecode
-        let bc_func = Function::new(func.name.kind, param_size);
+        let ir_func = IRFunction {
+            stack_in_heap_size: 0,
+            stack_size: 0,
+            body: IRExpr::Unit,
+        };
+        self.ir_funcs.push((func.name.kind, ir_func));
 
-        Some((header, bc_func))
+        Some((header, self.ir_funcs.len() - 1))
     }
 
-    fn walk_function(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        func: AstFunction,
-        header: &FunctionHeader,
-    ) {
+    fn walk_function(&mut self, func: AstFunction, header: &FunctionHeader) {
         self.current_func = func.name.kind;
 
         self.push_scope();
@@ -1831,12 +1719,12 @@ impl<'a> Analyzer<'a> {
             })
             .collect();
 
-        let (mut ir_func, param_stmts) = match self.insert_params_as_variables(params) {
+        let (heap_size, param_stmts) = match self.insert_params_as_variables(params) {
             Some(t) => t,
             None => return,
         };
 
-        let body = match self.walk_expr(code, func.body) {
+        let body = match self.walk_expr(func.body) {
             Some(e) => e,
             None => return,
         };
@@ -1844,13 +1732,23 @@ impl<'a> Analyzer<'a> {
         // Check return type
         unify(&body.span, &return_ty, &body.ty);
 
+        // Set function body
+        let func_name = func.name.kind;
+        let (_, ir_func) = self
+            .ir_funcs
+            .iter_mut()
+            .find(|(name, _)| *name == func_name)
+            .unwrap();
+
         if param_stmts.is_empty() {
             ir_func.body = body.ir;
         } else {
             ir_func.body = IRExpr::Seq(param_stmts, box body.ir);
         }
-        self.ir_funcs.push((func.name.kind, ir_func));
 
+        ir_func.stack_in_heap_size += heap_size;
+
+        // Finalize
         if func.has_escaped_variables {
             self.var_level -= 1;
         }
@@ -1863,25 +1761,21 @@ impl<'a> Analyzer<'a> {
     // Implementation
     // =========================================
 
-    fn insert_impl_headers(&mut self, code: &mut BytecodeBuilder, implementation: &Impl) {
+    fn insert_impl_headers(&mut self, implementation: &Impl) {
         let mut new_impl = Implementation::new();
 
         for func in &implementation.functions {
-            if let Some((header, func)) = self.generate_function_header(&func) {
-                let func_name = func.name();
-
-                code.insert_function_header(func);
-                new_impl.functions.insert(
-                    func_name,
-                    (code.get_function(func_name).unwrap().code_id, header),
-                );
+            if let Some((header, func_id)) = self.generate_function_header(&func) {
+                new_impl
+                    .functions
+                    .insert(func.name.kind, (func_id as u16, header));
             }
         }
 
         self.impls.insert(implementation.target.kind, new_impl);
     }
 
-    fn walk_impl(&mut self, code: &mut BytecodeBuilder, implementation: Impl) {
+    fn walk_impl(&mut self, implementation: Impl) {
         let impl_header = match self.impls.get(&implementation.target.kind) {
             Some(imp) => imp,
             None => return,
@@ -1897,7 +1791,7 @@ impl<'a> Analyzer<'a> {
             .zip(implementation.functions.into_iter());
 
         for (header, func) in iter {
-            self.walk_function(code, func, &header);
+            self.walk_function(func, &header);
         }
     }
 
@@ -1907,7 +1801,7 @@ impl<'a> Analyzer<'a> {
 
     pub fn load_modules(
         &mut self,
-        code: &mut BytecodeBuilder,
+
         imported_modules: &[SymbolPath],
         module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
     ) {
@@ -1917,7 +1811,8 @@ impl<'a> Analyzer<'a> {
         for path in imported_modules {
             let module_header = module_headers[&path].clone();
 
-            let module_id = code.push_module(&format!("{}", path));
+            let module_id = self.next_module_id as u16;
+            self.next_module_id += 1;
             headers.insert(path.clone(), (module_id, module_header));
         }
 
@@ -2005,12 +1900,7 @@ impl<'a> Analyzer<'a> {
         let _ = self.tycons.resolve();
     }
 
-    pub fn insert_public_functions(
-        &mut self,
-        code: &mut BytecodeBuilder,
-        program: &Program,
-        module_header: &mut ModuleHeader,
-    ) {
+    pub fn insert_public_functions(&mut self, program: &Program, module_header: &mut ModuleHeader) {
         // Insert type headers
         for tydef in &program.main.types {
             self.insert_type_header(tydef);
@@ -2022,18 +1912,13 @@ impl<'a> Analyzer<'a> {
             return_ty: Type::Unit,
             ty_params: Vec::new(),
         };
-        code.insert_function_header(Function::new(*reserved_id::MAIN_FUNC, 0));
-        module_header.functions.insert(
-            *reserved_id::MAIN_FUNC,
-            (
-                code.get_function(*reserved_id::MAIN_FUNC).unwrap().code_id,
-                header,
-            ),
-        );
+        module_header
+            .functions
+            .insert(*reserved_id::MAIN_FUNC, (0, header));
 
         for implementation in &program.impls {
             if self.tycons.contains(implementation.target.kind) {
-                self.insert_impl_headers(code, implementation);
+                self.insert_impl_headers(implementation);
             }
         }
 
@@ -2053,21 +1938,20 @@ impl<'a> Analyzer<'a> {
         }
 
         for func in &program.main.functions {
-            if let Some((header, func)) = self.generate_function_header(&func) {
-                let func_name = func.name();
-
-                code.insert_function_header(func);
-                module_header.functions.insert(
-                    func_name,
-                    (code.get_function(func_name).unwrap().code_id, header),
-                );
+            if let Some((header, func_id)) = self.generate_function_header(&func) {
+                module_header
+                    .functions
+                    .insert(func.name.kind, (func_id as u16, header));
             }
         }
 
         self.pop_type_scope();
     }
 
-    pub fn analyze(mut self, mut code: BytecodeBuilder, program: Program) -> Vec<(Id, IRFunction)> {
+    pub fn analyze(mut self, program: Program) -> Vec<(Id, IRFunction)> {
+        // Clear headers inserted by Self::insert_public_functions
+        self.ir_funcs.clear();
+
         self.push_scope();
         self.push_type_scope();
 
@@ -2082,18 +1966,20 @@ impl<'a> Analyzer<'a> {
 
         // The headers are already inserted in Self::insert_public_functions
         for implementation in program.impls {
-            self.walk_impl(&mut code, implementation);
+            self.walk_impl(implementation);
         }
 
+        let main_func = IRFunction {
+            stack_size: 0,
+            stack_in_heap_size: 0,
+            body: IRExpr::Unit,
+        };
+        self.ir_funcs.push((*reserved_id::MAIN_FUNC, main_func));
+
         // Main statements
-        let body = self.walk_block(&mut code, program.main);
+        let body = self.walk_block(program.main);
         if let Some((_, body)) = body {
-            let ir_func = IRFunction {
-                stack_size: 0,
-                stack_in_heap_size: 0,
-                body,
-            };
-            self.ir_funcs.push((*reserved_id::MAIN_FUNC, ir_func));
+            self.ir_funcs[0].1.body = body;
         }
 
         self.pop_scope();
@@ -2113,14 +1999,12 @@ pub fn do_semantics_analysis(
     native_modules: &ModuleContainer,
 ) -> FxHashMap<String, ModuleBody> {
     struct Module<'a> {
-        bc_builder: BytecodeBuilder,
         analyzer: Analyzer<'a>,
     }
 
     impl<'a> Module<'a> {
         fn new() -> Self {
             Self {
-                bc_builder: BytecodeBuilder::new(),
                 analyzer: Analyzer::new(),
             }
         }
@@ -2157,11 +2041,9 @@ pub fn do_semantics_analysis(
         let module = modules.get_mut(path).unwrap();
 
         // Load modules
-        module.analyzer.load_modules(
-            &mut module.bc_builder,
-            &program.imported_modules,
-            &module_headers,
-        );
+        module
+            .analyzer
+            .load_modules(&program.imported_modules, &module_headers);
 
         let module_header = module_headers.get_mut(path).unwrap();
         module.analyzer.walk_public_type(program, module_header);
@@ -2181,18 +2063,15 @@ pub fn do_semantics_analysis(
         // Insert function headers
         module
             .analyzer
-            .insert_public_functions(&mut module.bc_builder, program, module_header);
+            .insert_public_functions(program, module_header);
     }
 
     for (name, program) in module_buffers {
-        let Module {
-            mut analyzer,
-            bc_builder,
-        } = modules.remove(&name).unwrap();
+        let Module { mut analyzer } = modules.remove(&name).unwrap();
 
         analyzer.update_modules(&module_headers);
 
-        let bytecode = analyzer.analyze(bc_builder, program);
+        let bytecode = analyzer.analyze(program);
         bodies.insert(format!("{}", name), ModuleBody::Normal(bytecode));
     }
 

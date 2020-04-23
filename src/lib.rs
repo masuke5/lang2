@@ -13,6 +13,7 @@ pub mod error;
 mod ty;
 mod ast;
 mod bytecode;
+mod codegen;
 mod escape;
 mod gc;
 mod heapvar;
@@ -149,17 +150,19 @@ impl ExecuteOption {
 
         // Analyze semantics and translate to IR
 
-        let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container);
+        let module_bodies = sema::do_semantics_analysis(module_buffers, &container);
         if self.mode == ExecuteMode::DumpIR {
             for (name, body) in module_bodies {
                 if let ModuleBody::Normal(functions) = body {
                     println!("--- {}", name);
-                    for (name, func) in functions {
-                        println!("FUNC {}:", IdMap::name(name));
+                    for (id, (name, func)) in functions.into_iter().enumerate() {
+                        println!("FUNC {} ({}):", IdMap::name(name), id);
                         ir::dump_expr(&func.body);
                     }
                 }
             }
+
+            return;
         }
 
         // Generate bytecode
