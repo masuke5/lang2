@@ -40,6 +40,42 @@ fn remove_redundant_copy(expr: &mut Expr) {
     });
 }
 
+fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    fn scan(expr: &mut Expr, new_stmts: &mut Vec<Stmt>) {
+        scan_expr(expr, |expr| loop {
+            match expr {
+                Expr::Seq(stmts, inner_expr) => {
+                    new_stmts.append(stmts);
+                    *expr = mem::replace(inner_expr.as_mut(), Expr::Unit);
+                }
+                _ => break,
+            }
+        })
+    }
+
+    let mut new_stmts: Vec<Stmt> = Vec::new();
+
+    for mut stmt in stmts {
+        match &mut stmt {
+            Stmt::Discard(expr)
+            | Stmt::Store(_, expr)
+            | Stmt::Return(Some(expr))
+            | Stmt::JumpIfFalse(_, expr)
+            | Stmt::JumpIfTrue(_, expr)
+            | Stmt::Push(expr) => scan(expr, &mut new_stmts),
+            Stmt::StoreFromRef(expr1, expr2) => {
+                scan(expr1, &mut new_stmts);
+                scan(expr2, &mut new_stmts);
+            }
+            _ => {}
+        };
+
+        new_stmts.push(stmt);
+    }
+
+    new_stmts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +99,32 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Pointer(box Expr::Copy(box Expr::Dereference(box Expr::Int(10)), 0))
+        );
+    }
+
+    #[test]
+    fn test_remove_seq() {
+        let label = Label::new();
+        let stmts = vec![
+            Stmt::Discard(Expr::Int(1)),
+            Stmt::Discard(Expr::Seq(
+                vec![Stmt::Push(Expr::Int(2))],
+                box Expr::Seq(
+                    vec![Stmt::Label(label), Stmt::Push(Expr::Int(3))],
+                    box Expr::TOS,
+                ),
+            )),
+        ];
+        let stmts = remove_seq(stmts);
+        assert_eq!(
+            stmts,
+            vec![
+                Stmt::Discard(Expr::Int(1)),
+                Stmt::Push(Expr::Int(2)),
+                Stmt::Label(label),
+                Stmt::Push(Expr::Int(3)),
+                Stmt::Discard(Expr::TOS),
+            ],
         );
     }
 }
