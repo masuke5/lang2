@@ -114,7 +114,7 @@ impl Expr {
             Expr::LoadRef(..) => 1,
             Expr::BinOp(..) => 1,    // bool or int
             Expr::Negative(..) => 1, // int
-            Expr::Alloc(expr) => expr.size(),
+            Expr::Alloc(..) => 1,
             Expr::Record(exprs) => exprs.iter().map(Expr::size).sum(),
             Expr::Wrap(..) => 1,
             Expr::Unwrap(_, size) => *size,

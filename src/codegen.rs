@@ -46,7 +46,8 @@ struct Generator {
     builder: BytecodeBuilder,
     strings: StringList,
     labels: FxHashMap<Label, usize>,
-    jumps: FxHashMap<usize, Label>,
+    jumps: Vec<(usize, Label)>,
+    param_size: usize,
 }
 
 impl Generator {
@@ -55,7 +56,8 @@ impl Generator {
             builder: BytecodeBuilder::new(),
             strings: StringList::new(),
             labels: FxHashMap::default(),
-            jumps: FxHashMap::default(),
+            jumps: Vec::new(),
+            param_size: 0,
         }
     }
 
@@ -225,7 +227,10 @@ impl Generator {
                     func = new_func;
                 }
 
-                insts.push(opcode::ZERO, *rv_size as u8);
+                if *rv_size > 0 {
+                    insts.push(opcode::ZERO, *rv_size as u8);
+                }
+
                 for arg in args.into_iter().rev() {
                     insts.append(self.gen_expr(arg));
                 }
@@ -264,7 +269,7 @@ impl Generator {
         insts
     }
 
-    fn gen_stmt(&mut self, insts: &mut InstList, param_size: usize, stmt: &Stmt) {
+    fn gen_stmt(&mut self, insts: &mut InstList, stmt: &Stmt) {
         match stmt {
             Stmt::Discard(expr) => {
                 insts.append(self.gen_expr(expr));
@@ -273,21 +278,27 @@ impl Generator {
                 }
             }
             Stmt::Store(loc, expr) => {
-                insts.append(self.gen_expr(expr));
-                insts.append(self.gen_expr(&Expr::LoadRef(loc.clone())));
-                insts.push(opcode::STORE, expr.size() as u8);
+                if expr.size() > 0 {
+                    insts.append(self.gen_expr(expr));
+                    insts.append(self.gen_expr(&Expr::LoadRef(loc.clone())));
+                    insts.push(opcode::STORE, expr.size() as u8);
+                }
             }
             Stmt::StoreFromRef(ref_expr, expr) => {
-                insts.append(self.gen_expr(expr));
-                insts.append(self.gen_expr(ref_expr));
-                insts.push(opcode::STORE, expr.size() as u8);
+                if expr.size() > 0 {
+                    insts.append(self.gen_expr(expr));
+                    insts.append(self.gen_expr(ref_expr));
+                    insts.push(opcode::STORE, expr.size() as u8);
+                }
             }
             Stmt::Return(expr) => {
                 if let Some(expr) = expr {
-                    let loc = 0 - param_size as isize - expr.size() as isize;
-                    insts.append(self.gen_expr(expr));
-                    insts.append(self.gen_expr(&Expr::LoadRef(VariableLoc::Local(loc))));
-                    insts.push(opcode::STORE, expr.size() as u8);
+                    if expr.size() > 0 {
+                        let loc = 0 - self.param_size as isize - expr.size() as isize;
+                        insts.append(self.gen_expr(expr));
+                        insts.append(self.gen_expr(&Expr::LoadRef(VariableLoc::Local(loc))));
+                        insts.push(opcode::STORE, expr.size() as u8);
+                    }
                 }
 
                 insts.push_noarg(opcode::RETURN);
@@ -299,26 +310,26 @@ impl Generator {
                 self.labels.insert(*label, insts.len());
             }
             Stmt::Jump(label) => {
-                self.jumps.insert(insts.len(), *label);
+                self.jumps.push((insts.len(), *label));
                 insts.push_noarg(opcode::JUMP);
             }
             Stmt::JumpIfFalse(label, expr) => {
                 insts.append(self.gen_expr(expr));
 
-                self.jumps.insert(insts.len(), *label);
+                self.jumps.push((insts.len(), *label));
                 insts.push_noarg(opcode::JUMP_IF_FALSE);
             }
             Stmt::JumpIfTrue(label, expr) => {
                 insts.append(self.gen_expr(expr));
 
-                self.jumps.insert(insts.len(), *label);
+                self.jumps.push((insts.len(), *label));
                 insts.push_noarg(opcode::JUMP_IF_TRUE);
             }
         }
     }
 
     fn resolve_labels(&mut self, insts: &mut InstList) {
-        let mut jumps = self.jumps.drain().peekable();
+        let mut jumps = self.jumps.drain(..).peekable();
 
         for (i, [opcode, arg]) in insts.insts.iter_mut().enumerate() {
             let (loc, label) = match jumps.peek() {
@@ -347,6 +358,8 @@ impl Generator {
         }
 
         for (id, (name, func)) in module.functions.into_iter().enumerate() {
+            self.param_size = func.param_size;
+
             // Don't return in main function
             let stmt = if id == 0 {
                 Stmt::Discard(func.body)
@@ -379,7 +392,7 @@ impl Generator {
             // Generate instructions
             let mut insts = InstList::new();
             for stmt in &stmts {
-                self.gen_stmt(&mut insts, func.param_size, stmt);
+                self.gen_stmt(&mut insts, stmt);
             }
 
             // Resolve labels

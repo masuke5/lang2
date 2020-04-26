@@ -203,8 +203,8 @@ pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
 
     Expr::Seq(
         vec![
-            Stmt::JumpIfFalse(a, lhs.ir),
-            Stmt::JumpIfFalse(a, rhs.ir),
+            Stmt::JumpIfFalse(a, copy(lhs.ir, &lhs.ty)),
+            Stmt::JumpIfFalse(a, copy(rhs.ir, &rhs.ty)),
             Stmt::Push(Expr::True),
             Stmt::Jump(end),
             Stmt::Label(a),
@@ -230,8 +230,8 @@ pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
 
     Expr::Seq(
         vec![
-            Stmt::JumpIfTrue(a, lhs.ir),
-            Stmt::JumpIfTrue(a, rhs.ir),
+            Stmt::JumpIfTrue(a, copy(lhs.ir, &lhs.ty)),
+            Stmt::JumpIfTrue(a, copy(rhs.ir, &rhs.ty)),
             Stmt::Push(Expr::False),
             Stmt::Jump(end),
             Stmt::Label(a),
@@ -264,12 +264,12 @@ pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> Expr {
     )
 }
 
-pub fn arg(exprs: &mut Vec<Expr>, arg_expr: ExprInfo) {
-    exprs.push(Expr::Copy(box arg_expr.ir, type_size_nocheck(&arg_expr.ty)));
-}
-
-pub fn call(return_ty: &Type, func_expr: Expr, arg_expr: Expr) -> Expr {
-    Expr::Call(box func_expr, box arg_expr, type_size_nocheck(return_ty))
+pub fn call(return_ty: &Type, func_expr: Expr, arg_expr: Expr, arg_ty: &Type) -> Expr {
+    Expr::Call(
+        box func_expr,
+        box copy(arg_expr, &arg_ty),
+        type_size_nocheck(return_ty),
+    )
 }
 
 pub fn address(expr: ExprInfo) -> Expr {
@@ -285,7 +285,10 @@ pub fn address(expr: ExprInfo) -> Expr {
 
 pub fn address_no_lvalue(expr: ExprInfo, loc: &RelativeVariableLoc) -> Expr {
     Expr::Seq(
-        vec![Stmt::Store(loc.as_ir_loc(), Expr::Alloc(box expr.ir))],
+        vec![Stmt::Store(
+            loc.as_ir_loc(),
+            Expr::Alloc(box copy(expr.ir, &expr.ty)),
+        )],
         box Expr::Pointer(box Expr::LoadCopy(
             loc.as_ir_loc(),
             type_size_nocheck(&expr.ty),
@@ -362,7 +365,7 @@ pub fn while_stmt(cond: ExprInfo, body: CodeBuf) -> CodeBuf {
 }
 
 pub fn bind_stmt(loc: &RelativeVariableLoc, expr: ExprInfo) -> CodeBuf {
-    let mut expr_ir = expr.ir;
+    let mut expr_ir = copy(expr.ir, &expr.ty);
     if let Type::App(TypeCon::InHeap, _) = &expr.ty {
         expr_ir = Expr::Alloc(box expr_ir);
     }

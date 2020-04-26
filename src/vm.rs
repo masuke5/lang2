@@ -9,7 +9,6 @@ use crate::bytecode;
 use crate::bytecode::{opcode, opcode_name, Bytecode, Function};
 use crate::gc::Gc;
 use crate::module::Module;
-use crate::sema::ModuleBody;
 use crate::value::{Lang2String, Value};
 
 pub const SELF_MODULE_ID: usize = 0x7fff_ffff;
@@ -49,6 +48,11 @@ macro_rules! check_stack_overflow {
             $self.panic("stack overflow");
         }
     };
+}
+
+pub enum ModuleBody {
+    Normal(Bytecode),
+    Native(Module),
 }
 
 #[derive(Debug)]
@@ -439,7 +443,7 @@ impl VM {
         let bytecodes: Vec<Option<Bytecode>> = module_bodies
             .into_iter()
             .map(|(_, body)| match body {
-                ModuleBody::Normal(bc) => panic!(),
+                ModuleBody::Normal(bc) => Some(bc),
                 ModuleBody::Native(_) => None,
             })
             .collect();

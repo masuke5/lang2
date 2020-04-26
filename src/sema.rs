@@ -986,12 +986,6 @@ impl<'a> Analyzer<'a> {
                 (translate::binop(binop, lhs, rhs), ty)
             }
             Expr::Call(func_expr, arg_expr) => {
-                // let mut map = FxHashMap::default();
-                // let (ty, func_ty, args_insts, call_insts) =
-                //     self.walk_call(*func_expr, *arg_expr, &mut map)?;
-
-                // let func_ty = subst(func_ty, &map);
-
                 let func_expr = self.walk_expr(*func_expr)?;
 
                 // Get the argument type and return type
@@ -1016,7 +1010,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&arg_expr.span, &arg_ty, &arg_expr.ty);
 
-                let ir = translate::call(&return_ty, func_expr.ir, arg_expr.ir);
+                let ir = translate::call(&return_ty, func_expr.ir, arg_expr.ir, &arg_expr.ty);
                 (ir, return_ty)
             }
             Expr::Address(expr, is_mutable) => {
@@ -1722,7 +1716,15 @@ impl<'a> Analyzer<'a> {
     }
 
     fn walk_function(&mut self, func: AstFunction, header: &FunctionHeader) {
+        let func_name = func.name.kind;
+        let ir_func_index = self
+            .ir_funcs
+            .iter_mut()
+            .position(|(name, _)| *name == func_name)
+            .unwrap();
+
         self.current_func = func.name.kind;
+        self.current_func_index = ir_func_index;
 
         self.push_scope();
         self.push_type_scope();
@@ -1764,12 +1766,7 @@ impl<'a> Analyzer<'a> {
         unify(&body.span, &return_ty, &body.ty);
 
         // Set function body
-        let func_name = func.name.kind;
-        let (_, ir_func) = self
-            .ir_funcs
-            .iter_mut()
-            .find(|(name, _)| *name == func_name)
-            .unwrap();
+        let (_, ir_func) = &mut self.ir_funcs[ir_func_index];
 
         if param_stmts.is_empty() {
             ir_func.body = body.ir;
@@ -1968,6 +1965,17 @@ impl<'a> Analyzer<'a> {
                 )
             }
         }
+
+        // main
+        self.ir_funcs.push((
+            *reserved_id::MAIN_FUNC,
+            IRFunction {
+                stack_size: 0,
+                stack_in_heap_size: 0,
+                param_size: 0,
+                body: IRExpr::Unit,
+            },
+        ));
 
         for func in &program.main.functions {
             if let Some((header, func_id)) = self.generate_function_header(&func) {

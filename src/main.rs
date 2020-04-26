@@ -73,12 +73,12 @@ fn main() {
                 .help("Dumps instructions"),
         )
         .arg(
-            Arg::with_name("trace")
+            Arg::with_name("enable-trace")
                 .long("trace")
                 .help("Traces instructions"),
         )
         .arg(
-            Arg::with_name("measure")
+            Arg::with_name("enable-measure")
                 .long("measure")
                 .help("Measures the performance"),
         )
@@ -106,7 +106,7 @@ fn main() {
 
     option
         .enable_trace(matches.is_present("enable-trace"))
-        .enable_measure(matches.is_present("enable_measure"))
+        .enable_measure(matches.is_present("enable-measure"))
         .mode(mode)
         .execute();
 
