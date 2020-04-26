@@ -34,6 +34,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use ast::*;
+use codegen::codegen;
 use error::ErrorList;
 use id::{reserved_id, Id, IdMap};
 use lexer::Lexer;
@@ -153,9 +154,13 @@ impl ExecuteOption {
         let module_bodies = sema::do_semantics_analysis(module_buffers, &container);
         if self.mode == ExecuteMode::DumpIR {
             for (name, body) in module_bodies {
-                if let ModuleBody::Normal(functions) = body {
+                if let ModuleBody::Normal(module) = body {
                     println!("--- {}", name);
-                    for (id, (name, func)) in functions.into_iter().enumerate() {
+                    for module in module.imported_modules {
+                        println!("MODULE {}", module);
+                    }
+
+                    for (id, (name, func)) in module.functions.into_iter().enumerate() {
                         println!("FUNC {} ({}):", IdMap::name(name), id);
                         ir::dump_expr(&func.body);
                     }
@@ -166,6 +171,21 @@ impl ExecuteOption {
         }
 
         // Generate bytecode
+        let mut bytecodes = Vec::new();
+
+        for (name, body) in module_bodies {
+            if let ModuleBody::Normal(module) = body {
+                let bytecode = codegen(module);
+                bytecodes.push((name, bytecode));
+            }
+        }
+
+        if self.mode == ExecuteMode::DumpInstruction {
+            for (name, bytecode) in bytecodes {
+                println!("--- {}", name);
+                bytecode.dump();
+            }
+        }
 
         // if self.mode == ExecuteMode::DumpInstruction {
         //     for (name, body) in module_bodies {

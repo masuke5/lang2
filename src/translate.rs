@@ -211,7 +211,7 @@ pub fn binop_and(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
             Stmt::Push(Expr::False),
             Stmt::Label(end),
         ],
-        box Expr::TOS,
+        box Expr::TOS(type_size_nocheck(&lhs.ty)),
     )
 }
 
@@ -238,7 +238,7 @@ pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
             Stmt::Push(Expr::True),
             Stmt::Label(end),
         ],
-        box Expr::TOS,
+        box Expr::TOS(type_size_nocheck(&lhs.ty)),
     )
 }
 
@@ -315,10 +315,10 @@ pub fn if_expr(cond: ExprInfo, then: ExprInfo) -> Expr {
     Expr::Seq(
         vec![
             Stmt::JumpIfFalse(end, copy(cond.ir, &cond.ty)),
-            Stmt::Push(copy(then.ir, &then.ty)),
+            Stmt::Discard(copy(then.ir, &then.ty)),
             Stmt::Label(end),
         ],
-        box Expr::TOS,
+        box Expr::Unit,
     )
 }
 
@@ -335,7 +335,7 @@ pub fn if_else_expr(cond: ExprInfo, then: ExprInfo, els: ExprInfo) -> Expr {
             Stmt::Push(copy(els.ir, &then.ty)),
             Stmt::Label(end),
         ],
-        box Expr::TOS,
+        box Expr::TOS(type_size_nocheck(&then.ty)),
     )
 }
 

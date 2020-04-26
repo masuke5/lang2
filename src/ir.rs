@@ -2,6 +2,7 @@ use std::collections::LinkedList;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::id::Id;
 use crate::utils::{escape_string, format_iter, format_iter_delimiter};
 
 pub static NEXT_LABEL: AtomicUsize = AtomicUsize::new(0);
@@ -95,9 +96,35 @@ pub enum Expr {
     Call(Box<Expr>, Box<Expr>, usize),
     FuncPos(Option<usize>, usize),
     EP,
-    TOS,
+    TOS(usize),
 
     Seq(Vec<Stmt>, Box<Expr>),
+}
+
+impl Expr {
+    pub fn size(&self) -> usize {
+        match self {
+            Expr::Int(..) | Expr::String(..) | Expr::True | Expr::False | Expr::Null => 1,
+            Expr::Unit => 0,
+            Expr::Pointer(..) | Expr::Dereference(..) => 1,
+            Expr::Copy(_, size) => *size,
+            Expr::Offset(..) => 1,
+            Expr::Duplicate(expr, count) => expr.size() * count,
+            Expr::LoadCopy(_, size) => *size,
+            Expr::LoadRef(..) => 1,
+            Expr::BinOp(..) => 1,    // bool or int
+            Expr::Negative(..) => 1, // int
+            Expr::Alloc(expr) => expr.size(),
+            Expr::Record(exprs) => exprs.iter().map(Expr::size).sum(),
+            Expr::Wrap(..) => 1,
+            Expr::Unwrap(_, size) => *size,
+            Expr::Call(_, _, size) => *size,
+            Expr::FuncPos(..) => 1,
+            Expr::EP => 1,
+            Expr::TOS(size) => *size,
+            Expr::Seq(_, expr) => expr.size(),
+        }
+    }
 }
 
 impl fmt::Display for Expr {
@@ -126,7 +153,7 @@ impl fmt::Display for Expr {
             Expr::FuncPos(Some(module), func) => write!(f, "func({}, {})", module, func),
             Expr::FuncPos(None, func) => write!(f, "self_func({})", func),
             Expr::EP => write!(f, "$ep"),
-            Expr::TOS => write!(f, "$TOS"),
+            Expr::TOS(size) => write!(f, "$TOS size={}", size),
             Expr::Seq(stmts, expr) => write!(
                 f,
                 "{{ {}; {} }}",
@@ -206,7 +233,14 @@ impl CodeBuf {
 pub struct Function {
     pub stack_size: usize,
     pub stack_in_heap_size: usize,
+    pub param_size: usize,
     pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Module {
+    pub functions: Vec<(Id, Function)>,
+    pub imported_modules: Vec<String>,
 }
 
 pub fn dump_expr(expr: &Expr) {

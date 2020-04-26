@@ -3,7 +3,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast::{Param as AstParam, *};
 use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
-use crate::ir::{CodeBuf, Expr as IRExpr, Function as IRFunction, Stmt as IRStmt};
+use crate::ir::{
+    CodeBuf, Expr as IRExpr, Function as IRFunction, Module as IRModule, Stmt as IRStmt,
+};
 use crate::module::{FunctionHeader, Implementation, Module, ModuleContainer, ModuleHeader};
 use crate::span::{Span, Spanned};
 use crate::translate;
@@ -500,7 +502,22 @@ impl<'a> Analyzer<'a> {
                 Expr::Tuple(exprs) => {
                     let types = match ty {
                         Type::App(TypeCon::Tuple, types) => types,
-                        _ => return None,
+                        _ => {
+                            let mut tys = Vec::new();
+
+                            for expr in exprs.into_iter() {
+                                let expr = self.walk_expr(expr);
+                                if let Some(expr) = expr {
+                                    tys.push(expr.ty.clone());
+                                }
+                            }
+
+                            return Some(ExprInfo::new(
+                                IRExpr::Unit,
+                                Type::App(TypeCon::Tuple, tys),
+                                expr.span,
+                            ));
+                        }
                     };
 
                     // Check size of the tuples
@@ -1489,7 +1506,14 @@ impl<'a> Analyzer<'a> {
 
         let result_expr = result_expr?;
 
-        Some((result_expr.ty, IRExpr::Seq(stmts, box result_expr.ir)))
+        // Wrap in Seq if necessary
+        let block_expr = if stmts.is_empty() {
+            result_expr.ir
+        } else {
+            IRExpr::Seq(stmts, box result_expr.ir)
+        };
+
+        Some((result_expr.ty, block_expr))
     }
 
     // =======================================
@@ -1606,14 +1630,20 @@ impl<'a> Analyzer<'a> {
 
     // Insert parameters and return value as variables and return instructions that copy the
     // parameters to heap
-    fn insert_params_as_variables(&mut self, params: Vec<Param>) -> Option<(usize, Vec<IRStmt>)> {
+    fn insert_params_as_variables(
+        &mut self,
+        params: Vec<Param>,
+    ) -> Option<(usize, usize, Vec<IRStmt>)> {
         let mut stmts = Vec::new();
 
         let mut stack_in_heap_size = 0;
+        let mut param_size = 0;
         let mut loc = 0isize;
 
         for param in params.into_iter().rev() {
-            loc -= type_size_nocheck(&param.ty) as isize;
+            let size = type_size_nocheck(&param.ty);
+            loc -= size as isize;
+            param_size += size;
 
             let var_loc = if param.is_escaped {
                 // Copy the parameter to heap if escaped
@@ -1635,7 +1665,7 @@ impl<'a> Analyzer<'a> {
             self.variables.insert(param.name, var);
         }
 
-        Some((stack_in_heap_size, stmts))
+        Some((param_size, stack_in_heap_size, stmts))
     }
 
     fn generate_function_header(&mut self, func: &AstFunction) -> Option<(FunctionHeader, usize)> {
@@ -1683,6 +1713,7 @@ impl<'a> Analyzer<'a> {
         let ir_func = IRFunction {
             stack_in_heap_size: 0,
             stack_size: 0,
+            param_size: 0,
             body: IRExpr::Unit,
         };
         self.ir_funcs.push((func.name.kind, ir_func));
@@ -1719,7 +1750,7 @@ impl<'a> Analyzer<'a> {
             })
             .collect();
 
-        let (heap_size, param_stmts) = match self.insert_params_as_variables(params) {
+        let (param_size, heap_size, param_stmts) = match self.insert_params_as_variables(params) {
             Some(t) => t,
             None => return,
         };
@@ -1746,6 +1777,7 @@ impl<'a> Analyzer<'a> {
             ir_func.body = IRExpr::Seq(param_stmts, box body.ir);
         }
 
+        ir_func.param_size = param_size;
         ir_func.stack_in_heap_size += heap_size;
 
         // Finalize
@@ -1948,7 +1980,7 @@ impl<'a> Analyzer<'a> {
         self.pop_type_scope();
     }
 
-    pub fn analyze(mut self, program: Program) -> Vec<(Id, IRFunction)> {
+    pub fn analyze(mut self, program: Program) -> IRModule {
         // Clear headers inserted by Self::insert_public_functions
         self.ir_funcs.clear();
 
@@ -1972,6 +2004,7 @@ impl<'a> Analyzer<'a> {
         let main_func = IRFunction {
             stack_size: 0,
             stack_in_heap_size: 0,
+            param_size: 0,
             body: IRExpr::Unit,
         };
         self.ir_funcs.push((*reserved_id::MAIN_FUNC, main_func));
@@ -1985,12 +2018,19 @@ impl<'a> Analyzer<'a> {
         self.pop_scope();
         self.pop_type_scope();
 
-        self.ir_funcs
+        IRModule {
+            functions: self.ir_funcs,
+            imported_modules: program
+                .imported_modules
+                .into_iter()
+                .map(|m| format!("{}", m))
+                .collect(),
+        }
     }
 }
 
 pub enum ModuleBody {
-    Normal(Vec<(Id, IRFunction)>),
+    Normal(IRModule),
     Native(Module),
 }
 
