@@ -457,6 +457,89 @@ fn expr_is_seq(expr: &Expr) -> bool {
     }
 }
 
+fn restore_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    let mut new_stmts = Vec::new();
+    let mut seq_stack = Vec::new();
+    let mut seq_stmts = FxHashMap::default();
+
+    // Insert statements to `seq_stmts` per ID
+    for stmt in stmts {
+        match stmt {
+            Stmt::BeginSeq(id) => {
+                seq_stack.push(id);
+                seq_stmts.insert(id, Vec::new());
+            }
+            Stmt::EndSeq(_) => {
+                seq_stack.pop().unwrap();
+            }
+            stmt => match seq_stack.last() {
+                Some(seq_id) => seq_stmts.get_mut(seq_id).unwrap().push(stmt),
+                None => new_stmts.push(stmt),
+            },
+        }
+    }
+
+    fn replace_seq_id(expr: &mut Expr, seq_stmts: &mut FxHashMap<SeqId, Vec<Stmt>>) {
+        match expr {
+            Expr::SeqId(id, inner_expr) => {
+                let mut stmts = seq_stmts.remove(id).unwrap();
+                for stmt in &mut stmts {
+                    replace_seq_id_in_stmt(stmt, seq_stmts);
+                }
+
+                let mut inner_expr = mem::replace(inner_expr.as_mut(), Expr::Unit);
+                replace_seq_id(&mut inner_expr, seq_stmts);
+
+                *expr = Expr::Seq(stmts, box inner_expr);
+            }
+            Expr::Pointer(expr)
+            | Expr::Dereference(expr)
+            | Expr::Copy(expr, _)
+            | Expr::Duplicate(expr, _)
+            | Expr::Negative(expr)
+            | Expr::Alloc(expr)
+            | Expr::Wrap(expr)
+            | Expr::Unwrap(expr, _) => {
+                replace_seq_id(expr, seq_stmts);
+            }
+            Expr::Offset(expr1, expr2)
+            | Expr::BinOp(_, expr1, expr2)
+            | Expr::Call(expr1, expr2, _) => {
+                replace_seq_id(expr1, seq_stmts);
+                replace_seq_id(expr2, seq_stmts);
+            }
+            Expr::Record(exprs) => {
+                for expr in exprs {
+                    replace_seq_id(expr, seq_stmts);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn replace_seq_id_in_stmt(stmt: &mut Stmt, seq_stmts: &mut FxHashMap<SeqId, Vec<Stmt>>) {
+        match stmt {
+            Stmt::Discard(expr)
+            | Stmt::Store(_, expr)
+            | Stmt::Return(Some(expr))
+            | Stmt::JumpIfFalse(_, expr)
+            | Stmt::JumpIfTrue(_, expr)
+            | Stmt::Push(expr) => replace_seq_id(expr, seq_stmts),
+            Stmt::StoreFromRef(expr1, expr2) => {
+                replace_seq_id(expr1, seq_stmts);
+                replace_seq_id(expr2, seq_stmts);
+            }
+            _ => {}
+        }
+    }
+
+    for stmt in &mut new_stmts {
+        replace_seq_id_in_stmt(stmt, &mut seq_stmts);
+    }
+
+    new_stmts
+}
+
 fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
     fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
         fn add_stmts(new_stmts: &mut Vec<Stmt>, stmts_to_add: &mut Vec<Stmt>, expr: Expr) -> Expr {
@@ -572,6 +655,10 @@ pub fn codegen(module: Module) -> Bytecode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn seq_id(id: usize) -> SeqId {
+        unsafe { SeqId::from_raw(id) }
+    }
 
     fn get_seq_id(stmt: &Stmt) -> SeqId {
         match stmt {
@@ -694,6 +781,46 @@ mod tests {
                     BinOp::Add,
                     box Expr::SeqId(id0, box Expr::TOS(1)),
                     box Expr::SeqId(id1, box Expr::TOS(1)),
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_restore_seq() {
+        let label = Label::new();
+        let stmts = restore_seq(vec![
+            Stmt::Discard(Expr::Int(1)),
+            Stmt::BeginSeq(seq_id(0)),
+            Stmt::Push(Expr::Int(2)),
+            Stmt::BeginSeq(seq_id(2)),
+            Stmt::Jump(label),
+            Stmt::EndSeq(seq_id(2)),
+            Stmt::Discard(Expr::SeqId(seq_id(2), box Expr::Int(4))),
+            Stmt::EndSeq(seq_id(0)),
+            Stmt::BeginSeq(seq_id(1)),
+            Stmt::Label(label),
+            Stmt::Push(Expr::Int(3)),
+            Stmt::EndSeq(seq_id(1)),
+            Stmt::Discard(Expr::SeqId(
+                seq_id(0),
+                box Expr::SeqId(seq_id(1), box Expr::TOS(1)),
+            )),
+        ]);
+
+        assert_eq!(
+            stmts,
+            vec![
+                Stmt::Discard(Expr::Int(1)),
+                Stmt::Discard(Expr::Seq(
+                    vec![
+                        Stmt::Push(Expr::Int(2)),
+                        Stmt::Discard(Expr::Seq(vec![Stmt::Jump(label)], box Expr::Int(4))),
+                    ],
+                    box Expr::Seq(
+                        vec![Stmt::Label(label), Stmt::Push(Expr::Int(3))],
+                        box Expr::TOS(1),
+                    ),
                 )),
             ]
         );

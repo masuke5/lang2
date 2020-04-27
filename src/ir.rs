@@ -37,7 +37,12 @@ impl SeqId {
     }
 
     #[allow(dead_code)]
-    pub fn as_usize(&self) -> usize {
+    pub unsafe fn from_raw(raw: usize) -> Self {
+        Self(raw)
+    }
+
+    #[allow(dead_code)]
+    pub fn raw(&self) -> usize {
         self.0
     }
 }
