@@ -26,6 +26,22 @@ impl fmt::Display for Label {
     }
 }
 
+pub static NEXT_SEQ_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SeqId(usize);
+
+impl SeqId {
+    pub fn new() -> Self {
+        Self(NEXT_SEQ_ID.fetch_add(1, Ordering::AcqRel))
+    }
+
+    #[allow(dead_code)]
+    pub fn as_usize(&self) -> usize {
+        self.0
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
     Add,
@@ -99,6 +115,7 @@ pub enum Expr {
     TOS(usize),
 
     Seq(Vec<Stmt>, Box<Expr>),
+    SeqId(SeqId, Box<Expr>),
 }
 
 impl Expr {
@@ -123,6 +140,7 @@ impl Expr {
             Expr::EP => 1,
             Expr::TOS(size) => *size,
             Expr::Seq(_, expr) => expr.size(),
+            Expr::SeqId(..) => panic!("unknown size"),
         }
     }
 }
@@ -160,6 +178,7 @@ impl fmt::Display for Expr {
                 format_iter_delimiter(stmts.iter(), "; "),
                 expr
             ),
+            Expr::SeqId(id, expr) => write!(f, "seqid({:?}, {})", id, expr),
         }
     }
 }
@@ -175,6 +194,9 @@ pub enum Stmt {
     JumpIfFalse(Label, Expr),
     JumpIfTrue(Label, Expr),
     Push(Expr),
+
+    BeginSeq(SeqId),
+    EndSeq(SeqId),
 }
 
 impl fmt::Display for Stmt {
@@ -196,6 +218,8 @@ impl fmt::Display for Stmt {
             Self::JumpIfFalse(label, expr) => write!(f, "if !{} => {}", expr, label),
             Self::JumpIfTrue(label, expr) => write!(f, "if {} => {}", expr, label),
             Self::Push(expr) => write!(f, "push {}", expr),
+            Self::BeginSeq(id) => write!(f, "begin_seq {:?}", id),
+            Self::EndSeq(id) => write!(f, "end_seq {:?}", id),
         }
     }
 }

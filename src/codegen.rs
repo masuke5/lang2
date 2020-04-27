@@ -263,7 +263,8 @@ impl Generator {
             }
             Expr::EP => insts.push_noarg(opcode::EP),
             Expr::TOS(..) => {}
-            Expr::Seq(..) => panic!(),
+            Expr::Seq(..) => {} // TODO:
+            Expr::SeqId(..) => panic!(),
         }
 
         insts
@@ -325,6 +326,7 @@ impl Generator {
                 self.jumps.push((insts.len(), *label));
                 insts.push_noarg(opcode::JUMP_IF_TRUE);
             }
+            Stmt::BeginSeq(..) | Stmt::EndSeq(..) => panic!(),
         }
     }
 
@@ -448,12 +450,37 @@ fn remove_redundant_copy(expr: &mut Expr) {
     }
 }
 
+fn expr_is_seq(expr: &Expr) -> bool {
+    match expr {
+        Expr::Seq(..) => true,
+        _ => false,
+    }
+}
+
 fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
     fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
-        fn scan(expr: &mut Expr, new_stmts: &mut Vec<Stmt>) {
-            while let Expr::Seq(stmts, inner_expr) = expr {
-                new_stmts.append(stmts);
-                *expr = mem::replace(inner_expr.as_mut(), Expr::Unit);
+        fn add_stmts(new_stmts: &mut Vec<Stmt>, stmts_to_add: &mut Vec<Stmt>, expr: Expr) -> Expr {
+            let id = SeqId::new();
+            new_stmts.push(Stmt::BeginSeq(id));
+            new_stmts.append(stmts_to_add);
+            new_stmts.push(Stmt::EndSeq(id));
+
+            Expr::SeqId(id, box expr)
+        }
+
+        fn scan(mut expr: &mut Expr, new_stmts: &mut Vec<Stmt>) {
+            loop {
+                match expr {
+                    Expr::Seq(stmts, inner_expr) => {
+                        let inner_expr = mem::replace(inner_expr.as_mut(), Expr::Unit);
+                        let new_expr = add_stmts(new_stmts, stmts, inner_expr);
+                        *expr = new_expr;
+                    }
+                    Expr::SeqId(_, inner_expr) => {
+                        expr = inner_expr;
+                    }
+                    _ => break,
+                }
             }
 
             match expr {
@@ -470,12 +497,30 @@ fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
                 Expr::Offset(expr1, expr2)
                 | Expr::BinOp(_, expr1, expr2)
                 | Expr::Call(expr1, expr2, _) => {
-                    scan(expr1, new_stmts);
+                    if !expr_is_seq(expr1) && expr_is_seq(expr2) {
+                        let size = expr1.size();
+                        let expr = mem::replace(expr1.as_mut(), Expr::Unit);
+                        let new_expr =
+                            add_stmts(new_stmts, &mut vec![Stmt::Push(expr)], Expr::TOS(size));
+                        **expr1 = new_expr;
+                    } else {
+                        scan(expr1, new_stmts);
+                    }
+
                     scan(expr2, new_stmts);
                 }
                 Expr::Record(exprs) => {
+                    let has_seq = exprs.iter().any(expr_is_seq);
                     for expr in exprs {
-                        scan(expr, new_stmts);
+                        if !expr_is_seq(expr) && has_seq {
+                            let size = expr.size();
+                            let expr2 = mem::replace(expr, Expr::Unit);
+                            let new_expr =
+                                add_stmts(new_stmts, &mut vec![Stmt::Push(expr2)], Expr::TOS(size));
+                            *expr = new_expr;
+                        } else {
+                            scan(expr, new_stmts);
+                        }
                     }
                 }
                 _ => {}
@@ -528,6 +573,14 @@ pub fn codegen(module: Module) -> Bytecode {
 mod tests {
     use super::*;
 
+    fn get_seq_id(stmt: &Stmt) -> SeqId {
+        match stmt {
+            Stmt::BeginSeq(id) => *id,
+            Stmt::EndSeq(id) => *id,
+            _ => panic!("the statement `{}` is not BeginSeq and EndSeq", stmt),
+        }
+    }
+
     #[test]
     fn test_remove_redundant_copy() {
         let mut expr = Expr::Copy(box Expr::Int(10), 0);
@@ -567,17 +620,82 @@ mod tests {
             )),
         ];
         let stmts = remove_seq(stmts);
+        let id0 = get_seq_id(&stmts[1]);
+        let id1 = get_seq_id(&stmts[8]);
+        let id2 = get_seq_id(&stmts[3]);
+
         assert_eq!(
             stmts,
             vec![
                 Stmt::Discard(Expr::Int(1)),
+                Stmt::BeginSeq(id0),
                 Stmt::Push(Expr::Int(2)),
+                Stmt::BeginSeq(id2),
                 Stmt::Jump(label),
-                Stmt::Discard(Expr::Int(4)),
+                Stmt::EndSeq(id2),
+                Stmt::Discard(Expr::SeqId(id2, box Expr::Int(4))),
+                Stmt::EndSeq(id0),
+                Stmt::BeginSeq(id1),
                 Stmt::Label(label),
                 Stmt::Push(Expr::Int(3)),
-                Stmt::Discard(Expr::TOS(1)),
+                Stmt::EndSeq(id1),
+                Stmt::Discard(Expr::SeqId(id0, box Expr::SeqId(id1, box Expr::TOS(1)))),
             ],
+        );
+    }
+
+    #[test]
+    fn test_remove_seq_with_binop() {
+        let stmts = vec![Stmt::Discard(Expr::BinOp(
+            BinOp::Add,
+            box Expr::Int(5),
+            box Expr::Seq(vec![Stmt::Push(Expr::Int(6))], box Expr::TOS(1)),
+        ))];
+        let stmts = remove_seq(stmts);
+        let id0 = get_seq_id(&stmts[0]);
+        let id1 = get_seq_id(&stmts[3]);
+
+        assert_eq!(
+            stmts,
+            vec![
+                Stmt::BeginSeq(id0),
+                Stmt::Push(Expr::Int(5)),
+                Stmt::EndSeq(id0),
+                Stmt::BeginSeq(id1),
+                Stmt::Push(Expr::Int(6)),
+                Stmt::EndSeq(id1),
+                Stmt::Discard(Expr::BinOp(
+                    BinOp::Add,
+                    box Expr::SeqId(id0, box Expr::TOS(1)),
+                    box Expr::SeqId(id1, box Expr::TOS(1)),
+                )),
+            ]
+        );
+
+        let stmts = vec![Stmt::Discard(Expr::BinOp(
+            BinOp::Add,
+            box Expr::Seq(vec![Stmt::Push(Expr::Int(7))], box Expr::TOS(1)),
+            box Expr::Seq(vec![Stmt::Push(Expr::Int(8))], box Expr::TOS(1)),
+        ))];
+        let stmts = remove_seq(stmts);
+        let id0 = get_seq_id(&stmts[0]);
+        let id1 = get_seq_id(&stmts[3]);
+
+        assert_eq!(
+            stmts,
+            vec![
+                Stmt::BeginSeq(id0),
+                Stmt::Push(Expr::Int(7)),
+                Stmt::EndSeq(id0),
+                Stmt::BeginSeq(id1),
+                Stmt::Push(Expr::Int(8)),
+                Stmt::EndSeq(id1),
+                Stmt::Discard(Expr::BinOp(
+                    BinOp::Add,
+                    box Expr::SeqId(id0, box Expr::TOS(1)),
+                    box Expr::SeqId(id1, box Expr::TOS(1)),
+                )),
+            ]
         );
     }
 }
