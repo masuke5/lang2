@@ -4,6 +4,8 @@ use std::mem;
 use std::ptr;
 use std::str;
 
+use rustc_hash::FxHashMap;
+
 use crate::id::Id;
 use crate::utils;
 use crate::value::Lang2Str;
@@ -541,12 +543,14 @@ impl Function {
 #[derive(Debug)]
 pub struct InstList {
     pub insts: LinkedList<[u8; 2]>,
+    labels: FxHashMap<usize, usize>,
 }
 
 impl InstList {
     pub fn new() -> Self {
         InstList {
             insts: LinkedList::new(),
+            labels: FxHashMap::default(),
         }
     }
 
@@ -554,18 +558,34 @@ impl InstList {
         *self.insts.back().unwrap()
     }
 
+    pub fn add_label(&mut self, label: usize) {
+        self.labels.insert(label, self.len());
+    }
+
     // Insert an instruction
 
     #[inline]
     pub fn append(&mut self, mut insts: InstList) {
+        for (name, label) in insts.labels {
+            self.labels.insert(name, label + self.len());
+        }
+
         self.insts.append(&mut insts.insts);
     }
 
     #[inline]
     #[allow(dead_code)]
     pub fn prepend(&mut self, mut insts: InstList) {
+        let insts_len = insts.len();
+
         mem::swap(&mut self.insts, &mut insts.insts);
         self.insts.append(&mut insts.insts);
+
+        for label in self.labels.values_mut() {
+            *label += insts_len;
+        }
+
+        self.labels.extend(insts.labels);
     }
 
     #[inline]
@@ -800,10 +820,12 @@ mod tests {
     fn instlist_append() {
         let mut insts = InstList::new();
         insts.push(opcode::TINY_INT, 30);
+        insts.add_label(0);
         insts.push(opcode::TINY_INT, 50);
 
         let mut insts2 = InstList::new();
         insts2.push_noarg(opcode::BINOP_ADD);
+        insts2.add_label(1);
         insts2.push(opcode::TINY_INT, 60);
         insts2.push_noarg(opcode::BINOP_MUL);
 
@@ -820,6 +842,7 @@ mod tests {
         .collect();
 
         assert_eq!(expected, insts.insts);
+        assert_eq!(insts.labels, vec![(0, 1), (1, 3),].into_iter().collect());
     }
 
     #[test]
@@ -827,10 +850,12 @@ mod tests {
         let mut insts = InstList::new();
         insts.push_noarg(opcode::BINOP_ADD);
         insts.push(opcode::TINY_INT, 50);
+        insts.add_label(0);
         insts.push_noarg(opcode::BINOP_MUL);
 
         let mut insts2 = InstList::new();
         insts2.push(opcode::TINY_INT, 30);
+        insts2.add_label(1);
         insts2.push(opcode::TINY_INT, 60);
 
         insts.prepend(insts2);
@@ -846,6 +871,7 @@ mod tests {
         .collect();
 
         assert_eq!(expected, insts.insts);
+        assert_eq!(insts.labels, vec![(0, 4), (1, 1)].into_iter().collect());
     }
 
     #[test]
