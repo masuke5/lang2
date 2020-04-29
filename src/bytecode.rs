@@ -496,17 +496,6 @@ impl Function {
     pub const OFFSET_PARAM_SIZE: usize = 2;
     pub const OFFSET_POS: usize = 4;
 
-    pub fn new(name: Id, param_size: usize) -> Self {
-        Self {
-            name: Some(name),
-            code_id: 0,
-            param_size,
-            stack_in_heap_size: 0,
-            stack_size: 0,
-            pos: 0,
-        }
-    }
-
     #[inline]
     pub fn name(&self) -> Id {
         self.name.unwrap()
@@ -556,10 +545,6 @@ impl InstList {
         }
     }
 
-    pub fn prev_inst(&self) -> [u8; 2] {
-        *self.insts.back().unwrap()
-    }
-
     pub fn add_label(&mut self, label: usize) {
         self.labels.insert(label, self.len());
     }
@@ -601,12 +586,6 @@ impl InstList {
             self.jumps.insert(index + insts_len, label);
         }
         self.jumps.extend(insts.jumps);
-    }
-
-    #[inline]
-    pub fn replace_last_with(&mut self, opcode: u8, arg: u8) {
-        let last = self.insts.back_mut().unwrap();
-        *last = [opcode, arg];
     }
 
     #[inline]
@@ -788,14 +767,6 @@ impl BytecodeBuilder {
         }
 
         self.code.align(8);
-    }
-
-    pub fn get_function(&self, id: Id) -> Option<&Function> {
-        self.functions.get(&id)
-    }
-
-    pub fn get_function_mut(&mut self, id: Id) -> Option<&mut Function> {
-        self.functions.get_mut(&id)
     }
 
     pub fn push_module(&mut self, name: &str) -> u16 {
