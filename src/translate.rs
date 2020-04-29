@@ -102,13 +102,7 @@ pub fn literal_tuple(expr: ExprInfo) -> Expr {
     Expr::Copy(box (expr.ir), type_size_nocheck(&expr.ty))
 }
 
-pub fn field(
-    loc: Option<RelativeVariableLoc>,
-    is_in_heap: bool,
-    is_pointer: bool,
-    comp_expr: ExprInfo,
-    offset: usize,
-) -> Expr {
+pub fn field(loc: Option<RelativeVariableLoc>, comp_expr: ExprInfo, offset: usize) -> Expr {
     let mut expr = comp_expr.ir;
 
     if let Some(loc) = loc {
@@ -118,15 +112,15 @@ pub fn field(
         );
     }
 
-    if is_in_heap {
-        if is_pointer {
+    if let Type::App(TypeCon::InHeap, types) = &comp_expr.ty {
+        if let Type::App(TypeCon::Pointer(_), _) = &types[0] {
             expr = Expr::Copy(box (expr), 1);
         } else {
             expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
         }
     }
 
-    if is_pointer {
+    if let Type::App(TypeCon::Pointer(_), _) = &comp_expr.ty {
         expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
     }
 
@@ -264,10 +258,10 @@ pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> Expr {
     )
 }
 
-pub fn call(return_ty: &Type, func_expr: Expr, arg_expr: Expr, arg_ty: &Type) -> Expr {
+pub fn call(return_ty: &Type, func: ExprInfo, arg: ExprInfo) -> Expr {
     Expr::Call(
-        box func_expr,
-        box copy(arg_expr, &arg_ty),
+        box copy(func.ir, &func.ty),
+        box copy(arg.ir, &arg.ty),
         type_size_nocheck(return_ty),
     )
 }
@@ -289,10 +283,7 @@ pub fn address_no_lvalue(expr: ExprInfo, loc: &RelativeVariableLoc) -> Expr {
             loc.as_ir_loc(),
             Expr::Alloc(box copy(expr.ir, &expr.ty)),
         )],
-        box Expr::Pointer(box Expr::LoadCopy(
-            loc.as_ir_loc(),
-            type_size_nocheck(&expr.ty),
-        )),
+        box Expr::Pointer(box Expr::LoadCopy(loc.as_ir_loc(), 1)),
     )
 }
 

@@ -724,18 +724,9 @@ impl<'a> Analyzer<'a> {
                 let ty = self.expand_name(comp_expr.ty.clone())?;
                 let mut ty = expand_wrap(ty);
 
-                let is_in_heap = match ty {
-                    Type::App(TypeCon::InHeap, types) => {
-                        ty = types[0].clone();
-                        true
-                    }
-                    _ => false,
-                };
-
-                let is_pointer = match &ty {
-                    Type::App(TypeCon::Pointer(_), _) => true,
-                    _ => false,
-                };
+                if let Type::App(TypeCon::InHeap, types) = ty {
+                    ty = types[0].clone();
+                }
 
                 // Get the field type and offset
                 let (field_ty, offset) = match field {
@@ -788,13 +779,8 @@ impl<'a> Analyzer<'a> {
                     }
                 };
 
-                let ir = translate::field(
-                    loc.map(|loc| self.relative_loc(&loc)),
-                    is_in_heap,
-                    is_pointer,
-                    comp_expr,
-                    offset,
-                );
+                let ir =
+                    translate::field(loc.map(|loc| self.relative_loc(&loc)), comp_expr, offset);
                 return Some(ExprInfo::new_lvalue(ir, field_ty, expr.span, is_mutable));
             }
             Expr::Subscript(expr, subscript_expr) => {
@@ -1010,7 +996,7 @@ impl<'a> Analyzer<'a> {
 
                 unify(&arg_expr.span, &arg_ty, &arg_expr.ty);
 
-                let ir = translate::call(&return_ty, func_expr.ir, arg_expr.ir, &arg_expr.ty);
+                let ir = translate::call(&return_ty, func_expr, arg_expr);
                 (ir, return_ty)
             }
             Expr::Address(expr, is_mutable) => {
@@ -1499,12 +1485,13 @@ impl<'a> Analyzer<'a> {
         }
 
         let result_expr = result_expr?;
+        let result_expr_ir = IRExpr::Copy(box result_expr.ir, type_size_nocheck(&result_expr.ty));
 
         // Wrap in Seq if necessary
         let block_expr = if stmts.is_empty() {
-            result_expr.ir
+            result_expr_ir
         } else {
-            IRExpr::Seq(stmts, box result_expr.ir)
+            IRExpr::Seq(stmts, box result_expr_ir)
         };
 
         Some((result_expr.ty, block_expr))
@@ -1757,25 +1744,28 @@ impl<'a> Analyzer<'a> {
             None => return,
         };
 
+        // Add stack_in_heap_size before walk the function body
+        let (_, ir_func) = &mut self.ir_funcs[ir_func_index];
+        ir_func.param_size = param_size;
+        ir_func.stack_in_heap_size = heap_size;
+
         let body = match self.walk_expr(func.body) {
             Some(e) => e,
             None => return,
         };
 
-        // Check return type
+        // Check if a specified return type is the same as the expression type
         unify(&body.span, &return_ty, &body.ty);
 
         // Set function body
         let (_, ir_func) = &mut self.ir_funcs[ir_func_index];
 
-        if param_stmts.is_empty() {
-            ir_func.body = body.ir;
+        let body_expr = if param_stmts.is_empty() {
+            body.ir
         } else {
-            ir_func.body = IRExpr::Seq(param_stmts, box body.ir);
-        }
-
-        ir_func.param_size = param_size;
-        ir_func.stack_in_heap_size += heap_size;
+            IRExpr::Seq(param_stmts, box body.ir)
+        };
+        ir_func.body = IRExpr::Copy(box body_expr, type_size_nocheck(&body.ty));
 
         // Finalize
         if func.has_escaped_variables {

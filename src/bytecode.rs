@@ -543,7 +543,8 @@ impl Function {
 #[derive(Debug)]
 pub struct InstList {
     pub insts: LinkedList<[u8; 2]>,
-    labels: FxHashMap<usize, usize>,
+    pub labels: FxHashMap<usize, usize>,
+    jumps: FxHashMap<usize, usize>,
 }
 
 impl InstList {
@@ -551,6 +552,7 @@ impl InstList {
         InstList {
             insts: LinkedList::new(),
             labels: FxHashMap::default(),
+            jumps: FxHashMap::default(),
         }
     }
 
@@ -562,12 +564,20 @@ impl InstList {
         self.labels.insert(label, self.len());
     }
 
+    pub fn jumps(&self) -> &FxHashMap<usize, usize> {
+        &self.jumps
+    }
+
     // Insert an instruction
 
     #[inline]
     pub fn append(&mut self, mut insts: InstList) {
         for (name, label) in insts.labels {
             self.labels.insert(name, label + self.len());
+        }
+
+        for (index, label) in insts.jumps {
+            self.jumps.insert(index + self.len(), label);
         }
 
         self.insts.append(&mut insts.insts);
@@ -584,8 +594,13 @@ impl InstList {
         for label in self.labels.values_mut() {
             *label += insts_len;
         }
-
         self.labels.extend(insts.labels);
+
+        let old_jumps: Vec<(usize, usize)> = self.jumps.drain().collect();
+        for (index, label) in old_jumps {
+            self.jumps.insert(index + insts_len, label);
+        }
+        self.jumps.extend(insts.jumps);
     }
 
     #[inline]
@@ -600,9 +615,9 @@ impl InstList {
     }
 
     #[inline]
-    pub fn push_jump(&mut self, opcode: u8, label: u8) {
-        let opcode = opcode | 0b1000_0000;
-        self.push(opcode, label);
+    pub fn push_jump(&mut self, opcode: u8, label: usize) {
+        self.jumps.insert(self.len(), label);
+        self.push_noarg(opcode);
     }
 
     #[inline]
@@ -822,11 +837,13 @@ mod tests {
         insts.push(opcode::TINY_INT, 30);
         insts.add_label(0);
         insts.push(opcode::TINY_INT, 50);
+        insts.push_jump(opcode::JUMP_IF_FALSE, 0);
 
         let mut insts2 = InstList::new();
         insts2.push_noarg(opcode::BINOP_ADD);
         insts2.add_label(1);
         insts2.push(opcode::TINY_INT, 60);
+        insts2.push_jump(opcode::JUMP, 1);
         insts2.push_noarg(opcode::BINOP_MUL);
 
         insts.append(insts2);
@@ -834,26 +851,31 @@ mod tests {
         let expected: LinkedList<[u8; 2]> = vec![
             [opcode::TINY_INT, 30],
             [opcode::TINY_INT, 50],
+            [opcode::JUMP_IF_FALSE, 0],
             [opcode::BINOP_ADD, 0],
             [opcode::TINY_INT, 60],
+            [opcode::JUMP, 0],
             [opcode::BINOP_MUL, 0],
         ]
         .into_iter()
         .collect();
 
         assert_eq!(expected, insts.insts);
-        assert_eq!(insts.labels, vec![(0, 1), (1, 3),].into_iter().collect());
+        assert_eq!(insts.labels, vec![(0, 1), (1, 4),].into_iter().collect());
+        assert_eq!(insts.jumps, vec![(2, 0), (5, 1),].into_iter().collect());
     }
 
     #[test]
     fn instlist_prepend() {
         let mut insts = InstList::new();
         insts.push_noarg(opcode::BINOP_ADD);
+        insts.push_jump(opcode::JUMP, 0);
         insts.push(opcode::TINY_INT, 50);
         insts.add_label(0);
         insts.push_noarg(opcode::BINOP_MUL);
 
         let mut insts2 = InstList::new();
+        insts2.push_jump(opcode::JUMP, 1);
         insts2.push(opcode::TINY_INT, 30);
         insts2.add_label(1);
         insts2.push(opcode::TINY_INT, 60);
@@ -861,9 +883,11 @@ mod tests {
         insts.prepend(insts2);
 
         let expected: LinkedList<[u8; 2]> = vec![
+            [opcode::JUMP, 0],
             [opcode::TINY_INT, 30],
             [opcode::TINY_INT, 60],
             [opcode::BINOP_ADD, 0],
+            [opcode::JUMP, 0],
             [opcode::TINY_INT, 50],
             [opcode::BINOP_MUL, 0],
         ]
@@ -871,7 +895,8 @@ mod tests {
         .collect();
 
         assert_eq!(expected, insts.insts);
-        assert_eq!(insts.labels, vec![(0, 4), (1, 1)].into_iter().collect());
+        assert_eq!(insts.labels, vec![(0, 6), (1, 2)].into_iter().collect());
+        assert_eq!(insts.jumps, vec![(0, 1), (4, 0)].into_iter().collect());
     }
 
     #[test]

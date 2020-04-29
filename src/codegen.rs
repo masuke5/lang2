@@ -45,8 +45,6 @@ impl StringList {
 struct Generator {
     builder: BytecodeBuilder,
     strings: StringList,
-    labels: FxHashMap<Label, usize>,
-    jumps: Vec<(usize, Label)>,
     param_size: usize,
 }
 
@@ -55,8 +53,6 @@ impl Generator {
         Self {
             builder: BytecodeBuilder::new(),
             strings: StringList::new(),
-            labels: FxHashMap::default(),
-            jumps: Vec::new(),
             param_size: 0,
         }
     }
@@ -125,11 +121,13 @@ impl Generator {
                         } else {
                             let offset_insts = self.gen_expr(&offset);
                             insts.append(offset_insts);
+                            insts.push_noarg(opcode::OFFSET);
                         }
                     }
                 } else {
                     let offset_insts = self.gen_expr(&offset);
                     insts.append(offset_insts);
+                    insts.push_noarg(opcode::OFFSET);
                 }
             }
             Expr::Duplicate(expr, count) => {
@@ -137,7 +135,9 @@ impl Generator {
                     panic!("too many count: {}", count);
                 }
 
-                let arg = ((expr.size() as u64) << 32) | *count as u64;
+                insts.append(self.gen_expr(expr));
+
+                let arg = ((expr.size() as u64) << 32) | *count as u64 - 1;
                 let index = self.builder.new_ref_u64(arg);
                 insts.push(opcode::DUPLICATE, index as u8);
             }
@@ -262,8 +262,13 @@ impl Generator {
                 insts.push(opcode::INT, index as u8);
             }
             Expr::EP => insts.push_noarg(opcode::EP),
+            Expr::Seq(stmts, expr) => {
+                for stmt in stmts {
+                    self.gen_stmt(&mut insts, stmt);
+                }
+                insts.append(self.gen_expr(expr));
+            }
             Expr::TOS(..) => {}
-            Expr::Seq(..) => {} // TODO:
             Expr::SeqId(..) => panic!(),
         }
 
@@ -279,24 +284,31 @@ impl Generator {
                 }
             }
             Stmt::Store(loc, expr) => {
+                insts.append(self.gen_expr(expr));
+                insts.append(self.gen_expr(&Expr::LoadRef(loc.clone())));
+
                 if expr.size() > 0 {
-                    insts.append(self.gen_expr(expr));
-                    insts.append(self.gen_expr(&Expr::LoadRef(loc.clone())));
                     insts.push(opcode::STORE, expr.size() as u8);
+                } else {
+                    insts.push_noarg(opcode::POP);
                 }
             }
             Stmt::StoreFromRef(ref_expr, expr) => {
+                insts.append(self.gen_expr(expr));
+                insts.append(self.gen_expr(ref_expr));
+
                 if expr.size() > 0 {
-                    insts.append(self.gen_expr(expr));
-                    insts.append(self.gen_expr(ref_expr));
                     insts.push(opcode::STORE, expr.size() as u8);
+                } else {
+                    insts.push_noarg(opcode::POP);
                 }
             }
             Stmt::Return(expr) => {
                 if let Some(expr) = expr {
+                    let loc = 0 - self.param_size as isize - expr.size() as isize;
+                    insts.append(self.gen_expr(expr));
+
                     if expr.size() > 0 {
-                        let loc = 0 - self.param_size as isize - expr.size() as isize;
-                        insts.append(self.gen_expr(expr));
                         insts.append(self.gen_expr(&Expr::LoadRef(VariableLoc::Local(loc))));
                         insts.push(opcode::STORE, expr.size() as u8);
                     }
@@ -308,50 +320,45 @@ impl Generator {
                 insts.append(self.gen_expr(expr));
             }
             Stmt::Label(label) => {
-                self.labels.insert(*label, insts.len());
+                insts.add_label(label.as_usize());
             }
             Stmt::Jump(label) => {
-                self.jumps.push((insts.len(), *label));
-                insts.push_noarg(opcode::JUMP);
+                insts.push_jump(opcode::JUMP, label.as_usize());
             }
             Stmt::JumpIfFalse(label, expr) => {
                 insts.append(self.gen_expr(expr));
-
-                self.jumps.push((insts.len(), *label));
-                insts.push_noarg(opcode::JUMP_IF_FALSE);
+                insts.push_jump(opcode::JUMP_IF_FALSE, label.as_usize());
             }
             Stmt::JumpIfTrue(label, expr) => {
                 insts.append(self.gen_expr(expr));
-
-                self.jumps.push((insts.len(), *label));
-                insts.push_noarg(opcode::JUMP_IF_TRUE);
+                insts.push_jump(opcode::JUMP_IF_TRUE, label.as_usize());
             }
             Stmt::BeginSeq(..) | Stmt::EndSeq(..) => panic!(),
         }
     }
 
     fn resolve_labels(&mut self, insts: &mut InstList) {
-        let mut jumps = self.jumps.drain(..).peekable();
+        let mut jumps: Vec<(usize, usize)> = insts.jumps().iter().map(|(a, b)| (*a, *b)).collect();
+        jumps.sort_by_key(|(index, _)| *index);
+
+        let mut jumps = jumps.into_iter().peekable();
 
         for (i, [opcode, arg]) in insts.insts.iter_mut().enumerate() {
-            let (loc, label) = match jumps.peek() {
-                Some(ll) => ll,
-                None => break,
-            };
+            if let Some((jump_index, label)) = jumps.peek() {
+                if i == *jump_index {
+                    assert!([opcode::JUMP, opcode::JUMP_IF_TRUE, opcode::JUMP_IF_FALSE]
+                        .contains(opcode));
 
-            if i == *loc {
-                assert!(
-                    [opcode::JUMP, opcode::JUMP_IF_TRUE, opcode::JUMP_IF_FALSE].contains(opcode)
-                );
+                    let label_loc = insts.labels[label];
+                    let relative_loc = label_loc as isize - i as isize;
+                    *arg = (relative_loc as i8).to_le_bytes()[0];
 
-                let label_loc = self.labels[label];
-                *arg = ((label_loc as isize - i as isize) as i8).to_le_bytes()[0];
-
-                jumps.next();
+                    jumps.next();
+                }
+            } else {
+                break;
             }
         }
-
-        self.labels.clear();
     }
 
     fn generate(mut self, module: Module) -> Bytecode {
@@ -362,40 +369,8 @@ impl Generator {
         for (id, (name, func)) in module.functions.into_iter().enumerate() {
             self.param_size = func.param_size;
 
-            // Don't return in main function
-            let stmt = if id == 0 {
-                Stmt::Discard(func.body)
-            } else {
-                Stmt::Return(Some(func.body))
-            };
-
-            let stmts = vec![stmt];
-
-            // Remove Seq
-            let mut stmts = remove_seq(stmts);
-
-            // Remove redundant copies
-            for stmt in &mut stmts {
-                match stmt {
-                    Stmt::Discard(expr)
-                    | Stmt::Store(_, expr)
-                    | Stmt::Return(Some(expr))
-                    | Stmt::JumpIfFalse(_, expr)
-                    | Stmt::JumpIfTrue(_, expr)
-                    | Stmt::Push(expr) => remove_redundant_copy(expr),
-                    Stmt::StoreFromRef(expr1, expr2) => {
-                        remove_redundant_copy(expr1);
-                        remove_redundant_copy(expr2);
-                    }
-                    _ => {}
-                };
-            }
-
             // Generate instructions
-            let mut insts = InstList::new();
-            for stmt in &stmts {
-                self.gen_stmt(&mut insts, stmt);
-            }
+            let mut insts = self.gen_expr(&func.body);
 
             // Resolve labels
             self.resolve_labels(&mut insts);
@@ -433,7 +408,8 @@ fn remove_redundant_copy(expr: &mut Expr) {
         | Expr::Negative(expr)
         | Expr::Alloc(expr)
         | Expr::Wrap(expr)
-        | Expr::Unwrap(expr, _) => {
+        | Expr::Unwrap(expr, _)
+        | Expr::SeqId(_, expr) => {
             remove_redundant_copy(expr);
         }
         Expr::Offset(expr1, expr2) | Expr::BinOp(_, expr1, expr2) | Expr::Call(expr1, expr2, _) => {
@@ -647,8 +623,47 @@ fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
     stmts
 }
 
-pub fn codegen(module: Module) -> Bytecode {
+pub fn codegen(mut module: Module) -> Bytecode {
     let generator = Generator::new();
+
+    for (id, (_, func)) in module.functions.iter_mut().enumerate() {
+        let func_body = mem::replace(&mut func.body, Expr::Unit);
+
+        // Don't return in main function
+        let stmt = if id == 0 {
+            Stmt::Discard(func_body)
+        } else {
+            Stmt::Return(Some(func_body))
+        };
+
+        // Remove all Seq
+        let mut stmts = remove_seq(vec![stmt]);
+
+        // Remove redundant copies
+        for stmt in &mut stmts {
+            match stmt {
+                Stmt::Discard(expr)
+                | Stmt::Store(_, expr)
+                | Stmt::Return(Some(expr))
+                | Stmt::JumpIfFalse(_, expr)
+                | Stmt::JumpIfTrue(_, expr)
+                | Stmt::Push(expr) => remove_redundant_copy(expr),
+                Stmt::StoreFromRef(expr1, expr2) => {
+                    remove_redundant_copy(expr1);
+                    remove_redundant_copy(expr2);
+                }
+                _ => {}
+            }
+        }
+
+        // TODO: Optimization
+
+        // Restore all Seq
+        let stmts = restore_seq(stmts);
+
+        func.body = Expr::Seq(stmts, box Expr::Unit);
+    }
+
     generator.generate(module)
 }
 
