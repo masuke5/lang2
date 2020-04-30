@@ -428,76 +428,73 @@ impl Generator {
     }
 }
 
-fn calc_at_compile_time(expr: &mut Expr) {
-    if let Some(n) = try_convert_to_int(expr) {
-        *expr = Expr::Int(n);
-    }
+fn scan_expr(expr: &mut Expr, mut func: impl FnMut(&mut Expr)) {
+    let mut stack: Vec<*mut Expr> = vec![expr];
 
-    if let Some(b) = try_convert_to_bool(expr) {
-        let new_expr = if b { Expr::True } else { Expr::False };
-        *expr = new_expr;
-    }
+    while let Some(expr) = stack.pop() {
+        let expr = unsafe { &mut *expr };
+        func(expr);
 
-    match expr {
-        Expr::Pointer(expr)
-        | Expr::Dereference(expr)
-        | Expr::Copy(expr, _)
-        | Expr::Duplicate(expr, _)
-        | Expr::Negative(expr)
-        | Expr::Alloc(expr)
-        | Expr::Wrap(expr)
-        | Expr::Unwrap(expr, _)
-        | Expr::SeqId(_, expr) => {
-            calc_at_compile_time(expr);
-        }
-        Expr::Offset(expr1, expr2) | Expr::BinOp(_, expr1, expr2) | Expr::Call(expr1, expr2, _) => {
-            calc_at_compile_time(expr1);
-            calc_at_compile_time(expr2);
-        }
-        Expr::Record(exprs) => {
-            for expr in exprs {
-                calc_at_compile_time(expr);
+        match expr {
+            Expr::Pointer(expr)
+            | Expr::Dereference(expr)
+            | Expr::Copy(expr, _)
+            | Expr::Duplicate(expr, _)
+            | Expr::Negative(expr)
+            | Expr::Alloc(expr)
+            | Expr::Wrap(expr)
+            | Expr::Unwrap(expr, _)
+            | Expr::SeqId(_, expr) => {
+                stack.push(expr.as_mut());
             }
+            Expr::Offset(expr1, expr2)
+            | Expr::BinOp(_, expr1, expr2)
+            | Expr::Call(expr1, expr2, _) => {
+                stack.push(expr1.as_mut());
+                stack.push(expr2.as_mut());
+            }
+            Expr::Record(exprs) => {
+                for expr in exprs {
+                    stack.push(expr);
+                }
+            }
+            _ => {}
         }
-        Expr::Seq(..) => panic!("Expressions in Seq cannot be calculated"),
-        _ => {}
     }
 }
 
-fn remove_redundant_copy(expr: &mut Expr) {
-    while let Expr::Copy(inner_expr, _) = expr {
-        match inner_expr.as_mut() {
-            Expr::LoadRef(..) | Expr::Offset(..) | Expr::Dereference(..) => break,
-            _ => {
-                *expr = mem::replace(inner_expr.as_mut(), Expr::Unit);
-            }
+fn calc_at_compile_time(expr: &mut Expr) {
+    scan_expr(expr, |expr| {
+        if let Expr::Seq(..) = expr {
+            panic!();
         }
-    }
 
-    match expr {
-        Expr::Pointer(expr)
-        | Expr::Dereference(expr)
-        | Expr::Copy(expr, _)
-        | Expr::Duplicate(expr, _)
-        | Expr::Negative(expr)
-        | Expr::Alloc(expr)
-        | Expr::Wrap(expr)
-        | Expr::Unwrap(expr, _)
-        | Expr::SeqId(_, expr) => {
-            remove_redundant_copy(expr);
+        if let Some(n) = try_convert_to_int(expr) {
+            *expr = Expr::Int(n);
         }
-        Expr::Offset(expr1, expr2) | Expr::BinOp(_, expr1, expr2) | Expr::Call(expr1, expr2, _) => {
-            remove_redundant_copy(expr1);
-            remove_redundant_copy(expr2);
+
+        if let Some(b) = try_convert_to_bool(expr) {
+            let new_expr = if b { Expr::True } else { Expr::False };
+            *expr = new_expr;
         }
-        Expr::Record(exprs) => {
-            for expr in exprs {
-                remove_redundant_copy(expr);
+    });
+}
+
+fn remove_redundant_copy(expr: &mut Expr) {
+    scan_expr(expr, |expr| {
+        if let Expr::Seq(..) = expr {
+            panic!();
+        }
+
+        while let Expr::Copy(inner_expr, _) = expr {
+            match inner_expr.as_mut() {
+                Expr::LoadRef(..) | Expr::Offset(..) | Expr::Dereference(..) => break,
+                _ => {
+                    *expr = mem::replace(inner_expr.as_mut(), Expr::Unit);
+                }
             }
         }
-        Expr::Seq(..) => panic!("redundant copies in Seq cannot be removed"),
-        _ => {}
-    }
+    });
 }
 
 fn expr_is_seq(expr: &Expr) -> bool {
@@ -530,8 +527,8 @@ fn restore_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
     }
 
     fn replace_seq_id(expr: &mut Expr, seq_stmts: &mut FxHashMap<SeqId, Vec<Stmt>>) {
-        match expr {
-            Expr::SeqId(id, inner_expr) => {
+        scan_expr(expr, |expr| {
+            if let Expr::SeqId(id, inner_expr) = expr {
                 let mut stmts = seq_stmts.remove(id).unwrap();
                 for stmt in &mut stmts {
                     replace_seq_id_in_stmt(stmt, seq_stmts);
@@ -542,29 +539,7 @@ fn restore_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
                 *expr = Expr::Seq(stmts, box inner_expr);
             }
-            Expr::Pointer(expr)
-            | Expr::Dereference(expr)
-            | Expr::Copy(expr, _)
-            | Expr::Duplicate(expr, _)
-            | Expr::Negative(expr)
-            | Expr::Alloc(expr)
-            | Expr::Wrap(expr)
-            | Expr::Unwrap(expr, _) => {
-                replace_seq_id(expr, seq_stmts);
-            }
-            Expr::Offset(expr1, expr2)
-            | Expr::BinOp(_, expr1, expr2)
-            | Expr::Call(expr1, expr2, _) => {
-                replace_seq_id(expr1, seq_stmts);
-                replace_seq_id(expr2, seq_stmts);
-            }
-            Expr::Record(exprs) => {
-                for expr in exprs {
-                    replace_seq_id(expr, seq_stmts);
-                }
-            }
-            _ => {}
-        }
+        });
     }
 
     fn replace_seq_id_in_stmt(stmt: &mut Stmt, seq_stmts: &mut FxHashMap<SeqId, Vec<Stmt>>) {
