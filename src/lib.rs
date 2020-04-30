@@ -30,6 +30,8 @@ mod translate;
 mod value;
 mod vm;
 
+pub use codegen::OptimizeOption;
+
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -68,6 +70,7 @@ pub struct ExecuteOption {
     mode: ExecuteMode,
     enable_trace: bool,
     enable_measure: bool,
+    optimize_option: OptimizeOption,
 }
 
 impl ExecuteOption {
@@ -80,6 +83,9 @@ impl ExecuteOption {
             mode: ExecuteMode::Normal,
             enable_trace: false,
             enable_measure: false,
+            optimize_option: OptimizeOption {
+                calc_at_compile_time: false,
+            },
         }
     }
 
@@ -100,6 +106,11 @@ impl ExecuteOption {
 
     pub fn mode(mut self, mode: ExecuteMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    pub fn optimize_option(mut self, optimize_option: OptimizeOption) -> Self {
+        self.optimize_option = optimize_option;
         self
     }
 
@@ -185,7 +196,7 @@ impl ExecuteOption {
         for (name, body) in module_bodies {
             let body = match body {
                 ModuleBody::Normal(module) => {
-                    let bytecode = codegen(module);
+                    let bytecode = codegen(module, &self.optimize_option);
                     VMModuleBody::Normal(bytecode)
                 }
                 ModuleBody::Native(module) => VMModuleBody::Native(module),

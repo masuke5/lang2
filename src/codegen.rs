@@ -7,6 +7,12 @@ use crate::bytecode::{opcode, Bytecode, BytecodeBuilder, Function as BFunction, 
 use crate::ir::*;
 use crate::vm::{CALL_STACK_SIZE, SELF_MODULE_ID};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptimizeOption {
+    // Calculation at compile time
+    pub calc_at_compile_time: bool,
+}
+
 struct StringList {
     strings: FxHashMap<String, usize>,
     next_id: usize,
@@ -39,6 +45,38 @@ impl StringList {
         }
 
         strings
+    }
+}
+
+fn try_convert_to_int(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Int(n) => Some(*n),
+        Expr::BinOp(binop, lhs, rhs) => match binop {
+            BinOp::Add => Some(try_convert_to_int(lhs)? + try_convert_to_int(rhs)?),
+            BinOp::Sub => Some(try_convert_to_int(lhs)? - try_convert_to_int(rhs)?),
+            BinOp::Mul => Some(try_convert_to_int(lhs)? * try_convert_to_int(rhs)?),
+            BinOp::Div => Some(try_convert_to_int(lhs)? / try_convert_to_int(rhs)?),
+            _ => None,
+        },
+        Expr::Negative(expr) => Some(-try_convert_to_int(expr)?),
+        _ => None,
+    }
+}
+
+fn try_convert_to_bool(expr: &Expr) -> Option<bool> {
+    match expr {
+        Expr::True => Some(true),
+        Expr::False => Some(false),
+        Expr::BinOp(binop, lhs, rhs) => match binop {
+            BinOp::LessThan => Some(try_convert_to_int(lhs)? < try_convert_to_int(rhs)?),
+            BinOp::LessThanOrEqual => Some(try_convert_to_int(lhs)? <= try_convert_to_int(rhs)?),
+            BinOp::GreaterThan => Some(try_convert_to_int(lhs)? > try_convert_to_int(rhs)?),
+            BinOp::GreaterThanOrEqual => Some(try_convert_to_int(lhs)? >= try_convert_to_int(rhs)?),
+            BinOp::Equal => Some(try_convert_to_int(lhs)? == try_convert_to_int(rhs)?),
+            BinOp::NotEqual => Some(try_convert_to_int(lhs)? != try_convert_to_int(rhs)?),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -390,6 +428,42 @@ impl Generator {
     }
 }
 
+fn calc_at_compile_time(expr: &mut Expr) {
+    if let Some(n) = try_convert_to_int(expr) {
+        *expr = Expr::Int(n);
+    }
+
+    if let Some(b) = try_convert_to_bool(expr) {
+        let new_expr = if b { Expr::True } else { Expr::False };
+        *expr = new_expr;
+    }
+
+    match expr {
+        Expr::Pointer(expr)
+        | Expr::Dereference(expr)
+        | Expr::Copy(expr, _)
+        | Expr::Duplicate(expr, _)
+        | Expr::Negative(expr)
+        | Expr::Alloc(expr)
+        | Expr::Wrap(expr)
+        | Expr::Unwrap(expr, _)
+        | Expr::SeqId(_, expr) => {
+            calc_at_compile_time(expr);
+        }
+        Expr::Offset(expr1, expr2) | Expr::BinOp(_, expr1, expr2) | Expr::Call(expr1, expr2, _) => {
+            calc_at_compile_time(expr1);
+            calc_at_compile_time(expr2);
+        }
+        Expr::Record(exprs) => {
+            for expr in exprs {
+                calc_at_compile_time(expr);
+            }
+        }
+        Expr::Seq(..) => panic!("Expressions in Seq cannot be calculated"),
+        _ => {}
+    }
+}
+
 fn remove_redundant_copy(expr: &mut Expr) {
     while let Expr::Copy(inner_expr, _) = expr {
         match inner_expr.as_mut() {
@@ -623,7 +697,7 @@ fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
     stmts
 }
 
-pub fn codegen(mut module: Module) -> Bytecode {
+pub fn codegen(mut module: Module, option: &OptimizeOption) -> Bytecode {
     let generator = Generator::new();
 
     for (id, (_, func)) in module.functions.iter_mut().enumerate() {
@@ -656,7 +730,26 @@ pub fn codegen(mut module: Module) -> Bytecode {
             }
         }
 
-        // TODO: Optimization
+        // Calculation at comple time
+        if option.calc_at_compile_time {
+            for stmt in &mut stmts {
+                match stmt {
+                    Stmt::Discard(expr)
+                    | Stmt::Store(_, expr)
+                    | Stmt::Return(Some(expr))
+                    | Stmt::JumpIfFalse(_, expr)
+                    | Stmt::JumpIfTrue(_, expr)
+                    | Stmt::Push(expr) => calc_at_compile_time(expr),
+                    Stmt::StoreFromRef(expr1, expr2) => {
+                        calc_at_compile_time(expr1);
+                        calc_at_compile_time(expr2);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // TODO: More optimization
 
         // Restore all Seq
         let stmts = restore_seq(stmts);

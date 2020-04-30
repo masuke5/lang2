@@ -8,7 +8,7 @@ use std::process::exit;
 
 use lang2::error::ErrorList;
 use lang2::id::{reserved_id, IdMap};
-use lang2::{ExecuteMode, ExecuteOption};
+use lang2::{ExecuteMode, ExecuteOption, OptimizeOption};
 
 use clap::{App, Arg, ArgMatches};
 
@@ -82,6 +82,11 @@ fn main() {
                 .long("measure")
                 .help("Measures the performance"),
         )
+        .arg(
+            Arg::with_name("enable-optimization")
+                .long("opt")
+                .help("Enables optimization"),
+        )
         .get_matches();
 
     let mode = if matches.is_present("dump-token") {
@@ -104,10 +109,21 @@ fn main() {
         }
     };
 
+    let optimize_option = if matches.is_present("enable-optimization") {
+        OptimizeOption {
+            calc_at_compile_time: true,
+        }
+    } else {
+        OptimizeOption {
+            calc_at_compile_time: false,
+        }
+    };
+
     option
         .enable_trace(matches.is_present("enable-trace"))
         .enable_measure(matches.is_present("enable-measure"))
         .mode(mode)
+        .optimize_option(optimize_option)
         .execute();
 
     if ErrorList::has_error() {
