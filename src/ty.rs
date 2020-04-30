@@ -115,6 +115,22 @@ pub enum Type {
     Poly(Vec<TypeVar>, Box<Type>),
 }
 
+impl Type {
+    pub fn is_wrapped(&self) -> bool {
+        match self {
+            Self::App(TypeCon::Wrapped, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_in_heap(&self) -> bool {
+        match self {
+            Self::App(TypeCon::InHeap, _) => true,
+            _ => false,
+        }
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

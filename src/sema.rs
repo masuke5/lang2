@@ -473,12 +473,19 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn walk_expr_with_conversion(&mut self, expr: Spanned<Expr>, ty: &Type) -> Option<ExprInfo> {
-        match ty {
+    // Walk an expression and convert it to a specified type if possible
+    fn walk_expr_with_conversion(
+        &mut self,
+        expr: Spanned<Expr>,
+        dest_ty: &Type,
+    ) -> Option<ExprInfo> {
+        match dest_ty {
             Type::App(TypeCon::Wrapped, _) => {
                 let expr = self.walk_expr(expr)?;
 
+                // Wrap if necessary
                 if let Type::App(TypeCon::Wrapped, _) = &expr.ty {
+                    // Don't need wrap again
                     Some(expr)
                 } else {
                     let mut expr = expr;
@@ -488,10 +495,10 @@ impl<'a> Analyzer<'a> {
                     Some(expr)
                 }
             }
-            // Weaken pointer
             Type::App(TypeCon::Pointer(false), _) => {
                 let mut expr = self.walk_expr(expr)?;
 
+                // Weaken a pointer if necessary
                 if let Type::App(TypeCon::Pointer(true), types) = expr.ty {
                     expr.ty = Type::App(TypeCon::Pointer(false), types);
                 }
@@ -500,9 +507,11 @@ impl<'a> Analyzer<'a> {
             }
             _ => match expr.kind {
                 Expr::Tuple(exprs) => {
-                    let types = match ty {
+                    // Extract inner types
+                    let dest_types = match dest_ty {
                         Type::App(TypeCon::Tuple, types) => types,
                         _ => {
+                            // If `dest_ty` is not a tuple, walk the expression without conversion
                             let mut tys = Vec::new();
 
                             for expr in exprs.into_iter() {
@@ -521,22 +530,22 @@ impl<'a> Analyzer<'a> {
                     };
 
                     // Check size of the tuples
-                    if types.len() != exprs.len() {
+                    if dest_types.len() != exprs.len() {
                         error!(&
                             expr.span,
                             "expected that tuple size will be `{}` but the number of expressions `{}`",
-                            types.len(),
+                            dest_types.len(),
                             exprs.len()
                         );
                         return None;
                     }
 
-                    // Walk each expression and join all instructions
+                    // Walk each expression
                     let mut ir_exprs = Vec::with_capacity(exprs.len());
                     let mut tys = Vec::new();
 
-                    for (expr, ty) in exprs.into_iter().zip(types.iter()) {
-                        let expr = self.walk_expr_with_conversion(expr, ty);
+                    for (expr, dest_ty) in exprs.into_iter().zip(dest_types.iter()) {
+                        let expr = self.walk_expr_with_conversion(expr, dest_ty);
                         if let Some(expr) = expr {
                             tys.push(expr.ty.clone());
                             ir_exprs.push(translate::literal_tuple(expr));
@@ -552,20 +561,20 @@ impl<'a> Analyzer<'a> {
                 _ => {
                     let mut expr = self.walk_expr(expr)?;
 
-                    // If `ty` is not in heap and `expr.ty` is in heap
-                    if let Type::App(TypeCon::InHeap, _) = ty {
-                        // Do nothing
-                    } else if let Type::App(TypeCon::InHeap, types) = &expr.ty {
-                        expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
-                        expr.ty = types[0].clone();
+                    // Convert to InHeap if necessary
+                    if !dest_ty.is_in_heap() {
+                        if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+                            expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
+                            expr.ty = types[0].clone();
+                        }
                     }
 
-                    // If `ty` is not wrapped and `expr.ty` is wrapped
-                    if let Type::App(TypeCon::Wrapped, _) = ty {
-                        // Do nothing
-                    } else if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
-                        expr.ir = translate::unwrap(expr.ir, &expr.ty);
-                        expr.ty = types[0].clone();
+                    // Unwrap if necessary
+                    if !dest_ty.is_wrapped() {
+                        if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
+                            expr.ir = translate::unwrap(expr.ir, &expr.ty);
+                            expr.ty = types[0].clone();
+                        }
                     }
 
                     Some(expr)
@@ -574,6 +583,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    // Unwrap and dereference an expression if possible
     fn walk_expr_with_unwrap_and_deref(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let mut expr = self.walk_expr(expr)?;
 
@@ -590,6 +600,7 @@ impl<'a> Analyzer<'a> {
         Some(expr)
     }
 
+    // Unwrap an expression if possible
     fn walk_expr_with_unwrap(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let mut expr = self.walk_expr(expr)?;
 
@@ -627,11 +638,16 @@ impl<'a> Analyzer<'a> {
                 (IRExpr::Record(ir_exprs), Type::App(TypeCon::Tuple, types))
             }
             Expr::Struct(ty, field_exprs) => {
+                // The parser only allow a named type for `ty`
+                // The type that expended it is like App(Unique(Fun(params, STRUCT), 123), [TYARGS])
+
                 let ty = self.walk_type(ty)?;
+                // Clone the not expanded type for returning ExprInfo
                 let mut expr_ty = ty.clone();
 
                 let ty = self.expand_name(ty)?;
 
+                // Get type parameters
                 let ty_params = match ty.clone() {
                     Type::App(TypeCon::Unique(box TypeCon::Fun(params, _), _), _) => params,
                     _ => panic!(),
@@ -641,12 +657,13 @@ impl<'a> Analyzer<'a> {
                 let ty = expand_wrap(ty);
                 let ty = subst(ty, &FxHashMap::default());
 
+                // Convert struct fields to a vector of tuples of field name and type
                 let mut fields: Vec<(Id, Type)> = match ty {
-                    Type::App(TypeCon::Struct(fields), tys) => {
-                        fields.into_iter().zip(tys.into_iter()).collect()
+                    Type::App(TypeCon::Struct(fields), types) => {
+                        fields.into_iter().zip(types.into_iter()).collect()
                     }
                     ty => {
-                        error!(&expr.span.clone(), "type `{}` is not struct", ty);
+                        error!(&expr.span.clone(), "not struct type `{}`", ty);
                         return None;
                     }
                 };
@@ -654,12 +671,13 @@ impl<'a> Analyzer<'a> {
                 let mut ir_exprs = Vec::with_capacity(fields.len());
                 let mut map = FxHashMap::default();
 
-                // Push instructions to `insts` in order
+                // Walk expressions in field declaration order
                 for i in 0..fields.len() {
                     let field_expr = field_exprs
                         .iter()
                         .find(|(id, _)| id.kind == fields[i].0)
                         .map(|(_, expr)| expr);
+
                     if let Some(expr) = field_expr {
                         if let Some(expr) =
                             self.walk_expr_with_conversion(expr.clone(), &fields[i].1)
@@ -681,6 +699,7 @@ impl<'a> Analyzer<'a> {
                     }
                 }
 
+                // Substutute type arguments and types inferred for `expr_ty`
                 let args: Vec<Type> = ty_params
                     .into_iter()
                     .map(|var| map.get(&var).cloned().unwrap_or(Type::Var(var)))
