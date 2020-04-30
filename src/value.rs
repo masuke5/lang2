@@ -8,33 +8,33 @@ use std::str;
 pub struct Value(u64);
 
 impl Value {
-    #[inline]
+    #[inline(always)]
     pub fn is_heap_ptr(self) -> bool {
         (self.0 & 1) != 0
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_true(self) -> bool {
         self.0 != 0
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_false(self) -> bool {
         self.0 == 0
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn as_u64(self) -> u64 {
         self.0 >> 1
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn as_i64(self) -> i64 {
         let value: i64 = unsafe { mem::transmute(self.0) };
         value >> 1
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn as_ptr<T>(self) -> *mut T {
         let ptr = self.0;
         let ptr = ptr & !1;
@@ -46,30 +46,30 @@ impl Value {
         Self(0)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_u64(value: u64) -> Self {
         Self(value << 1)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_i64(value: i64) -> Self {
         let value = value << 1;
         unsafe { mem::transmute(value) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_ptr<T>(ptr: *const T) -> Self {
         unsafe { Self::from_raw(ptr as u64) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_ptr_to_heap<T>(ptr: *const T) -> Self {
         let value = ptr as u64;
         let value = value | 1;
         unsafe { Self::from_raw(value) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_bool(b: bool) -> Self {
         if b {
             Self::new_true()
@@ -78,33 +78,33 @@ impl Value {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_true() -> Self {
         Self(0b10)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn new_false() -> Self {
         Self(0)
     }
 
-    #[inline]
+    #[inline(always)]
     pub unsafe fn from_raw(value: u64) -> Self {
         Self(value)
     }
 
-    #[inline]
+    #[inline(always)]
     pub unsafe fn from_raw_i64(value: i64) -> Self {
         Self(mem::transmute(value))
     }
 
-    #[inline]
+    #[inline(always)]
     #[allow(dead_code)]
     pub unsafe fn raw(self) -> u64 {
         self.0
     }
 
-    #[inline]
+    #[inline(always)]
     pub unsafe fn raw_i64(self) -> i64 {
         mem::transmute(self.0)
     }

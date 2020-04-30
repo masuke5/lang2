@@ -348,7 +348,7 @@ impl VM {
         unsafe { region.as_mut().as_ptr() }
     }
 
-    #[inline]
+    #[inline(always)]
     fn call(&mut self, global_module_id: usize, func_id: usize, closure_ep: Option<*const Value>) {
         assert_ne!(self.ep, ptr::null());
 
@@ -387,7 +387,7 @@ impl VM {
         std::process::exit(10)
     }
 
-    #[inline]
+    #[inline(always)]
     fn next_inst(&mut self, bytecode: &Bytecode) -> [u8; 2] {
         let mut buf = [0u8; 2];
         bytecode.read_bytes(self.ip, &mut buf);
@@ -397,12 +397,12 @@ impl VM {
         buf
     }
 
-    #[inline]
+    #[inline(always)]
     fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8, ref_start: usize) -> i64 {
         bytecode.read_i64(ref_start + ref_id as usize * 8)
     }
 
-    #[inline]
+    #[inline(always)]
     fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8, ref_start: usize) -> u64 {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
