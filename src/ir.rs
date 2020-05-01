@@ -15,7 +15,7 @@ impl Label {
         Self(NEXT_LABEL.fetch_add(1, Ordering::AcqRel))
     }
 
-    pub fn as_usize(&self) -> usize {
+    pub fn as_usize(self) -> usize {
         self.0
     }
 }
@@ -42,7 +42,7 @@ impl SeqId {
     }
 
     #[allow(dead_code)]
-    pub fn raw(&self) -> usize {
+    pub fn raw(self) -> usize {
         self.0
     }
 }

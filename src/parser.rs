@@ -427,10 +427,7 @@ impl<'a> Parser<'a> {
             }
             Token::String(s) => {
                 self.next();
-                Some(spanned(
-                    Expr::Literal(Literal::String(s.clone())),
-                    token.span,
-                ))
+                Some(spanned(Expr::Literal(Literal::String(s)), token.span))
             }
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::True => {

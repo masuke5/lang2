@@ -102,12 +102,10 @@ impl Generator {
                 loc -= CALL_STACK_SIZE as isize;
             }
 
-            if loc >= -16 && loc <= 15 {
-                if size <= 0b111 {
-                    let arg = ((loc as i8) << 3) | size as i8;
-                    insts.push(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
-                    return true;
-                }
+            if loc >= -16 && loc <= 15 && size <= 0b111 {
+                let arg = ((loc as i8) << 3) | size as i8;
+                insts.push(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
+                return true;
             }
         }
 
@@ -176,7 +174,7 @@ impl Generator {
 
                 insts.append(self.gen_expr(expr));
 
-                let arg = ((expr.size() as u64) << 32) | *count as u64 - 1;
+                let arg = ((expr.size() as u64) << 32) | (*count as u64 - 1);
                 let index = self.builder.new_ref_u64(arg);
                 insts.push(opcode::DUPLICATE, index as u8);
             }
@@ -498,6 +496,7 @@ fn calc_at_compile_time(expr: &mut Expr) {
 }
 
 fn remove_redundant_expr(expr: &mut Expr) {
+    #[allow(clippy::single_match)]
     scan_expr(expr, |expr| match expr {
         Expr::BinOp(binop, lhs, rhs) => match (binop, lhs.as_mut(), rhs.as_mut()) {
             (BinOp::Mul, term, Expr::Int(1)) | (BinOp::Mul, Expr::Int(1), term) => {

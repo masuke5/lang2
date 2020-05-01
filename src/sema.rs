@@ -658,7 +658,7 @@ impl Analyzer {
                         fields.into_iter().zip(types.into_iter()).collect()
                     }
                     ty => {
-                        error!(&expr.span.clone(), "not struct type `{}`", ty);
+                        error!(&expr.span, "not struct type `{}`", ty);
                         return None;
                     }
                 };
@@ -748,9 +748,9 @@ impl Analyzer {
                         let types = match &ty {
                             Type::App(TypeCon::Pointer(is_mutable_), tys) => {
                                 is_mutable = *is_mutable_;
-                                expect_tuple(&tys[0], &comp_expr.span.clone())?
+                                expect_tuple(&tys[0], &comp_expr.span)?
                             }
-                            ty => expect_tuple(ty, &comp_expr.span.clone())?,
+                            ty => expect_tuple(ty, &comp_expr.span)?,
                         };
 
                         match types.get(i) {
@@ -826,13 +826,13 @@ impl Analyzer {
                         match &tys[0] {
                             Type::App(TypeCon::Array(_), tys) => (tys[0].clone(), true),
                             ty => {
-                                error!(&expr.span.clone(), "expected array but got type `{}`", ty);
+                                error!(&expr.span, "expected array but got type `{}`", ty);
                                 return None;
                             }
                         }
                     }
                     ty => {
-                        error!(&expr.span.clone(), "expected array but got type `{}`", ty);
+                        error!(&expr.span, "expected array but got type `{}`", ty);
                         return None;
                     }
                 };
@@ -863,7 +863,7 @@ impl Analyzer {
                 let entry = match self.find_var(name) {
                     Some(v) => v,
                     None => {
-                        error!(&expr.span.clone(), "undefined variable or function");
+                        error!(&expr.span, "undefined variable or function");
                         return None;
                     }
                 };
@@ -921,7 +921,7 @@ impl Analyzer {
                 match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {}
                     (lty, rty) => {
-                        error!(&expr.span.clone(), "{} && {}", lty, rty);
+                        error!(&expr.span, "{} && {}", lty, rty);
                     }
                 }
 
@@ -936,7 +936,7 @@ impl Analyzer {
                 match (&lhs.ty, &rhs.ty) {
                     (Type::Bool, Type::Bool) => {}
                     (lty, rty) => {
-                        error!(&expr.span.clone(), "{} || {}", lty, rty);
+                        error!(&expr.span, "{} || {}", lty, rty);
                     }
                 }
 
@@ -975,10 +975,7 @@ impl Analyzer {
                     (BinOp::NotEqual, Type::Null, Type::App(TypeCon::Pointer(_), _)) => Type::Bool,
                     (BinOp::NotEqual, Type::App(TypeCon::Pointer(_), _), Type::Null) => Type::Bool,
                     _ => {
-                        error!(
-                            &expr.span.clone(),
-                            "`{} {} {}`", lhs.ty, binop_symbol, rhs.ty
-                        );
+                        error!(&expr.span, "`{} {} {}`", lhs.ty, binop_symbol, rhs.ty);
                         return None;
                     }
                 };

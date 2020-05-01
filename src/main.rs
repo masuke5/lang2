@@ -1,8 +1,7 @@
 #![warn(rust_2018_idioms, unused_import_braces)]
 #![deny(trivial_casts, trivial_numeric_casts, elided_lifetimes_in_paths)]
 
-use std::fs::File;
-use std::io::Read;
+use std::fs;
 use std::path::PathBuf;
 use std::process::exit;
 
@@ -15,10 +14,7 @@ use clap::{App, Arg, ArgMatches};
 fn get_option<'a>(matches: &'a ArgMatches<'a>) -> Result<ExecuteOption, String> {
     if let Some(filepath_str) = matches.value_of("file") {
         // Read the file if a file path is specified
-        let mut file = File::open(filepath_str).map_err(|err| format!("{}", err))?;
-        let mut input = String::new();
-        file.read_to_string(&mut input)
-            .map_err(|err| format!("{}", err))?;
+        let input = fs::read_to_string(filepath_str).map_err(|err| format!("{}", err))?;
 
         let filepath_id = IdMap::new_id(&filepath_str);
         let filepath = PathBuf::from(filepath_str);
