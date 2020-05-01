@@ -42,7 +42,7 @@ impl BinOp {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(i64),
-    String(usize),
+    String(String),
     Unit,
     True,
     False,
@@ -342,7 +342,6 @@ impl Impl {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
     pub main: Block,
-    pub strings: Vec<String>,
     pub imported_modules: Vec<SymbolPath>,
     pub impls: Vec<Impl>,
 }
@@ -399,7 +398,7 @@ impl fmt::Display for AstType {
     }
 }
 
-pub fn dump_func(func: &AstFunction, strings: &[String], depth: usize) {
+pub fn dump_func(func: &AstFunction, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -430,10 +429,10 @@ pub fn dump_func(func: &AstFunction, strings: &[String], depth: usize) {
         func.return_ty.kind,
     );
 
-    dump_expr(&func.body, strings, depth + 1);
+    dump_expr(&func.body, depth + 1);
 }
 
-pub fn dump_block(block: &Block, strings: &[String], depth: usize) {
+pub fn dump_block(block: &Block, depth: usize) {
     for range in &block.imports {
         println!("import {} {}", range.kind, span_to_string(&range.span));
     }
@@ -448,27 +447,25 @@ pub fn dump_block(block: &Block, strings: &[String], depth: usize) {
     }
 
     for func in &block.functions {
-        dump_func(func, strings, depth);
+        dump_func(func, depth);
     }
 
     for stmt in &block.stmts {
-        dump_stmt(stmt, strings, depth);
+        dump_stmt(stmt, depth);
     }
 
-    dump_expr(&block.result_expr, strings, depth);
+    dump_expr(&block.result_expr, depth);
 }
 
-pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
+pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
     match &expr.kind {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
-        Expr::Literal(Literal::String(i)) => println!(
-            "\"{}\" {}",
-            escape_string(&strings[*i]),
-            span_to_string(&expr.span)
-        ),
+        Expr::Literal(Literal::String(s)) => {
+            println!("\"{}\" {}", escape_string(s), span_to_string(&expr.span))
+        }
         Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
@@ -476,7 +473,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
         Expr::Tuple(exprs) => {
             println!("tuple {}", span_to_string(&expr.span));
             for expr in exprs {
-                dump_expr(&expr, strings, depth + 1);
+                dump_expr(&expr, depth + 1);
             }
         }
         Expr::Struct(ty, fields) => {
@@ -484,12 +481,12 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
             for (name, expr) in fields {
                 print!("{}", "  ".repeat(depth + 1));
                 println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
-                dump_expr(expr, strings, depth + 2);
+                dump_expr(expr, depth + 2);
             }
         }
         Expr::Array(init_expr, size) => {
             println!("[{}] {}", size, span_to_string(&expr.span));
-            dump_expr(init_expr, strings, depth + 1);
+            dump_expr(init_expr, depth + 1);
         }
         Expr::Field(expr, field) => {
             match field {
@@ -497,12 +494,12 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
                 Field::Id(id) => println!(".{} {}", IdMap::name(*id), span_to_string(&expr.span)),
             };
 
-            dump_expr(&expr, strings, depth + 1);
+            dump_expr(&expr, depth + 1);
         }
         Expr::Subscript(expr, subscript) => {
             println!("subscript {}", span_to_string(&expr.span));
-            dump_expr(&expr, strings, depth + 1);
-            dump_expr(&subscript, strings, depth + 1);
+            dump_expr(&expr, depth + 1);
+            dump_expr(&subscript, depth + 1);
         }
         Expr::Variable(name, is_escaped) => {
             println!(
@@ -514,14 +511,14 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
         }
         Expr::BinOp(binop, lhs, rhs) => {
             println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
-            dump_expr(&lhs, strings, depth + 1);
-            dump_expr(&rhs, strings, depth + 1);
+            dump_expr(&lhs, depth + 1);
+            dump_expr(&rhs, depth + 1);
         }
         Expr::Call(func_expr, arg) => {
             println!("call {}", span_to_string(&expr.span));
 
-            dump_expr(func_expr, strings, depth + 1);
-            dump_expr(&arg, strings, depth + 1);
+            dump_expr(func_expr, depth + 1);
+            dump_expr(&arg, depth + 1);
         }
         Expr::Path(path) => {
             println!("path {} {}", path, span_to_string(&expr.span));
@@ -532,35 +529,35 @@ pub fn dump_expr(expr: &Spanned<Expr>, strings: &[String], depth: usize) {
                 format_bool(*is_mutable, "mut"),
                 span_to_string(&expr.span)
             );
-            dump_expr(&expr_, strings, depth + 1);
+            dump_expr(&expr_, depth + 1);
         }
         Expr::Dereference(expr_) => {
             println!("* {}", span_to_string(&expr.span));
-            dump_expr(&expr_, strings, depth + 1);
+            dump_expr(&expr_, depth + 1);
         }
         Expr::Negative(expr_) => {
             println!("neg {}", span_to_string(&expr.span));
-            dump_expr(&expr_, strings, depth + 1);
+            dump_expr(&expr_, depth + 1);
         }
         Expr::Block(block) => {
-            dump_block(block, strings, depth);
+            dump_block(block, depth);
         }
         Expr::If(cond, body, else_expr) => {
             println!("if {}", span_to_string(&expr.span));
-            dump_expr(&cond, strings, depth + 1);
-            dump_expr(&body, strings, depth + 1);
+            dump_expr(&cond, depth + 1);
+            dump_expr(&body, depth + 1);
             if let Some(else_stmt) = else_expr {
-                dump_expr(&else_stmt, strings, depth + 1);
+                dump_expr(&else_stmt, depth + 1);
             }
         }
         Expr::App(expr, tyargs) => {
             println!("app <{}>", format_iter(tyargs.iter().map(|a| &a.kind)));
-            dump_expr(expr, strings, depth + 1);
+            dump_expr(expr, depth + 1);
         }
     }
 }
 
-pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
+pub fn dump_stmt(stmt: &Spanned<Stmt>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -578,27 +575,27 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, strings: &[String], depth: usize) {
             }
 
             println!(" =");
-            dump_expr(&expr, strings, depth + 1);
+            dump_expr(&expr, depth + 1);
         }
         Stmt::Assign(lhs, rhs) => {
             println!(":= {}", span_to_string(&stmt.span));
-            dump_expr(&lhs, strings, depth + 1);
-            dump_expr(&rhs, strings, depth + 1);
+            dump_expr(&lhs, depth + 1);
+            dump_expr(&rhs, depth + 1);
         }
         Stmt::Expr(expr) => {
             print!("\r");
-            dump_expr(&expr, strings, depth);
+            dump_expr(&expr, depth);
         }
         Stmt::Return(expr) => {
             println!("return {}", span_to_string(&stmt.span));
             if let Some(expr) = expr {
-                dump_expr(&expr, strings, depth + 1);
+                dump_expr(&expr, depth + 1);
             }
         }
         Stmt::While(cond, body) => {
             println!("while {}", span_to_string(&stmt.span));
-            dump_expr(&cond, strings, depth + 1);
-            dump_stmt(&body, strings, depth + 1);
+            dump_expr(&cond, depth + 1);
+            dump_stmt(&body, depth + 1);
         }
     }
 }
@@ -614,11 +611,11 @@ pub fn dump_program(program: &Program, depth: usize) {
     for impl_ in &program.impls {
         println!("impl {}", IdMap::name(impl_.target.kind));
         for func in &impl_.functions {
-            dump_func(func, &program.strings, 1);
+            dump_func(func, 1);
         }
     }
 
-    dump_block(&program.main, &program.strings, 0);
+    dump_block(&program.main, 0);
 }
 
 pub fn dump_ast(program: &Program) {

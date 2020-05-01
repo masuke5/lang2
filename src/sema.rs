@@ -176,7 +176,6 @@ pub struct Analyzer<'a> {
     current_func: Id,
     current_func_index: usize,
     ir_funcs: Vec<(Id, IRFunction)>,
-    strings: Vec<String>,
 
     _phantom: &'a std::marker::PhantomData<Self>,
 }
@@ -195,7 +194,6 @@ impl<'a> Analyzer<'a> {
             current_func_index: 0,
             current_func: *reserved_id::MAIN_FUNC,
             ir_funcs: Vec::new(),
-            strings: Vec::new(),
             next_temp_num: 0,
             var_level: 0,
             _phantom: &std::marker::PhantomData,
@@ -616,9 +614,9 @@ impl<'a> Analyzer<'a> {
     fn walk_expr(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (ir, ty) = match expr.kind {
             Expr::Literal(Literal::Number(n)) => (translate::literal_int(n), Type::Int),
-            Expr::Literal(Literal::String(i)) => {
+            Expr::Literal(Literal::String(s)) => {
                 let ty = Type::App(TypeCon::Pointer(false), vec![Type::String]);
-                (translate::literal_str(self.strings[i].clone()), ty)
+                (translate::literal_str(s), ty)
             }
             Expr::Literal(Literal::Unit) => (IRExpr::Unit, Type::Unit),
             Expr::Literal(Literal::True) => (translate::literal_true(), Type::Bool),
@@ -2003,9 +2001,6 @@ impl<'a> Analyzer<'a> {
 
         self.push_scope();
         self.push_type_scope();
-
-        // TODO: This is temporary
-        self.strings = program.strings;
 
         let range = ImportRange::Scope(*reserved_id::STD_MODULE, Box::new(ImportRange::All));
         self.insert_func_headers_by_range(&Spanned {

@@ -101,7 +101,6 @@ pub struct Parser<'a> {
     pos: usize,
 
     main_stmts: Vec<Spanned<Stmt>>,
-    strings: Vec<String>,
     module_buffers: FxHashMap<SymbolPath, Program>,
     imported_modules: FxHashSet<SymbolPath>,
     loaded_modules: FxHashSet<SymbolPath>,
@@ -123,7 +122,6 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             main_stmts: Vec::new(),
-            strings: Vec::new(),
             module_buffers: FxHashMap::default(),
             imported_modules: FxHashSet::default(),
             loaded_modules,
@@ -429,9 +427,8 @@ impl<'a> Parser<'a> {
             }
             Token::String(s) => {
                 self.next();
-                self.strings.push(s);
                 Some(spanned(
-                    Expr::Literal(Literal::String(self.strings.len() - 1)),
+                    Expr::Literal(Literal::String(s.clone())),
                     token.span,
                 ))
             }
@@ -1515,7 +1512,6 @@ impl<'a> Parser<'a> {
             module_path.clone(),
             Program {
                 main: block,
-                strings: self.strings,
                 imported_modules: self.imported_modules.into_iter().collect(),
                 impls: self.impls,
             },
