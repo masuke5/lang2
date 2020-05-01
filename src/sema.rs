@@ -1965,9 +1965,10 @@ impl<'a> Analyzer<'a> {
 
         if let Err(ids) = self.tycons.resolve() {
             for id in ids {
-                // TODO:
-                eprintln!(
-                    "error: The type `{}` could not be calculated",
+                let span = self.tycon_spans.get(&id).unwrap();
+                error!(
+                    span,
+                    "The type `{}` could not be calculated",
                     IdMap::name(id)
                 )
             }
