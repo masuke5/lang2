@@ -175,11 +175,8 @@ pub fn variable(loc: &RelativeVariableLoc) -> Expr {
     Expr::LoadRef(loc.as_ir_loc())
 }
 
-pub fn func_pos(module_id: Option<u16>, func_id: u16) -> Expr {
-    Expr::Record(vec![
-        Expr::FuncPos(module_id.map(|m| m as usize), func_id as usize),
-        Expr::EP,
-    ])
+pub fn func_pos(module_id: Option<usize>, func_id: usize) -> Expr {
+    Expr::Record(vec![Expr::FuncPos(module_id, func_id), Expr::EP])
 }
 
 //   lhs

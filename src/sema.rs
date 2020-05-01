@@ -118,14 +118,14 @@ enum Entry {
 
 #[derive(Debug, Clone)]
 pub struct FunctionHeaderWithId {
-    module_id: Option<u16>,
+    module_id: Option<usize>,
     original_name: Option<Id>,
-    func_id: u16,
+    func_id: usize,
     header: FunctionHeader,
 }
 
 impl FunctionHeaderWithId {
-    fn new(module_id: u16, func_id: u16, header: FunctionHeader) -> Self {
+    fn new(module_id: usize, func_id: usize, header: FunctionHeader) -> Self {
         Self {
             module_id: Some(module_id),
             original_name: None,
@@ -135,8 +135,8 @@ impl FunctionHeaderWithId {
     }
 
     fn new_renamed(
-        module_id: u16,
-        func_id: u16,
+        module_id: usize,
+        func_id: usize,
         header: FunctionHeader,
         original_name: Id,
     ) -> Self {
@@ -148,7 +148,7 @@ impl FunctionHeaderWithId {
         }
     }
 
-    fn new_self(header: FunctionHeader, func_id: u16) -> Self {
+    fn new_self(header: FunctionHeader, func_id: usize) -> Self {
         Self {
             module_id: None,
             original_name: None,
@@ -161,7 +161,7 @@ impl FunctionHeaderWithId {
 #[derive(Debug)]
 pub struct Analyzer<'a> {
     visible_modules: FxHashSet<SymbolPath>,
-    module_headers: FxHashMap<SymbolPath, (u16, ModuleHeader)>,
+    module_headers: FxHashMap<SymbolPath, (usize, ModuleHeader)>,
     next_module_id: usize,
 
     types: HashMapWithScope<Id, Type>,
@@ -1301,7 +1301,7 @@ impl<'a> Analyzer<'a> {
         path: &ImportRangePath,
         mut insert: F,
     ) where
-        F: FnMut(u16, Id, Id),
+        F: FnMut(usize, Id, Id),
     {
         match path {
             ImportRangePath::All(spath) => {
@@ -1373,7 +1373,7 @@ impl<'a> Analyzer<'a> {
 
     fn generate_imported_entry(
         &mut self,
-        module_id: u16,
+        module_id: usize,
         original_name: Id,
         renamed_name: Id,
         span: &Span,
@@ -1465,7 +1465,7 @@ impl<'a> Analyzer<'a> {
             }
 
             if let Some((header, func_id)) = self.generate_function_header(&func) {
-                let fh = FunctionHeaderWithId::new_self(header, func_id as u16);
+                let fh = FunctionHeaderWithId::new_self(header, func_id);
                 self.variables.insert(func.name.kind, Entry::Function(fh));
             }
         }
@@ -1802,9 +1802,7 @@ impl<'a> Analyzer<'a> {
 
         for func in &implementation.functions {
             if let Some((header, func_id)) = self.generate_function_header(&func) {
-                new_impl
-                    .functions
-                    .insert(func.name.kind, (func_id as u16, header));
+                new_impl.functions.insert(func.name.kind, (func_id, header));
             }
         }
 
@@ -1847,7 +1845,7 @@ impl<'a> Analyzer<'a> {
         for path in imported_modules {
             let module_header = module_headers[&path].clone();
 
-            let module_id = self.next_module_id as u16;
+            let module_id = self.next_module_id;
             self.next_module_id += 1;
             headers.insert(path.clone(), (module_id, module_header));
         }
@@ -1989,7 +1987,7 @@ impl<'a> Analyzer<'a> {
             if let Some((header, func_id)) = self.generate_function_header(&func) {
                 module_header
                     .functions
-                    .insert(func.name.kind, (func_id as u16, header));
+                    .insert(func.name.kind, (func_id, header));
             }
         }
 

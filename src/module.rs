@@ -35,7 +35,7 @@ pub struct FunctionHeader {
 
 #[derive(Debug, Clone)]
 pub struct Implementation {
-    pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
+    pub functions: FxHashMap<Id, (usize, FunctionHeader)>,
 }
 
 impl Implementation {
@@ -49,7 +49,7 @@ impl Implementation {
 #[derive(Debug, Clone)]
 pub struct ModuleHeader {
     pub path: SymbolPath,
-    pub functions: FxHashMap<Id, (u16, FunctionHeader)>,
+    pub functions: FxHashMap<Id, (usize, FunctionHeader)>,
     pub types: FxHashMap<Id, Option<TypeCon>>,
     pub impls: FxHashMap<Id, Implementation>,
 }
@@ -107,7 +107,7 @@ impl ModuleContainer {
 #[derive(Debug)]
 pub struct ModuleBuilder {
     func_bodies: Vec<(usize, NativeFunctionBody)>,
-    func_headers: FxHashMap<Id, (u16, FunctionHeader)>,
+    func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
 }
 
 impl ModuleBuilder {
@@ -146,7 +146,7 @@ impl ModuleBuilder {
         self.func_headers.insert(
             name,
             (
-                self.func_headers.len() as u16,
+                self.func_headers.len(),
                 FunctionHeader {
                     params,
                     return_ty,
