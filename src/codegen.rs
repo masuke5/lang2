@@ -464,6 +464,22 @@ fn scan_expr(expr: &mut Expr, mut func: impl FnMut(&mut Expr)) {
     }
 }
 
+fn scan_expr_in_stmt(stmt: &mut Stmt, func: impl FnMut(&mut Expr) + Clone) {
+    match stmt {
+        Stmt::Discard(expr)
+        | Stmt::Store(_, expr)
+        | Stmt::Return(Some(expr))
+        | Stmt::JumpIfFalse(_, expr)
+        | Stmt::JumpIfTrue(_, expr)
+        | Stmt::Push(expr) => scan_expr(expr, func),
+        Stmt::StoreFromRef(expr1, expr2) => {
+            scan_expr(expr1, func.clone());
+            scan_expr(expr2, func);
+        }
+        _ => {}
+    }
+}
+
 fn calc_at_compile_time(expr: &mut Expr) {
     scan_expr(expr, |expr| {
         if let Expr::Seq(..) = expr {
@@ -705,72 +721,24 @@ pub fn codegen(mut module: Module, option: &OptimizeOption) -> Bytecode {
 
         // Remove redundant copies
         for stmt in &mut stmts {
-            match stmt {
-                Stmt::Discard(expr)
-                | Stmt::Store(_, expr)
-                | Stmt::Return(Some(expr))
-                | Stmt::JumpIfFalse(_, expr)
-                | Stmt::JumpIfTrue(_, expr)
-                | Stmt::Push(expr) => remove_redundant_copy(expr),
-                Stmt::StoreFromRef(expr1, expr2) => {
-                    remove_redundant_copy(expr1);
-                    remove_redundant_copy(expr2);
-                }
-                _ => {}
-            }
+            scan_expr_in_stmt(stmt, remove_redundant_copy);
         }
 
         // Calculation at comple time
         if option.calc_at_compile_time {
             for stmt in &mut stmts {
-                match stmt {
-                    Stmt::Discard(expr)
-                    | Stmt::Store(_, expr)
-                    | Stmt::Return(Some(expr))
-                    | Stmt::JumpIfFalse(_, expr)
-                    | Stmt::JumpIfTrue(_, expr)
-                    | Stmt::Push(expr) => calc_at_compile_time(expr),
-                    Stmt::StoreFromRef(expr1, expr2) => {
-                        calc_at_compile_time(expr1);
-                        calc_at_compile_time(expr2);
-                    }
-                    _ => {}
-                }
+                scan_expr_in_stmt(stmt, calc_at_compile_time);
             }
         }
 
         // Remove remove redundant expressions
         for stmt in &mut stmts {
-            match stmt {
-                Stmt::Discard(expr)
-                | Stmt::Store(_, expr)
-                | Stmt::Return(Some(expr))
-                | Stmt::JumpIfFalse(_, expr)
-                | Stmt::JumpIfTrue(_, expr)
-                | Stmt::Push(expr) => remove_redundant_expr(expr),
-                Stmt::StoreFromRef(expr1, expr2) => {
-                    remove_redundant_expr(expr1);
-                    remove_redundant_expr(expr2);
-                }
-                _ => {}
-            }
+            scan_expr_in_stmt(stmt, remove_redundant_expr);
         }
 
         // Remove redundant copies
         for stmt in &mut stmts {
-            match stmt {
-                Stmt::Discard(expr)
-                | Stmt::Store(_, expr)
-                | Stmt::Return(Some(expr))
-                | Stmt::JumpIfFalse(_, expr)
-                | Stmt::JumpIfTrue(_, expr)
-                | Stmt::Push(expr) => remove_redundant_copy(expr),
-                Stmt::StoreFromRef(expr1, expr2) => {
-                    remove_redundant_copy(expr1);
-                    remove_redundant_copy(expr2);
-                }
-                _ => {}
-            }
+            scan_expr_in_stmt(stmt, remove_redundant_copy);
         }
 
         // TODO: More optimization
