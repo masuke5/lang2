@@ -266,6 +266,17 @@ pub struct Function {
     pub body: Expr,
 }
 
+impl Function {
+    pub fn new() -> Self {
+        Self {
+            stack_size: 0,
+            stack_in_heap_size: 0,
+            param_size: 0,
+            body: Expr::Unit,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub functions: Vec<(Id, Function)>,

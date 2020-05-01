@@ -176,6 +176,7 @@ pub struct Analyzer {
     current_func: Id,
     current_func_index: usize,
     ir_funcs: Vec<(Id, IRFunction)>,
+    ir_func_ids: HashMapWithScope<Id, usize>,
 }
 
 impl Analyzer {
@@ -192,6 +193,7 @@ impl Analyzer {
             current_func_index: 0,
             current_func: *reserved_id::MAIN_FUNC,
             ir_funcs: Vec::new(),
+            ir_func_ids: HashMapWithScope::new(),
             next_temp_num: 0,
             var_level: 0,
         };
@@ -204,11 +206,13 @@ impl Analyzer {
     #[inline]
     fn push_scope(&mut self) {
         self.variables.push_scope();
+        self.ir_func_ids.push_scope();
     }
 
     #[inline]
     fn pop_scope(&mut self) {
         self.variables.pop_scope();
+        self.ir_func_ids.pop_scope();
     }
 
     #[inline]
@@ -1458,7 +1462,8 @@ impl Analyzer {
                 continue;
             }
 
-            if let Some((header, func_id)) = self.generate_function_header(&func) {
+            if let Some(header) = self.generate_function_header(&func) {
+                let func_id = self.new_empty_ir_func(func.name.kind);
                 let fh = FunctionHeaderWithId::new_self(header, func_id);
                 self.variables.insert(func.name.kind, Entry::Function(fh));
             }
@@ -1660,7 +1665,16 @@ impl Analyzer {
         Some((param_size, stack_in_heap_size, stmts))
     }
 
-    fn generate_function_header(&mut self, func: &AstFunction) -> Option<(FunctionHeader, usize)> {
+    fn new_empty_ir_func(&mut self, name: Id) -> usize {
+        let id = self.ir_funcs.len();
+
+        self.ir_func_ids.insert(name, id);
+        self.ir_funcs.push((name, IRFunction::new()));
+
+        id
+    }
+
+    fn generate_function_header(&mut self, func: &AstFunction) -> Option<FunctionHeader> {
         self.push_type_scope();
 
         let mut vars = Vec::new();
@@ -1702,24 +1716,12 @@ impl Analyzer {
             ty_params: vars,
         };
 
-        let ir_func = IRFunction {
-            stack_in_heap_size: 0,
-            stack_size: 0,
-            param_size: 0,
-            body: IRExpr::Unit,
-        };
-        self.ir_funcs.push((func.name.kind, ir_func));
-
-        Some((header, self.ir_funcs.len() - 1))
+        Some(header)
     }
 
     fn walk_function(&mut self, func: AstFunction, header: &FunctionHeader) {
         let func_name = func.name.kind;
-        let ir_func_index = self
-            .ir_funcs
-            .iter_mut()
-            .position(|(name, _)| *name == func_name)
-            .unwrap();
+        let ir_func_index = *self.ir_func_ids.get(&func_name).unwrap();
 
         self.current_func = func.name.kind;
         self.current_func_index = ir_func_index;
@@ -1795,7 +1797,8 @@ impl Analyzer {
         let mut new_impl = Implementation::new();
 
         for func in &implementation.functions {
-            if let Some((header, func_id)) = self.generate_function_header(&func) {
+            if let Some(header) = self.generate_function_header(&func) {
+                let func_id = self.new_empty_ir_func(func.name.kind);
                 new_impl.functions.insert(func.name.kind, (func_id, header));
             }
         }
@@ -1978,7 +1981,8 @@ impl Analyzer {
         ));
 
         for func in &program.main.functions {
-            if let Some((header, func_id)) = self.generate_function_header(&func) {
+            if let Some(header) = self.generate_function_header(&func) {
+                let func_id = self.new_empty_ir_func(func.name.kind);
                 module_header
                     .functions
                     .insert(func.name.kind, (func_id, header));
