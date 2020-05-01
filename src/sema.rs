@@ -159,7 +159,7 @@ impl FunctionHeaderWithId {
 }
 
 #[derive(Debug)]
-pub struct Analyzer<'a> {
+pub struct Analyzer {
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (usize, ModuleHeader)>,
     next_module_id: usize,
@@ -176,11 +176,9 @@ pub struct Analyzer<'a> {
     current_func: Id,
     current_func_index: usize,
     ir_funcs: Vec<(Id, IRFunction)>,
-
-    _phantom: &'a std::marker::PhantomData<Self>,
 }
 
-impl<'a> Analyzer<'a> {
+impl Analyzer {
     pub fn new() -> Self {
         let mut slf = Self {
             visible_modules: FxHashSet::default(),
@@ -196,7 +194,6 @@ impl<'a> Analyzer<'a> {
             ir_funcs: Vec::new(),
             next_temp_num: 0,
             var_level: 0,
-            _phantom: &std::marker::PhantomData,
         };
         slf.push_type_scope();
         slf.push_scope();
@@ -2049,19 +2046,7 @@ pub fn do_semantics_analysis(
     module_buffers: FxHashMap<SymbolPath, Program>,
     native_modules: &ModuleContainer,
 ) -> FxHashMap<String, ModuleBody> {
-    struct Module<'a> {
-        analyzer: Analyzer<'a>,
-    }
-
-    impl<'a> Module<'a> {
-        fn new() -> Self {
-            Self {
-                analyzer: Analyzer::new(),
-            }
-        }
-    }
-
-    let mut modules: FxHashMap<SymbolPath, Module<'_>> = FxHashMap::default();
+    let mut analyzers: FxHashMap<SymbolPath, Analyzer> = FxHashMap::default();
     let mut module_headers: FxHashMap<SymbolPath, ModuleHeader> = FxHashMap::default();
     let mut bodies: FxHashMap<String, ModuleBody> = FxHashMap::default();
 
@@ -2069,14 +2054,12 @@ pub fn do_semantics_analysis(
 
     // Initialize and insert type headers
     for (path, program) in &module_buffers {
-        modules.insert(path.clone(), Module::new());
+        analyzers.insert(path.clone(), Analyzer::new());
         module_headers.insert(path.clone(), ModuleHeader::new(path));
 
-        let module = modules.get_mut(path).unwrap();
+        let analyzer = analyzers.get_mut(path).unwrap();
         let module_header = module_headers.get_mut(path).unwrap();
-        module
-            .analyzer
-            .insert_public_type_headers(program, module_header);
+        analyzer.insert_public_type_headers(program, module_header);
 
         // Native modules
         for path in &program.imported_modules {
@@ -2089,37 +2072,32 @@ pub fn do_semantics_analysis(
 
     // Walk types
     for (path, program) in &module_buffers {
-        let module = modules.get_mut(path).unwrap();
+        let analyzer = analyzers.get_mut(path).unwrap();
 
         // Load modules
-        module
-            .analyzer
-            .load_modules(&program.imported_modules, &module_headers);
+        analyzer.load_modules(&program.imported_modules, &module_headers);
 
         let module_header = module_headers.get_mut(path).unwrap();
-        module.analyzer.walk_public_type(program, module_header);
+        analyzer.walk_public_type(program, module_header);
     }
 
     for (path, program) in &module_buffers {
-        let module = modules.get_mut(path).unwrap();
-        module.analyzer.update_modules(&module_headers);
-        module.analyzer.resolve_type(program);
+        let analyzer = analyzers.get_mut(path).unwrap();
+        analyzer.update_modules(&module_headers);
+        analyzer.resolve_type(program);
     }
 
     // Insert function headers
     for (path, program) in &module_buffers {
-        let module = modules.get_mut(path).unwrap();
+        let analyzer = analyzers.get_mut(path).unwrap();
         let module_header = module_headers.get_mut(path).unwrap();
 
         // Insert function headers
-        module
-            .analyzer
-            .insert_public_functions(program, module_header);
+        analyzer.insert_public_functions(program, module_header);
     }
 
     for (name, program) in module_buffers {
-        let Module { mut analyzer } = modules.remove(&name).unwrap();
-
+        let mut analyzer = analyzers.remove(&name).unwrap();
         analyzer.update_modules(&module_headers);
 
         let bytecode = analyzer.analyze(program);
