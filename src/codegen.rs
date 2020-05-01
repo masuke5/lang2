@@ -51,11 +51,12 @@ impl StringList {
 fn try_convert_to_int(expr: &Expr) -> Option<i64> {
     match expr {
         Expr::Int(n) => Some(*n),
-        Expr::BinOp(binop, lhs, rhs) => match binop {
-            BinOp::Add => Some(try_convert_to_int(lhs)? + try_convert_to_int(rhs)?),
-            BinOp::Sub => Some(try_convert_to_int(lhs)? - try_convert_to_int(rhs)?),
-            BinOp::Mul => Some(try_convert_to_int(lhs)? * try_convert_to_int(rhs)?),
-            BinOp::Div => Some(try_convert_to_int(lhs)? / try_convert_to_int(rhs)?),
+        Expr::BinOp(binop, lhs, rhs) => match (binop, lhs.as_ref(), rhs.as_ref()) {
+            (BinOp::Mul, _, Expr::Int(0)) | (BinOp::Mul, Expr::Int(0), _) => Some(0),
+            (BinOp::Add, _, _) => Some(try_convert_to_int(lhs)? + try_convert_to_int(rhs)?),
+            (BinOp::Sub, _, _) => Some(try_convert_to_int(lhs)? - try_convert_to_int(rhs)?),
+            (BinOp::Mul, _, _) => Some(try_convert_to_int(lhs)? * try_convert_to_int(rhs)?),
+            (BinOp::Div, _, _) => Some(try_convert_to_int(lhs)? / try_convert_to_int(rhs)?),
             _ => None,
         },
         Expr::Negative(expr) => Some(-try_convert_to_int(expr)?),
@@ -480,6 +481,21 @@ fn calc_at_compile_time(expr: &mut Expr) {
     });
 }
 
+fn remove_redundant_expr(expr: &mut Expr) {
+    scan_expr(expr, |expr| match expr {
+        Expr::BinOp(binop, lhs, rhs) => match (binop, lhs.as_mut(), rhs.as_mut()) {
+            (BinOp::Mul, term, Expr::Int(1)) | (BinOp::Mul, Expr::Int(1), term) => {
+                *expr = mem::replace(term, Expr::Unit)
+            }
+            (BinOp::Add, term, Expr::Int(0)) | (BinOp::Add, Expr::Int(0), term) => {
+                *expr = mem::replace(term, Expr::Unit)
+            }
+            _ => {}
+        },
+        _ => {}
+    });
+}
+
 fn remove_redundant_copy(expr: &mut Expr) {
     scan_expr(expr, |expr| {
         if let Expr::Seq(..) = expr {
@@ -658,13 +674,12 @@ fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
         new_stmts
     }
 
-    // TODO: 効率的な実装
     let mut stmts = stmts;
     loop {
-        let prev_stmts = stmts.clone();
+        let prev_len = stmts.len();
         stmts = remove_seq(stmts);
 
-        if prev_stmts == stmts {
+        if prev_len == stmts.len() {
             break;
         }
     }
@@ -721,6 +736,40 @@ pub fn codegen(mut module: Module, option: &OptimizeOption) -> Bytecode {
                     }
                     _ => {}
                 }
+            }
+        }
+
+        // Remove remove redundant expressions
+        for stmt in &mut stmts {
+            match stmt {
+                Stmt::Discard(expr)
+                | Stmt::Store(_, expr)
+                | Stmt::Return(Some(expr))
+                | Stmt::JumpIfFalse(_, expr)
+                | Stmt::JumpIfTrue(_, expr)
+                | Stmt::Push(expr) => remove_redundant_expr(expr),
+                Stmt::StoreFromRef(expr1, expr2) => {
+                    remove_redundant_expr(expr1);
+                    remove_redundant_expr(expr2);
+                }
+                _ => {}
+            }
+        }
+
+        // Remove redundant copies
+        for stmt in &mut stmts {
+            match stmt {
+                Stmt::Discard(expr)
+                | Stmt::Store(_, expr)
+                | Stmt::Return(Some(expr))
+                | Stmt::JumpIfFalse(_, expr)
+                | Stmt::JumpIfTrue(_, expr)
+                | Stmt::Push(expr) => remove_redundant_copy(expr),
+                Stmt::StoreFromRef(expr1, expr2) => {
+                    remove_redundant_copy(expr1);
+                    remove_redundant_copy(expr2);
+                }
+                _ => {}
             }
         }
 
