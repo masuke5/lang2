@@ -353,7 +353,13 @@ pub fn while_stmt(cond: ExprInfo, body: CodeBuf) -> CodeBuf {
 }
 
 pub fn bind_stmt(loc: &RelativeVariableLoc, expr: ExprInfo) -> CodeBuf {
-    let mut expr_ir = copy(expr.ir, &expr.ty);
+    let size = if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+        type_size_nocheck(&types[0])
+    } else {
+        type_size_nocheck(&expr.ty)
+    };
+
+    let mut expr_ir = Expr::Copy(box expr.ir, size);
     if let Type::App(TypeCon::InHeap, _) = &expr.ty {
         expr_ir = Expr::Alloc(box expr_ir);
     }

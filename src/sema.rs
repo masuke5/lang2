@@ -340,22 +340,24 @@ impl Analyzer {
     }
 
     fn find_external_entry(&self, path: &SymbolPath) -> Option<ImportedEntry> {
-        // header, code id, module id
         assert!(!path.is_empty());
 
-        // m1::m2::Type::func
-        // m1::func
+        // TODO: Return ImportedEntry::Module if `path` is a module
+        // if self.module_headers.contains_key(path) {
+        // }
 
-        let module_path = path.parent().unwrap();
+        let module_or_struct_path = path.parent().unwrap();
         let entry_name = path.tail().unwrap().id;
 
-        if module_path.is_empty() {
+        if module_or_struct_path.is_empty() {
             return None;
         }
 
-        match self.module_headers.get(&module_path) {
+        match self.module_headers.get(&module_or_struct_path) {
             // Find a function or a type of `entry_id`
             Some((module_id, module)) => {
+                let module_path = module_or_struct_path;
+
                 // Not imported modules are invisible
                 if !self.visible_modules.contains(&module_path) {
                     return None;
@@ -373,11 +375,12 @@ impl Analyzer {
             }
             // `path` may be a method
             None => {
-                let type_name = module_path.tail()?.id;
-                let module_path = module_path.parent()?;
+                let type_name = module_or_struct_path.tail()?.id;
+                let module_path = module_or_struct_path.parent()?;
                 let func_name = entry_name;
 
                 if module_path.is_empty() {
+                    // Search self.impls if `type_name` is a self implementation
                     let (func_id, header) =
                         self.impls.get(&type_name)?.functions.get(&func_name)?;
                     let header = FunctionHeaderWithId::new_self(header.clone(), *func_id);
@@ -1077,7 +1080,7 @@ impl Analyzer {
             Expr::Block(block) => {
                 self.push_scope();
 
-                let (ty, ir) = self.walk_block(block)?;
+                let (ty, ir) = self.walk_block(block, None)?;
 
                 self.pop_scope();
 
@@ -1470,16 +1473,42 @@ impl Analyzer {
         }
     }
 
-    fn walk_block(&mut self, block: Block) -> Option<(Type, IRExpr)> {
+    #[inline(always)]
+    fn walk_block(&mut self, block: Block, impls: Option<Vec<Impl>>) -> Option<(Type, IRExpr)> {
+        // 1. Import extern modules
         self.insert_extern_module_headers(&block.imports);
-        self.insert_type_headers_in_stmts(&block.types);
-        self.walk_type_def_in_stmts(block.types);
 
+        // 2. Insert type headers
+        self.insert_type_headers_in_stmts(&block.types);
+
+        // 3. Walk types
+        self.walk_type_def_in_stmts(block.types);
         let _ = self.tycons.resolve();
 
+        // 4. Insert implementation headers
+        if let Some(impls) = &impls {
+            for implementation in impls {
+                self.insert_impl_headers(implementation);
+            }
+        }
+
+        // 5. Walk implementations
+        if let Some(impls) = impls {
+            let current_func = self.current_func;
+            let current_func_index = self.current_func_index;
+
+            for implementation in impls {
+                self.walk_impl(implementation);
+            }
+
+            self.current_func = current_func;
+            self.current_func_index = current_func_index;
+        }
+
+        // 6. Insert function headers in the statements
         self.insert_func_headers_in_stmts(&block.functions);
 
-        // Walk the statements
+        // 7. Walk statements
         let mut stmts: Vec<IRStmt> = Vec::new();
         for stmt in block.stmts {
             let stmt_irs = self.walk_stmt(stmt);
@@ -1492,7 +1521,7 @@ impl Analyzer {
 
         let result_expr = self.walk_expr(*block.result_expr);
 
-        // Walk the function bodies in the statements
+        // 8. Walk function bodies
         for func in block.functions {
             if let Some(Entry::Function(header)) = self.variables.get(&func.name.kind) {
                 let header = header.header.clone();
@@ -1687,10 +1716,7 @@ impl Analyzer {
         let mut param_types = Vec::new();
         for AstParam { ty, .. } in &func.params {
             let ty_span = ty.span.clone();
-            let mut ty = match self.walk_type(ty.clone()) {
-                Some(ty) => ty,
-                None => return None,
-            };
+            let mut ty = self.walk_type(ty.clone())?;
             wrap_typevar(&mut ty);
 
             Self::type_size_err(ty_span, &ty);
@@ -1698,10 +1724,7 @@ impl Analyzer {
         }
 
         let return_ty_span = func.return_ty.span.clone();
-        let mut return_ty = match self.walk_type(func.return_ty.clone()) {
-            Some(ty) => ty,
-            None => return None,
-        };
+        let mut return_ty = self.walk_type(func.return_ty.clone())?;
 
         wrap_typevar(&mut return_ty);
 
@@ -1799,7 +1822,10 @@ impl Analyzer {
         for func in &implementation.functions {
             if let Some(header) = self.generate_function_header(&func) {
                 let func_id = self.new_empty_ir_func(func.name.kind);
-                new_impl.functions.insert(func.name.kind, (func_id, header));
+                new_impl.functions.insert(
+                    implementation.original_names[&func.name.kind],
+                    (func_id, header),
+                );
             }
         }
 
@@ -1811,8 +1837,6 @@ impl Analyzer {
             Some(imp) => imp,
             None => return,
         };
-
-        assert_eq!(impl_header.functions.len(), implementation.functions.len());
 
         let iter = impl_header
             .functions
@@ -1999,17 +2023,15 @@ impl Analyzer {
         self.push_scope();
         self.push_type_scope();
 
+        // Import module "std" automatically
         let range = ImportRange::Scope(*reserved_id::STD_MODULE, Box::new(ImportRange::All));
         self.insert_func_headers_by_range(&Spanned {
             kind: range,
             span: program.main.result_expr.span.clone(),
         });
 
-        // The headers are already inserted in Self::insert_public_functions
-        for implementation in program.impls {
-            self.walk_impl(implementation);
-        }
-
+        // Insert main function header before walk the main block
+        // because the main function ID must be 0
         let main_func = IRFunction {
             stack_size: 0,
             stack_in_heap_size: 0,
@@ -2019,7 +2041,10 @@ impl Analyzer {
         self.ir_funcs.push((*reserved_id::MAIN_FUNC, main_func));
 
         // Main statements
-        let body = self.walk_block(program.main);
+        self.current_func = *reserved_id::MAIN_FUNC;
+        self.current_func_index = 0;
+
+        let body = self.walk_block(program.main, Some(program.impls));
         if let Some((_, body)) = body {
             self.ir_funcs[0].1.body = body;
         }

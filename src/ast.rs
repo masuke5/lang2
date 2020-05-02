@@ -1,5 +1,7 @@
 use std::fmt;
 
+use rustc_hash::FxHashMap;
+
 use crate::id::{Id, IdMap};
 use crate::span::Spanned;
 use crate::utils::{escape_string, format_bool, format_iter, span_to_string};
@@ -328,6 +330,7 @@ pub struct AstTypeDef {
 pub struct Impl {
     pub target: Spanned<Id>,
     pub functions: Vec<AstFunction>,
+    pub original_names: FxHashMap<Id, Id>,
 }
 
 impl Impl {
@@ -335,7 +338,24 @@ impl Impl {
         Self {
             target,
             functions: Vec::new(),
+            original_names: FxHashMap::default(),
         }
+    }
+
+    pub fn add_function(&mut self, mut func: AstFunction) {
+        let original_name = func.name.kind;
+
+        // Concatenate the structure name and the function name
+        let func_name = format!(
+            "{}.{}",
+            IdMap::name(self.target.kind),
+            IdMap::name(func.name.kind)
+        );
+        let func_name = IdMap::new_id(&func_name);
+        func.name.kind = func_name;
+
+        self.functions.push(func);
+        self.original_names.insert(func_name, original_name);
     }
 }
 

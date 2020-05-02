@@ -1453,10 +1453,10 @@ impl<'a> Parser<'a> {
         Some(AstTypeDef { name, ty, var_ids })
     }
 
-    fn parse_defs_in_impl(&mut self, impl_: &mut Impl) -> Option<()> {
+    fn parse_defs_in_impl(&mut self, imple: &mut Impl) -> Option<()> {
         if let Token::Fn = self.peek().kind {
             let func = self.parse_fn_decl()?;
-            impl_.functions.push(func);
+            imple.add_function(func);
         }
 
         Some(())
