@@ -21,6 +21,7 @@ pub mod id;
 mod ir;
 mod lexer;
 mod module;
+mod opt;
 mod parser;
 mod sema;
 pub mod span;
@@ -30,7 +31,7 @@ mod translate;
 mod value;
 mod vm;
 
-pub use codegen::OptimizeOption;
+pub use opt::OptimizeOption;
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -51,6 +52,7 @@ pub enum ExecuteMode {
     DumpToken,
     DumpAST,
     DumpIR,
+    DumpOptimizedIR,
     DumpInstruction,
     Normal,
 }
@@ -163,8 +165,7 @@ impl ExecuteOption {
 
         // Do semantics analysis and translate to IR
 
-        let module_bodies = sema::do_semantics_analysis(module_buffers, &container);
-        if self.mode == ExecuteMode::DumpIR {
+        fn dump_ir(module_bodies: rustc_hash::FxHashMap<String, ModuleBody>) {
             for (name, body) in module_bodies {
                 if let ModuleBody::Normal(module) = body {
                     println!("--- {}", name);
@@ -178,11 +179,28 @@ impl ExecuteOption {
                     }
                 }
             }
+        }
 
+        let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container);
+        if self.mode == ExecuteMode::DumpIR {
+            dump_ir(module_bodies);
             return;
         }
 
         if ErrorList::has_error() {
+            return;
+        }
+
+        // Optimization
+        for (_, body) in &mut module_bodies {
+            match body {
+                ModuleBody::Normal(module) => opt::optimize(module, &self.optimize_option),
+                ModuleBody::Native(..) => {}
+            }
+        }
+
+        if self.mode == ExecuteMode::DumpOptimizedIR {
+            dump_ir(module_bodies);
             return;
         }
 
@@ -196,7 +214,7 @@ impl ExecuteOption {
         for (name, body) in module_bodies {
             let body = match body {
                 ModuleBody::Normal(module) => {
-                    let bytecode = codegen(module, &self.optimize_option);
+                    let bytecode = codegen(module);
                     VMModuleBody::Normal(bytecode)
                 }
                 ModuleBody::Native(module) => VMModuleBody::Native(module),
