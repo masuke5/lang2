@@ -465,13 +465,13 @@ impl Analyzer {
     //  Expression
     // ====================================
 
-    // Return true if `walk_expr` passed `expr` may push multiple values
-    fn expr_push_multiple_values(expr: &Expr) -> bool {
+    // Return true if `walk_expr` passed `expr` may return a copied compound value
+    fn expr_return_copied(expr: &Expr) -> bool {
         match expr {
             // always
-            Expr::Tuple(_) | Expr::Struct(_, _) | Expr::Array(_, _) => true,
+            Expr::Tuple(..) | Expr::Struct(..) | Expr::Array(..) => true,
             // only if the return value is a compound value
-            Expr::Call(..) => true,
+            Expr::Call(..) | Expr::Block(..) => true,
             _ => false,
         }
     }
@@ -746,13 +746,17 @@ impl Analyzer {
                 )
             }
             Expr::Field(comp_expr, field) => {
-                let should_store = Self::expr_push_multiple_values(&comp_expr.kind);
+                let should_store = Self::expr_return_copied(&comp_expr.kind);
                 let comp_expr = self.walk_expr(*comp_expr)?;
                 let mut is_mutable = comp_expr.is_mutable;
 
                 let loc = if should_store {
-                    let id = self.gen_temp_id();
-                    Some(self.new_var_in_current_func(id, comp_expr.ty.clone(), false, false))
+                    if let Type::App(TypeCon::Pointer(..), _) = &comp_expr.ty {
+                        None
+                    } else {
+                        let id = self.gen_temp_id();
+                        Some(self.new_var_in_current_func(id, comp_expr.ty.clone(), false, false))
+                    }
                 } else {
                     None
                 };
@@ -820,7 +824,7 @@ impl Analyzer {
                 return Some(ExprInfo::new_lvalue(ir, field_ty, expr.span, is_mutable));
             }
             Expr::Subscript(expr, subscript_expr) => {
-                let should_store = Self::expr_push_multiple_values(&expr.kind);
+                let should_store = Self::expr_return_copied(&expr.kind);
 
                 let expr = self.walk_expr_with_unwrap(*expr);
                 let subscript_expr = self.walk_expr_with_conversion(*subscript_expr, &Type::Int);

@@ -221,6 +221,14 @@ let person = Person:{ name: "aa", age: 34, child: Child:{ age: 1, age_in_months:
 let ptr = &person;
 test_eq "dereference struct field" 34 ptr.age;
 
+test_eq "structure from block field" 120 ({
+    &Person:{
+        name: "bb",
+        age: 120,
+        child: Child:{ age: 99, age_in_months: 2 },
+    }
+}.age);
+
 ## structure ##
 
 type Person struct {
