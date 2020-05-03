@@ -46,6 +46,7 @@ fn_to_expect! {
 pub enum ImportedEntry {
     Function(Id, FunctionHeaderWithId),
     Type(Id, TypeCon),
+    Module(Id),
 }
 
 #[derive(Debug)]
@@ -342,9 +343,10 @@ impl Analyzer {
     fn find_external_entry(&self, path: &SymbolPath) -> Option<ImportedEntry> {
         assert!(!path.is_empty());
 
-        // TODO: Return ImportedEntry::Module if `path` is a module
-        // if self.module_headers.contains_key(path) {
-        // }
+        // Return ImportedEntry::Module if `path` is a module
+        if self.module_headers.contains_key(path) {
+            return Some(ImportedEntry::Module(path.tail().unwrap().id));
+        }
 
         let module_or_struct_path = path.parent().unwrap();
         let entry_name = path.tail().unwrap().id;
@@ -380,12 +382,25 @@ impl Analyzer {
                 let func_name = entry_name;
 
                 if module_path.is_empty() {
-                    // Search self.impls if `type_name` is a self implementation
-                    let (func_id, header) =
-                        self.impls.get(&type_name)?.functions.get(&func_name)?;
-                    let header = FunctionHeaderWithId::new_self(header.clone(), *func_id);
+                    if let Some(module_path) = self.tycons.module_path(type_name) {
+                        let (module_id, module_header) = self.module_headers.get(module_path)?;
+                        let (func_id, func_header) = module_header
+                            .impls
+                            .get(&type_name)?
+                            .functions
+                            .get(&func_name)?;
+                        let func_header =
+                            FunctionHeaderWithId::new(*module_id, *func_id, func_header.clone());
 
-                    Some(ImportedEntry::Function(func_name, header))
+                        Some(ImportedEntry::Function(func_name, func_header))
+                    } else {
+                        // Search self.impls if `type_name` is a self implementation
+                        let (func_id, header) =
+                            self.impls.get(&type_name)?.functions.get(&func_name)?;
+                        let header = FunctionHeaderWithId::new_self(header.clone(), *func_id);
+
+                        Some(ImportedEntry::Function(func_name, header))
+                    }
                 } else {
                     // Not imported modules are invisible
                     if !self.visible_modules.contains(&module_path) {
@@ -905,6 +920,10 @@ impl Analyzer {
                         error!(&expr.span, "`{}` is a type", path);
                         return None;
                     }
+                    Some(ImportedEntry::Module(_)) => {
+                        error!(&expr.span, "`{}` is a module", path);
+                        return None;
+                    }
                     None => {
                         error!(&expr.span, "undefined function `{}`", path);
                         return None;
@@ -1360,15 +1379,19 @@ impl Analyzer {
         }
     }
 
-    fn insert_header_from_imported_entry(&mut self, entry: ImportedEntry) {
+    fn insert_header_from_imported_entry(
+        &mut self,
+        module_path: &SymbolPath,
+        entry: ImportedEntry,
+    ) {
         match entry {
             ImportedEntry::Function(name, header) => {
                 self.variables.insert(name, Entry::Function(header));
             }
             ImportedEntry::Type(name, tycon) => {
-                self.tycons.insert(name);
-                self.tycons.set_body(name, tycon);
+                self.tycons.insert_external(module_path, name, tycon);
             }
+            ImportedEntry::Module(..) => {}
         }
     }
 
@@ -1424,7 +1447,14 @@ impl Analyzer {
 
             for (m, o, r) in list {
                 if let Some(entry) = self.generate_imported_entry(m, o, r, &range.span) {
-                    self.insert_header_from_imported_entry(entry);
+                    let module_path = match &path {
+                        ImportRangePath::All(path) => path.clone(),
+                        ImportRangePath::Path(path) | ImportRangePath::Renamed(path, _) => {
+                            path.parent().unwrap()
+                        }
+                    };
+
+                    self.insert_header_from_imported_entry(&module_path, entry);
                 }
             }
         }
@@ -1970,12 +2000,14 @@ impl Analyzer {
         module_header
             .functions
             .insert(*reserved_id::MAIN_FUNC, (0, header));
+        self.new_empty_ir_func(*reserved_id::MAIN_FUNC);
 
         for implementation in &program.impls {
             if self.tycons.contains(implementation.target.kind) {
                 self.insert_impl_headers(implementation);
             }
         }
+        module_header.impls = self.impls.clone();
 
         // Walk the type definitions
         for tydef in &program.main.types {
@@ -1992,17 +2024,6 @@ impl Analyzer {
                 )
             }
         }
-
-        // main
-        self.ir_funcs.push((
-            *reserved_id::MAIN_FUNC,
-            IRFunction {
-                stack_size: 0,
-                stack_in_heap_size: 0,
-                param_size: 0,
-                body: IRExpr::Unit,
-            },
-        ));
 
         for func in &program.main.functions {
             if let Some(header) = self.generate_function_header(&func) {

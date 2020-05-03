@@ -6,6 +6,12 @@ type File struct {
     parent: *Dir,
 };
 
+impl File {
+    fn parent_file(file: *File): *File = {
+        file.parent.first_file
+    }
+}
+
 fn pow(n: int, a: int): int = {
     if a <= 1 {
         n

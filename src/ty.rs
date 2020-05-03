@@ -6,6 +6,7 @@ use std::sync::RwLock;
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
+use crate::ast::SymbolPath;
 use crate::error::{Error, ErrorList};
 use crate::id::{Id, IdMap};
 use crate::span::Span;
@@ -502,6 +503,7 @@ impl TypeBody<'_> {
 pub struct TypeDefinitions {
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
     sizes: HashMapWithScope<Id, usize>,
+    modules: HashMapWithScope<Id, SymbolPath>,
     is_resolved: bool,
 }
 
@@ -510,6 +512,7 @@ impl TypeDefinitions {
         Self {
             tycons: HashMapWithScope::new(),
             sizes: HashMapWithScope::new(),
+            modules: HashMapWithScope::new(),
             is_resolved: false,
         }
     }
@@ -517,11 +520,22 @@ impl TypeDefinitions {
     pub fn push_scope(&mut self) {
         self.tycons.push_scope();
         self.sizes.push_scope();
+        self.modules.push_scope();
     }
 
     pub fn pop_scope(&mut self) {
         self.tycons.pop_scope();
         self.sizes.pop_scope();
+        self.modules.pop_scope();
+    }
+
+    pub fn insert_external(&mut self, path: &SymbolPath, name: Id, ty: TypeCon) {
+        self.tycons.insert(name, Some(ty));
+        self.modules.insert(name, path.clone());
+    }
+
+    pub fn module_path(&self, name: Id) -> Option<&SymbolPath> {
+        self.modules.get(&name)
     }
 
     pub fn insert(&mut self, name: Id) {

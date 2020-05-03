@@ -375,10 +375,16 @@ let file = File:{
     name: "a.txt",
     created_at: 1583562987,
     parent: &Dir:{
-        first_file: __null__,
+        first_file: &File:{
+            name: "b.txt",
+            created_at: 1588485402,
+            parent: __null__,
+        },
     },
 };
 test_eq "type importing" 1583562990 (file.created_at + 3);
+
+test_eq "implementation importing" 1588485402 (File::parent_file (&file)).created_at;
 
 ## other expressions ##
 
