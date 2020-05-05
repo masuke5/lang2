@@ -56,13 +56,27 @@ impl<'a> fmt::Display for Error<'a> {
 
 macro_rules! error {
     ($span:expr, $fmt: tt $(,$arg:expr)*) => {
-        ErrorList::push(Error::new(&format!($fmt $(,$arg)*), $span));
+        if cfg!(debug_assertions) {
+            ErrorList::push(Error::new(
+                &format!(concat!($fmt, " <{}:{}>") $(,$arg)*, file!(), line!()),
+                $span,
+            ));
+        } else {
+            ErrorList::push(Error::new(&format!($fmt $(,$arg)*), $span));
+        }
     };
 }
 
 macro_rules! warn {
     ($span:expr, $fmt: tt $(,$arg:expr)*) => {
-        ErrorList::push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
+        if cfg!(debug_assertions) {
+            ErrorList::push(Error::new_warning(
+                &format!(concat!($fmt, " <{}:{}>") $(,$arg)*, file!(), line!()),
+                $span,
+            ));
+        } else {
+            ErrorList::push(Error::new_warning(&format!($fmt $(,$arg)*), $span));
+        }
     };
 }
 
