@@ -330,6 +330,12 @@ pub fn if_else_expr(cond: ExprInfo, then: ExprInfo, els: ExprInfo) -> Expr {
     )
 }
 
+pub fn array_to_slice(array: Expr, size: usize) -> Expr {
+    // TODO: Add support for rvalue
+
+    Expr::Alloc(box Expr::Record(vec![array, Expr::Int(size as i64)]))
+}
+
 // Statement
 
 pub fn expr_stmt(expr: ExprInfo) -> CodeBuf {

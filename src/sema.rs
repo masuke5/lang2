@@ -522,6 +522,19 @@ impl Analyzer {
 
                 Some(expr)
             }
+            Type::App(TypeCon::Slice, _) => {
+                let mut expr = self.walk_expr(expr)?;
+
+                // A pointer to array can be converted to a slice
+                if let Type::App(TypeCon::Pointer(..), types) = &expr.ty {
+                    if let Type::App(TypeCon::Array(size), elem_type) = &types[0] {
+                        expr.ir = translate::array_to_slice(expr.ir, *size);
+                        expr.ty = Type::App(TypeCon::Slice, vec![elem_type[0].clone()]);
+                    }
+                }
+
+                Some(expr)
+            }
             _ => match expr.kind {
                 Expr::Tuple(exprs) => {
                     // Extract inner types
@@ -1604,6 +1617,9 @@ impl Analyzer {
             )),
             AstType::Array(ty, size) => {
                 Some(Type::App(TypeCon::Array(size), vec![self.walk_type(*ty)?]))
+            }
+            AstType::Slice(elem_ty) => {
+                Some(Type::App(TypeCon::Slice, vec![self.walk_type(*elem_ty)?]))
             }
             AstType::Tuple(types) => {
                 let mut new_types = Vec::new();

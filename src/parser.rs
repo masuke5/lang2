@@ -1278,6 +1278,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_type_slice(&mut self) -> Option<Spanned<AstType>> {
+        // Eat "&"
+        let and_token_span = self.peek().span.clone();
+        self.next();
+
+        self.expect(&Token::Lbracket, &[Token::Lbracket])?;
+        let inner_type = self.parse_type()?;
+        self.expect(&Token::Rbracket, &[Token::Rbracket])?;
+
+        let span = Span::merge(&and_token_span, &self.prev().span);
+        Some(spanned(AstType::Slice(Box::new(inner_type)), span))
+    }
+
     fn parse_type(&mut self) -> Option<Spanned<AstType>> {
         let first_span = self.peek().span.clone();
         let ty = match self.peek().kind {
@@ -1293,10 +1306,11 @@ impl<'a> Parser<'a> {
             Token::Lparen => self.parse_type_tuple(), // tuple
             Token::Struct => self.parse_type_struct(), // struct
             Token::Lbracket => self.parse_type_array(), // array
+            Token::Ampersand => self.parse_type_slice(),
             _ => {
                 error!(
                     &self.peek().span.clone(),
-                    "expected `(`, `[`, `*`, `int`, `bool`, `string`, `struct` or `identifier` but got `{}`",
+                    "expected `(`, `[`, `*`, `&[`, `int`, `bool`, `string`, `struct` or `identifier` but got `{}`",
                     self.peek().kind
                 );
                 self.next();

@@ -379,6 +379,7 @@ pub enum AstType {
     Struct(Vec<(Spanned<Id>, Spanned<AstType>)>),
     App(Spanned<Id>, Vec<Spanned<AstType>>),
     Arrow(Box<Spanned<AstType>>, Box<Spanned<AstType>>),
+    Slice(Box<Spanned<AstType>>),
 }
 
 impl fmt::Display for AstType {
@@ -408,6 +409,7 @@ impl fmt::Display for AstType {
                 )?;
                 write!(f, " }}")
             }
+            AstType::Slice(inner) => write!(f, "&[{}]", inner.kind),
             AstType::App(name, types) => {
                 write!(f, "{}<", IdMap::name(name.kind))?;
                 write_iter!(f, types.iter().map(|t| &t.kind))?;
