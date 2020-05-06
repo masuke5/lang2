@@ -25,11 +25,14 @@ macro_rules! fn_to_expect {
             match ty {
                 $pat => $expr,
                 _ => {
-                    let msg = format!(
-                        concat!("expected type `", $type_name, "` but got type `{}`"),
-                        ty
+                    error!(
+                        &span,
+                        "{}",
+                        format!(
+                            concat!("expected type `", $type_name, "` but got type `{}`"),
+                            ty
+                        )
                     );
-                    ErrorList::push(Error::new(&msg, &span));
                     None
                 }
             }
@@ -490,127 +493,102 @@ impl Analyzer {
         }
     }
 
+    fn walk_tuple_with_conversion(
+        &mut self,
+        inner_exprs: Vec<Spanned<Expr>>,
+        span: Span,
+        dest_types: &[Type],
+    ) -> Option<ExprInfo> {
+        // Check size of the tuples
+        if dest_types.len() != inner_exprs.len() {
+            error!(
+                &span,
+                "expected that tuple size will be `{}` but the number of expressions `{}`",
+                dest_types.len(),
+                inner_exprs.len()
+            );
+            return None;
+        }
+
+        // Walk each expression
+        let mut ir_exprs = Vec::with_capacity(inner_exprs.len());
+        let mut tys = Vec::with_capacity(inner_exprs.len());
+
+        for (expr, dest_ty) in inner_exprs.into_iter().zip(dest_types.iter()) {
+            let expr = self.walk_expr_with_conversion(expr, dest_ty);
+            if let Some(expr) = expr {
+                tys.push(expr.ty.clone());
+                ir_exprs.push(translate::literal_tuple(expr));
+            }
+        }
+
+        Some(ExprInfo::new(
+            IRExpr::Record(ir_exprs),
+            Type::App(TypeCon::Tuple, tys),
+            span,
+        ))
+    }
+
     // Walk an expression and convert it to a specified type if possible
     fn walk_expr_with_conversion(
         &mut self,
-        expr: Spanned<Expr>,
+        mut expr: Spanned<Expr>,
         dest_ty: &Type,
     ) -> Option<ExprInfo> {
-        match dest_ty {
-            Type::App(TypeCon::Wrapped, _) => {
-                let expr = self.walk_expr(expr)?;
+        let mut expr = if let Expr::Tuple(inner_exprs) = &mut expr.kind {
+            // Extract inner types
+            match dest_ty {
+                Type::App(TypeCon::Tuple, dest_inner_types) => self.walk_tuple_with_conversion(
+                    std::mem::replace(inner_exprs, Vec::new()),
+                    expr.span,
+                    dest_inner_types,
+                )?,
+                // If `dest_ty` is not a tuple, walk the expression without conversion
+                _ => self.walk_expr(expr)?,
+            }
+        } else {
+            self.walk_expr(expr)?
+        };
 
-                // Wrap if necessary
-                if let Type::App(TypeCon::Wrapped, _) = &expr.ty {
-                    // Don't need wrap again
-                    Some(expr)
-                } else {
-                    let mut expr = expr;
-                    expr.ir = translate::wrap(expr.ir, &expr.ty);
-                    expr.ty = Type::App(TypeCon::Wrapped, vec![expr.ty]);
-
-                    Some(expr)
+        match (&expr.ty, dest_ty) {
+            // Don't need wrap again
+            (Type::App(TypeCon::Wrapped, _), Type::App(TypeCon::Wrapped, _)) => {}
+            // T => Wrapped<T>
+            (expr_ty, Type::App(TypeCon::Wrapped, _)) => {
+                expr.ir = translate::wrap(expr.ir, &expr_ty);
+                expr.ty = Type::App(TypeCon::Wrapped, vec![expr.ty]);
+            }
+            // *mut T => *T
+            (Type::App(TypeCon::Pointer(true), types), Type::App(TypeCon::Pointer(false), _)) => {
+                expr.ty = Type::App(TypeCon::Pointer(false), types.clone());
+            }
+            // *[T; N] => &[T]
+            (Type::App(TypeCon::Pointer(..), elem_type), Type::App(TypeCon::Slice, ..)) => {
+                if let Type::App(TypeCon::Array(size), elem_type) = &elem_type[0] {
+                    expr.ir = translate::array_to_slice(expr.ir, *size);
+                    expr.ty = Type::App(TypeCon::Slice, vec![elem_type[0].clone()]);
                 }
             }
-            Type::App(TypeCon::Pointer(false), _) => {
-                let mut expr = self.walk_expr(expr)?;
-
-                // Weaken a pointer if necessary
-                if let Type::App(TypeCon::Pointer(true), types) = expr.ty {
-                    expr.ty = Type::App(TypeCon::Pointer(false), types);
-                }
-
-                Some(expr)
-            }
-            Type::App(TypeCon::Slice, _) => {
-                let mut expr = self.walk_expr(expr)?;
-
-                // A pointer to array can be converted to a slice
-                if let Type::App(TypeCon::Pointer(..), types) = &expr.ty {
-                    if let Type::App(TypeCon::Array(size), elem_type) = &types[0] {
-                        expr.ir = translate::array_to_slice(expr.ir, *size);
-                        expr.ty = Type::App(TypeCon::Slice, vec![elem_type[0].clone()]);
-                    }
-                }
-
-                Some(expr)
-            }
-            _ => match expr.kind {
-                Expr::Tuple(exprs) => {
-                    // Extract inner types
-                    let dest_types = match dest_ty {
-                        Type::App(TypeCon::Tuple, types) => types,
-                        _ => {
-                            // If `dest_ty` is not a tuple, walk the expression without conversion
-                            let mut tys = Vec::new();
-
-                            for expr in exprs.into_iter() {
-                                let expr = self.walk_expr(expr);
-                                if let Some(expr) = expr {
-                                    tys.push(expr.ty.clone());
-                                }
-                            }
-
-                            return Some(ExprInfo::new(
-                                IRExpr::Unit,
-                                Type::App(TypeCon::Tuple, tys),
-                                expr.span,
-                            ));
-                        }
-                    };
-
-                    // Check size of the tuples
-                    if dest_types.len() != exprs.len() {
-                        error!(&
-                            expr.span,
-                            "expected that tuple size will be `{}` but the number of expressions `{}`",
-                            dest_types.len(),
-                            exprs.len()
-                        );
-                        return None;
-                    }
-
-                    // Walk each expression
-                    let mut ir_exprs = Vec::with_capacity(exprs.len());
-                    let mut tys = Vec::new();
-
-                    for (expr, dest_ty) in exprs.into_iter().zip(dest_types.iter()) {
-                        let expr = self.walk_expr_with_conversion(expr, dest_ty);
-                        if let Some(expr) = expr {
-                            tys.push(expr.ty.clone());
-                            ir_exprs.push(translate::literal_tuple(expr));
-                        }
-                    }
-
-                    Some(ExprInfo::new(
-                        IRExpr::Record(ir_exprs),
-                        Type::App(TypeCon::Tuple, tys),
-                        expr.span,
-                    ))
-                }
-                _ => {
-                    let mut expr = self.walk_expr(expr)?;
-
-                    // Convert to InHeap if necessary
-                    if !dest_ty.is_in_heap() {
-                        if let Type::App(TypeCon::InHeap, types) = &expr.ty {
-                            expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
-                            expr.ty = types[0].clone();
-                        }
-                    }
-
-                    // Unwrap if necessary
-                    if !dest_ty.is_wrapped() {
-                        if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
-                            expr.ir = translate::unwrap(expr.ir, &expr.ty);
-                            expr.ty = types[0].clone();
-                        }
-                    }
-
-                    Some(expr)
-                }
-            },
+            _ => {}
         }
+
+        // Convert to InHeap if necessary
+        if !dest_ty.is_in_heap() {
+            if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+                expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
+                expr.ty = types[0].clone();
+            }
+        }
+
+        // Unwrap if necessary
+        if !dest_ty.is_wrapped() {
+            if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
+                expr.ir = translate::unwrap(expr.ir, &expr.ty);
+                expr.ty = types[0].clone();
+            }
+        }
+
+        Some(expr)
     }
 
     // Unwrap and dereference an expression if possible
