@@ -736,6 +736,10 @@ impl Analyzer {
                     Type::App(TypeCon::Array(size), vec![ty]),
                 )
             }
+            Expr::Range(..) => {
+                error!(&expr.span, "range expression outside subscript expression");
+                return None;
+            }
             Expr::Field(comp_expr, field) => {
                 let should_store = Self::expr_return_copied(&comp_expr.kind);
                 let comp_expr = self.walk_expr(*comp_expr)?;
@@ -1031,6 +1035,41 @@ impl Analyzer {
                 let ir = translate::call(&return_ty, func_expr, arg_expr);
                 (ir, return_ty)
             }
+            Expr::Address(
+                box Spanned {
+                    kind:
+                        Expr::Subscript(
+                            list_expr,
+                            box Spanned {
+                                kind: Expr::Range(start, end),
+                                ..
+                            },
+                        ),
+                    ..
+                },
+                is_mutable,
+            ) => {
+                let list_expr = self.walk_expr_with_unwrap_and_deref(*list_expr);
+                let start = self.walk_expr_with_conversion(*start, &Type::Int);
+                let end = self.walk_expr_with_conversion(*end, &Type::Int);
+                try_some!(list_expr, start, end);
+
+                let elem_ty = match &list_expr.ty {
+                    Type::App(TypeCon::Array(..), types) | Type::App(TypeCon::Slice, types) => {
+                        types[0].clone()
+                    }
+                    _ => {
+                        error!(
+                            &list_expr.span,
+                            "expected type `array` or `slice` but got type `{}`", list_expr.ty
+                        );
+                        return None;
+                    }
+                };
+
+                let ir = translate::slice(list_expr, start, end, type_size_nocheck(&elem_ty));
+                (ir, Type::App(TypeCon::Slice, vec![elem_ty]))
+            }
             Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr_with_unwrap(*expr)?;
 
@@ -1190,7 +1229,7 @@ impl Analyzer {
                 .iter()
                 .map(|(_, e)| &e.kind)
                 .any(Self::expr_has_side_effects),
-            Subscript(e1, e2) | BinOp(_, e1, e2) => {
+            Subscript(e1, e2) | BinOp(_, e1, e2) | Range(e1, e2) => {
                 Self::expr_has_side_effects(&e1.kind) || Self::expr_has_side_effects(&e2.kind)
             }
             Array(expr, _)

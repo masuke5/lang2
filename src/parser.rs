@@ -541,7 +541,7 @@ impl<'a> Parser<'a> {
 
         loop {
             if self.consume(&Token::Lbracket) {
-                let subscript = parse(self)?;
+                let subscript = self.parse_expr()?;
 
                 self.expect(&Token::Rbracket, &[Token::Rbracket])?;
 
@@ -550,6 +550,20 @@ impl<'a> Parser<'a> {
             } else {
                 break;
             }
+        }
+
+        Some(expr)
+    }
+
+    fn parse_range(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_subscript;
+
+        let mut expr = parse(self)?;
+        if self.consume(&Token::DoubleDot) {
+            let start = expr;
+            let end = parse(self)?;
+            let span = Span::merge(&start.span, &end.span);
+            expr = spanned(Expr::Range(Box::new(start), Box::new(end)), span);
         }
 
         Some(expr)
@@ -569,7 +583,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call(&mut self) -> Option<Spanned<Expr>> {
-        let parse = Self::parse_subscript;
+        let parse = Self::parse_range;
 
         let mut expr = parse(self)?;
 

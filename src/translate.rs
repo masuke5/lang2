@@ -336,6 +336,30 @@ pub fn array_to_slice(array: Expr, size: usize) -> Expr {
     Expr::Alloc(box Expr::Record(vec![array, Expr::Int(size as i64)]))
 }
 
+pub fn slice(list: ExprInfo, start: ExprInfo, end: ExprInfo, elem_size: usize) -> Expr {
+    // TODO: Add support for rvalue
+
+    // alloc([
+    //     &list + start * elem_size,
+    //     end - start,
+    // ])
+    Expr::Alloc(box Expr::Record(vec![
+        Expr::Offset(
+            box list.ir,
+            box Expr::BinOp(
+                IRBinOp::Mul,
+                box copy(start.ir.clone(), &start.ty),
+                box Expr::Int(elem_size as i64),
+            ),
+        ),
+        Expr::BinOp(
+            IRBinOp::Sub,
+            box copy(end.ir, &end.ty),
+            box copy(start.ir, &start.ty),
+        ),
+    ]))
+}
+
 // Statement
 
 pub fn expr_stmt(expr: ExprInfo) -> CodeBuf {

@@ -274,6 +274,7 @@ impl<'a> Lexer<'a> {
             '&' => Some(Token::Ampersand),
             '|' if self.next_is('|') => self.two_char(Token::Or),
             '.' if self.next_is('<') => self.two_char(Token::LTypeArgs),
+            '.' if self.next_is('.') => self.two_char(Token::DoubleDot),
             '.' => Some(Token::Dot),
             '#' => {
                 self.skip_comment();
