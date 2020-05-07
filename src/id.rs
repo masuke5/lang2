@@ -17,8 +17,8 @@ impl fmt::Debug for Id {
 pub struct IdMap {}
 
 lazy_static! {
-    static ref ID_MAP: RwLock<FxHashMap<Id, String>> = { RwLock::new(FxHashMap::default()) };
-    static ref STR_MAP: RwLock<FxHashMap<String, Id>> = { RwLock::new(FxHashMap::default()) };
+    static ref ID_MAP: RwLock<FxHashMap<Id, String>> = RwLock::new(FxHashMap::default());
+    static ref STR_MAP: RwLock<FxHashMap<String, Id>> = RwLock::new(FxHashMap::default());
 }
 
 impl IdMap {

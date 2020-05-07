@@ -94,8 +94,7 @@ pub struct ErrorList {}
 static HAS_ERRORS: AtomicBool = AtomicBool::new(false);
 
 lazy_static! {
-    static ref FILE_CACHE: RwLock<FxHashMap<Id, Vec<String>>> =
-        { RwLock::new(FxHashMap::default()) };
+    static ref FILE_CACHE: RwLock<FxHashMap<Id, Vec<String>>> = RwLock::new(FxHashMap::default());
 }
 
 impl ErrorList {

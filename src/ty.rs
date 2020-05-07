@@ -43,7 +43,7 @@ macro_rules! ltype {
 pub struct TypeVar(u32);
 
 lazy_static! {
-    static ref VAR_ID_MAP: RwLock<FxHashMap<TypeVar, Id>> = { RwLock::new(FxHashMap::default()) };
+    static ref VAR_ID_MAP: RwLock<FxHashMap<TypeVar, Id>> = RwLock::new(FxHashMap::default());
 }
 
 static NEXT_VAR: AtomicU32 = AtomicU32::new(0);
