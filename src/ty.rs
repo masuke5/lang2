@@ -162,7 +162,9 @@ impl fmt::Display for Type {
             }
             Self::App(TypeCon::Arrow, types) => write!(f, "{} -> {}", types[0], types[1]),
             Self::App(TypeCon::Array(size), types) => write!(f, "[{}; {}]", types[0], size),
-            Self::App(TypeCon::Slice, types) => write!(f, "&[{}]", types[0]),
+            Self::App(TypeCon::Slice(is_mutable), types) => {
+                write!(f, "&{}[{}]", format_bool(*is_mutable, "mut "), types[0])
+            }
             #[cfg(debug_assertions)]
             Self::App(TypeCon::Unique(tycon, uniq), types) => {
                 write!(f, "{} u{}", Type::App(*tycon.clone(), types.clone()), uniq)
@@ -216,7 +218,7 @@ pub enum TypeCon {
     Arrow,
     Struct(Vec<Id>),
     Array(usize),
-    Slice,
+    Slice(bool),
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, Unique),
     Named(Id, usize),
@@ -237,7 +239,7 @@ impl fmt::Display for TypeCon {
                 write!(f, "}}")
             }
             Self::Array(size) => write!(f, "array({})", size),
-            Self::Slice => write!(f, "slice"),
+            Self::Slice(is_mutable) => write!(f, "{}slice", format_bool(*is_mutable, "mut ")),
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
                 write_iter!(f, params.iter().map(|a| format!("{}", a)))?;
@@ -383,7 +385,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
             let elem_size = type_size(&types[0])?;
             Some(elem_size * size)
         }
-        Type::App(TypeCon::Slice, _) => Some(1),
+        Type::App(TypeCon::Slice(..), _) => Some(1),
         Type::App(TypeCon::Named(_, size), _) => Some(*size),
         Type::App(TypeCon::UnsizedNamed(..), _) => None,
         Type::App(TypeCon::Arrow, _) => Some(2),

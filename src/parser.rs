@@ -1297,12 +1297,17 @@ impl<'a> Parser<'a> {
         let and_token_span = self.peek().span.clone();
         self.next();
 
+        let is_mutable = self.consume(&Token::Mut);
+
         self.expect(&Token::Lbracket, &[Token::Lbracket])?;
         let inner_type = self.parse_type()?;
         self.expect(&Token::Rbracket, &[Token::Rbracket])?;
 
         let span = Span::merge(&and_token_span, &self.prev().span);
-        Some(spanned(AstType::Slice(Box::new(inner_type)), span))
+        Some(spanned(
+            AstType::Slice(Box::new(inner_type), is_mutable),
+            span,
+        ))
     }
 
     fn parse_type(&mut self) -> Option<Spanned<AstType>> {

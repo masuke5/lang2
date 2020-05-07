@@ -633,11 +633,25 @@ impl Analyzer {
             (Type::App(TypeCon::Pointer(true), types), Type::App(TypeCon::Pointer(false), _)) => {
                 expr.ty = Type::App(TypeCon::Pointer(false), types.clone());
             }
+            // &mut [T; N] => &[T]
+            (Type::App(TypeCon::Slice(true), elem_type), Type::App(TypeCon::Slice(false), ..)) => {
+                expr.ty = Type::App(TypeCon::Slice(false), vec![elem_type[0].clone()]);
+            }
             // *[T; N] => &[T]
-            (Type::App(TypeCon::Pointer(..), elem_type), Type::App(TypeCon::Slice, ..)) => {
+            (
+                Type::App(TypeCon::Pointer(arr_is_mutable), elem_type),
+                Type::App(TypeCon::Slice(slice_is_mutable), ..),
+            ) => {
+                let is_mutable = match (arr_is_mutable, slice_is_mutable) {
+                    (true, true) => true,
+                    (true, false) => false,
+                    (false, true) => false,
+                    (false, false) => false,
+                };
+
                 if let Type::App(TypeCon::Array(size), elem_type) = &elem_type[0] {
                     expr.ir = translate::array_to_slice(expr.ir, *size);
-                    expr.ty = Type::App(TypeCon::Slice, vec![elem_type[0].clone()]);
+                    expr.ty = Type::App(TypeCon::Slice(is_mutable), vec![elem_type[0].clone()]);
                 }
             }
             _ => {}
@@ -1085,6 +1099,7 @@ impl Analyzer {
                 let ir = translate::call(&return_ty, func_expr, arg_expr);
                 (ir, return_ty)
             }
+            // &list_expr[start..end]
             Expr::Address(
                 box Spanned {
                     kind:
@@ -1104,8 +1119,12 @@ impl Analyzer {
                 let end = self.walk_expr_with_conversion(*end, &Type::Int);
                 try_some!(list_expr, start, end);
 
+                if list_expr.is_lvalue && is_mutable && !list_expr.is_mutable {
+                    error!(&list_expr.span, "immutable expression");
+                }
+
                 let elem_ty = match &list_expr.ty {
-                    Type::App(TypeCon::Array(..), types) | Type::App(TypeCon::Slice, types) => {
+                    Type::App(TypeCon::Array(..), types) | Type::App(TypeCon::Slice(..), types) => {
                         types[0].clone()
                     }
                     _ => {
@@ -1118,7 +1137,7 @@ impl Analyzer {
                 };
 
                 let ir = translate::slice(list_expr, start, end, type_size_nocheck(&elem_ty));
-                (ir, Type::App(TypeCon::Slice, vec![elem_ty]))
+                (ir, Type::App(TypeCon::Slice(is_mutable), vec![elem_ty]))
             }
             Expr::Address(expr, is_mutable) => {
                 let expr = self.walk_expr_with_unwrap(*expr)?;
@@ -1679,9 +1698,10 @@ impl Analyzer {
             AstType::Array(ty, size) => {
                 Some(Type::App(TypeCon::Array(size), vec![self.walk_type(*ty)?]))
             }
-            AstType::Slice(elem_ty) => {
-                Some(Type::App(TypeCon::Slice, vec![self.walk_type(*elem_ty)?]))
-            }
+            AstType::Slice(elem_ty, is_mutable) => Some(Type::App(
+                TypeCon::Slice(is_mutable),
+                vec![self.walk_type(*elem_ty)?],
+            )),
             AstType::Tuple(types) => {
                 let mut new_types = Vec::new();
                 for ty in types {
