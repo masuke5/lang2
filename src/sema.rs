@@ -163,6 +163,127 @@ impl FunctionHeaderWithId {
 }
 
 #[derive(Debug)]
+struct VariableMap {
+    variables: HashMapWithScope<Id, Entry>,
+    next_temp_num: u32,
+    var_level: usize,
+}
+
+impl VariableMap {
+    pub fn new() -> Self {
+        Self {
+            variables: HashMapWithScope::new(),
+            next_temp_num: 0,
+            var_level: 0,
+        }
+    }
+
+    pub fn push_scope(&mut self) {
+        self.variables.push_scope();
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.variables.pop_scope();
+    }
+
+    pub fn increment_var_level(&mut self) {
+        self.var_level += 1;
+    }
+
+    pub fn decrement_var_level(&mut self) {
+        self.var_level -= 1;
+    }
+
+    pub fn contains(&self, name: Id) -> bool {
+        self.variables.contains_key(&name)
+    }
+
+    pub fn create(
+        &mut self,
+        ir_func: &mut IRFunction,
+        name: Id,
+        ty: Type,
+        is_mutable: bool,
+        is_escaped: bool,
+    ) -> VariableLoc {
+        let new_var_size = type_size_nocheck(&ty);
+        let var_level = self.var_level;
+
+        let loc = if is_escaped {
+            let loc = VariableLoc::StackInHeap(ir_func.stack_in_heap_size + 1, var_level);
+            ir_func.stack_in_heap_size += new_var_size;
+            loc
+        } else {
+            let loc = VariableLoc::Stack(ir_func.stack_size as isize);
+            ir_func.stack_size += new_var_size;
+            loc
+        };
+
+        self.variables.insert(
+            name,
+            Entry::Variable(Variable::new(ty, is_mutable, loc.clone())),
+        );
+
+        loc
+    }
+
+    pub fn create_param(&mut self, ir_func: &mut IRFunction, param: Param) -> CodeBuf {
+        let mut stmts = CodeBuf::new();
+
+        let var_size = type_size_nocheck(&param.ty);
+        let loc = -(ir_func.param_size as isize) - var_size as isize;
+        ir_func.param_size += var_size;
+
+        let var_loc = if param.is_escaped {
+            let heap_loc = ir_func.stack_in_heap_size + 1;
+
+            let irs = translate::escaped_param(&param.ty, loc, heap_loc);
+            stmts.append(irs);
+
+            ir_func.stack_in_heap_size += var_size;
+            VariableLoc::StackInHeap(heap_loc, self.var_level)
+        } else {
+            VariableLoc::Stack(loc)
+        };
+
+        // Insert the parameter as a variable
+        let var = Entry::Variable(Variable::new(param.ty.clone(), param.is_mutable, var_loc));
+        self.variables.insert(param.name, var);
+
+        stmts
+    }
+
+    pub fn create_temp(&mut self, ir_func: &mut IRFunction, ty: Type) -> VariableLoc {
+        let name = self.gen_temp_id();
+        self.create(ir_func, name, ty, false, false)
+    }
+
+    pub fn create_func(&mut self, name: Id, header: FunctionHeaderWithId) {
+        self.variables.insert(name, Entry::Function(header));
+    }
+
+    fn gen_temp_id(&mut self) -> Id {
+        let id = IdMap::new_id(&format!("$comp{}", self.next_temp_num));
+        self.next_temp_num += 1;
+        id
+    }
+
+    // Convert from VariableLoc to RelativeVariableLoc
+    pub fn relative_loc(&self, loc: &VariableLoc) -> RelativeVariableLoc {
+        match loc {
+            VariableLoc::Stack(loc) => RelativeVariableLoc::Stack(*loc),
+            VariableLoc::StackInHeap(loc, level) => {
+                RelativeVariableLoc::StackInHeap(*loc, self.var_level - *level)
+            }
+        }
+    }
+
+    pub fn find(&self, name: Id) -> Option<&Entry> {
+        self.variables.get(&name)
+    }
+}
+
+#[derive(Debug)]
 pub struct Analyzer {
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (usize, ModuleHeader)>,
@@ -173,9 +294,7 @@ pub struct Analyzer {
     tycon_spans: HashMapWithScope<Id, Span>,
     impls: FxHashMap<Id, Implementation>,
 
-    variables: HashMapWithScope<Id, Entry>,
-    next_temp_num: u32,
-    var_level: usize,
+    variables: VariableMap,
 
     current_func: Id,
     current_func_index: usize,
@@ -189,7 +308,7 @@ impl Analyzer {
             visible_modules: FxHashSet::default(),
             module_headers: FxHashMap::default(),
             next_module_id: 0,
-            variables: HashMapWithScope::new(),
+            variables: VariableMap::new(),
             types: HashMapWithScope::new(),
             tycons: TypeDefinitions::new(),
             tycon_spans: HashMapWithScope::new(),
@@ -198,8 +317,6 @@ impl Analyzer {
             current_func: *reserved_id::MAIN_FUNC,
             ir_funcs: Vec::new(),
             ir_func_ids: HashMapWithScope::new(),
-            next_temp_num: 0,
-            var_level: 0,
         };
         slf.push_type_scope();
         slf.push_scope();
@@ -274,42 +391,21 @@ impl Analyzer {
         }
     }
 
-    fn ir_func(&mut self, index: usize) -> &mut IRFunction {
-        &mut self.ir_funcs[index].1
-    }
-
     // ====================================
     //  Variable
     // ====================================
 
     fn new_var(
         &mut self,
-        current_func: usize,
+        func_index: usize,
         id: Id,
         ty: Type,
         is_mutable: bool,
         is_escaped: bool,
     ) -> VariableLoc {
-        let new_var_size = type_size_nocheck(&ty);
-        let var_level = self.var_level;
-        let current_func = self.ir_func(current_func);
-
-        let loc = if is_escaped {
-            let loc = VariableLoc::StackInHeap(current_func.stack_in_heap_size + 1, var_level);
-            current_func.stack_in_heap_size += new_var_size;
-            loc
-        } else {
-            let loc = VariableLoc::Stack(current_func.stack_size as isize);
-            current_func.stack_size += new_var_size;
-            loc
-        };
-
-        self.variables.insert(
-            id,
-            Entry::Variable(Variable::new(ty, is_mutable, loc.clone())),
-        );
-
-        loc
+        let ir_func = &mut self.ir_funcs[func_index].1;
+        self.variables
+            .create(ir_func, id, ty, is_mutable, is_escaped)
     }
 
     #[inline]
@@ -323,24 +419,10 @@ impl Analyzer {
         self.new_var(self.current_func_index, id, ty, is_mutable, is_escaped)
     }
 
-    fn gen_temp_id(&mut self) -> Id {
-        let id = IdMap::new_id(&format!("$comp{}", self.next_temp_num));
-        self.next_temp_num += 1;
-        id
-    }
-
-    // Convert from VariableLoc to RelativeVariableLoc
-    fn relative_loc(&self, loc: &VariableLoc) -> RelativeVariableLoc {
-        match loc {
-            VariableLoc::Stack(loc) => RelativeVariableLoc::Stack(*loc),
-            VariableLoc::StackInHeap(loc, level) => {
-                RelativeVariableLoc::StackInHeap(*loc, self.var_level - *level)
-            }
-        }
-    }
-
-    fn find_var(&self, id: Id) -> Option<&Entry> {
-        self.variables.get(&id)
+    #[inline]
+    fn new_temp_var(&mut self, ty: Type) -> VariableLoc {
+        let ir_func = &mut self.ir_funcs[self.current_func_index].1;
+        self.variables.create_temp(ir_func, ty)
     }
 
     fn find_external_entry(&self, path: &SymbolPath) -> Option<ImportedEntry> {
@@ -749,8 +831,7 @@ impl Analyzer {
                     if let Type::App(TypeCon::Pointer(..), _) = &comp_expr.ty {
                         None
                     } else {
-                        let id = self.gen_temp_id();
-                        Some(self.new_var_in_current_func(id, comp_expr.ty.clone(), false, false))
+                        Some(self.new_temp_var(comp_expr.ty.clone()))
                     }
                 } else {
                     None
@@ -814,8 +895,11 @@ impl Analyzer {
                     }
                 };
 
-                let ir =
-                    translate::field(loc.map(|loc| self.relative_loc(&loc)), comp_expr, offset);
+                let ir = translate::field(
+                    loc.map(|loc| self.variables.relative_loc(&loc)),
+                    comp_expr,
+                    offset,
+                );
                 return Some(ExprInfo::new_lvalue(ir, field_ty, expr.span, is_mutable));
             }
             Expr::Subscript(expr, subscript_expr) => {
@@ -828,8 +912,7 @@ impl Analyzer {
                 let mut expr = expr;
 
                 let loc = if should_store {
-                    let id = self.gen_temp_id();
-                    Some(self.new_var_in_current_func(id, expr.ty.clone(), false, false))
+                    Some(self.new_temp_var(expr.ty.clone()))
                 } else {
                     None
                 };
@@ -864,7 +947,7 @@ impl Analyzer {
                 let is_lvalue = expr.is_lvalue;
                 let is_mutable = expr.is_mutable;
                 let ir = translate::subscript(
-                    loc.map(|loc| self.relative_loc(&loc)),
+                    loc.map(|loc| self.variables.relative_loc(&loc)),
                     is_in_heap,
                     is_pointer,
                     expr,
@@ -881,7 +964,7 @@ impl Analyzer {
                 });
             }
             Expr::Variable(name, _) => {
-                let entry = match self.find_var(name) {
+                let entry = match self.variables.find(name) {
                     Some(v) => v,
                     None => {
                         error!(&expr.span, "undefined variable or function");
@@ -891,7 +974,7 @@ impl Analyzer {
 
                 let (insts, ty, is_mutable) = match entry {
                     Entry::Variable(var) => (
-                        translate::variable(&self.relative_loc(&var.loc)),
+                        translate::variable(&self.variables.relative_loc(&var.loc)),
                         var.ty.clone(),
                         var.is_mutable,
                     ),
@@ -1078,15 +1161,8 @@ impl Analyzer {
 
                 if !expr.is_lvalue {
                     // Store `expr` and return the pointer to it if `expr` is not lvalue
-                    let temp = self.gen_temp_id();
-                    let loc = self.new_var_in_current_func(
-                        temp,
-                        Type::App(TypeCon::InHeap, vec![expr.ty.clone()]),
-                        is_mutable,
-                        false,
-                    );
-
-                    let ir = translate::address_no_lvalue(expr, &self.relative_loc(&loc));
+                    let loc = self.new_temp_var(Type::App(TypeCon::InHeap, vec![expr.ty.clone()]));
+                    let ir = translate::address_no_lvalue(expr, &self.variables.relative_loc(&loc));
                     (ir, ty)
                 } else {
                     if is_mutable && !expr.is_mutable {
@@ -1290,7 +1366,7 @@ impl Analyzer {
                 let loc =
                     self.new_var_in_current_func(name, expr.ty.clone(), is_mutable, is_escaped);
 
-                translate::bind_stmt(&self.relative_loc(&loc), expr)
+                translate::bind_stmt(&self.variables.relative_loc(&loc), expr)
             }
             Stmt::Assign(lhs, rhs) => {
                 let mut lhs = self.walk_expr(lhs)?;
@@ -1324,7 +1400,7 @@ impl Analyzer {
                     return None;
                 }
 
-                let return_var_ty = match self.variables.get(&self.current_func).unwrap() {
+                let return_var_ty = match self.variables.find(self.current_func).unwrap() {
                     Entry::Function(header) => header.header.return_ty.clone(),
                     _ => panic!("{} is not function", IdMap::name(self.current_func)),
                 };
@@ -1420,7 +1496,7 @@ impl Analyzer {
     ) {
         match entry {
             ImportedEntry::Function(name, header) => {
-                self.variables.insert(name, Entry::Function(header));
+                self.variables.create_func(name, header);
             }
             ImportedEntry::Type(name, tycon) => {
                 self.tycons.insert_external(module_path, name, tycon);
@@ -1521,7 +1597,7 @@ impl Analyzer {
     fn insert_func_headers_in_stmts(&mut self, funcs: &[AstFunction]) {
         // Insert function headers
         for func in funcs {
-            if self.variables.contains_key(&func.name.kind) {
+            if self.variables.contains(func.name.kind) {
                 error!(
                     &func.name.span.clone(),
                     "A function or variable with the same name exists"
@@ -1532,7 +1608,7 @@ impl Analyzer {
             if let Some(header) = self.generate_function_header(&func) {
                 let func_id = self.new_empty_ir_func(func.name.kind);
                 let fh = FunctionHeaderWithId::new_self(header, func_id);
-                self.variables.insert(func.name.kind, Entry::Function(fh));
+                self.variables.create_func(func.name.kind, fh);
             }
         }
     }
@@ -1587,7 +1663,7 @@ impl Analyzer {
 
         // 8. Walk function bodies
         for func in block.functions {
-            if let Some(Entry::Function(header)) = self.variables.get(&func.name.kind) {
+            if let Some(Entry::Function(header)) = self.variables.find(func.name.kind) {
                 let header = header.header.clone();
                 self.walk_function(func, &header);
             }
@@ -1725,40 +1801,19 @@ impl Analyzer {
     // parameters to heap
     fn insert_params_as_variables(
         &mut self,
+        ir_func: &mut IRFunction,
         params: Vec<Param>,
-    ) -> Option<(usize, usize, Vec<IRStmt>)> {
+    ) -> Option<Vec<IRStmt>> {
         let mut stmts = Vec::new();
 
-        let mut stack_in_heap_size = 0;
-        let mut param_size = 0;
-        let mut loc = 0isize;
-
         for param in params.into_iter().rev() {
-            let size = type_size_nocheck(&param.ty);
-            loc -= size as isize;
-            param_size += size;
-
-            let var_loc = if param.is_escaped {
-                // Copy the parameter to heap if escaped
-                let heap_loc = stack_in_heap_size + 1;
-
-                for stmt in translate::escaped_param(&param.ty, loc, heap_loc).into_iter() {
-                    stmts.push(stmt);
-                }
-
-                stack_in_heap_size += type_size_nocheck(&param.ty);
-
-                VariableLoc::StackInHeap(heap_loc, self.var_level)
-            } else {
-                VariableLoc::Stack(loc)
-            };
-
-            // Insert the parameter as a variable to the current scope
-            let var = Entry::Variable(Variable::new(param.ty.clone(), param.is_mutable, var_loc));
-            self.variables.insert(param.name, var);
+            let new_stmts = self.variables.create_param(ir_func, param);
+            for stmt in new_stmts.into_iter() {
+                stmts.push(stmt);
+            }
         }
 
-        Some((param_size, stack_in_heap_size, stmts))
+        Some(stmts)
     }
 
     fn new_empty_ir_func(&mut self, name: Id) -> usize {
@@ -1820,7 +1875,7 @@ impl Analyzer {
         self.push_type_scope();
 
         if func.has_escaped_variables {
-            self.var_level += 1;
+            self.variables.increment_var_level();
         }
 
         let return_ty = header.return_ty.clone();
@@ -1842,15 +1897,14 @@ impl Analyzer {
             })
             .collect();
 
-        let (param_size, heap_size, param_stmts) = match self.insert_params_as_variables(params) {
+        let mut new_ir_func = IRFunction::new();
+        let param_stmts = match self.insert_params_as_variables(&mut new_ir_func, params) {
             Some(t) => t,
             None => return,
         };
 
-        // Add stack_in_heap_size before walk the function body
         let (_, ir_func) = &mut self.ir_funcs[ir_func_index];
-        ir_func.param_size = param_size;
-        ir_func.stack_in_heap_size = heap_size;
+        *ir_func = new_ir_func;
 
         let body = match self.walk_expr(func.body) {
             Some(e) => e,
@@ -1872,7 +1926,7 @@ impl Analyzer {
 
         // Finalize
         if func.has_escaped_variables {
-            self.var_level -= 1;
+            self.variables.decrement_var_level();
         }
 
         self.pop_type_scope();
