@@ -163,7 +163,7 @@ impl FunctionHeaderWithId {
 }
 
 #[derive(Debug)]
-struct VariableMap {
+pub struct VariableMap {
     variables: HashMapWithScope<Id, Entry>,
     next_temp_num: u32,
     var_level: usize,
@@ -227,7 +227,7 @@ impl VariableMap {
         loc
     }
 
-    pub fn create_param(&mut self, ir_func: &mut IRFunction, param: Param) -> CodeBuf {
+    fn create_param(&mut self, ir_func: &mut IRFunction, param: Param) -> CodeBuf {
         let mut stmts = CodeBuf::new();
 
         let var_size = type_size_nocheck(&param.ty);
@@ -278,7 +278,7 @@ impl VariableMap {
         }
     }
 
-    pub fn find(&self, name: Id) -> Option<&Entry> {
+    fn find(&self, name: Id) -> Option<&Entry> {
         self.variables.get(&name)
     }
 }
@@ -550,17 +550,6 @@ impl Analyzer {
     //  Expression
     // ====================================
 
-    // Return true if `walk_expr` passed `expr` may return a copied compound value
-    fn expr_return_copied(expr: &Expr) -> bool {
-        match expr {
-            // always
-            Expr::Tuple(..) | Expr::Struct(..) | Expr::Array(..) => true,
-            // only if the return value is a compound value
-            Expr::Call(..) | Expr::Block(..) => true,
-            _ => false,
-        }
-    }
-
     fn insert_type_param(param_ty: &Type, ty: &Type, map: &mut FxHashMap<TypeVar, Type>) {
         match (param_ty, ty) {
             (Type::App(ptycon, ptypes), Type::App(atycon, atypes)) if ptycon == atycon => {
@@ -823,19 +812,8 @@ impl Analyzer {
                 return None;
             }
             Expr::Field(comp_expr, field) => {
-                let should_store = Self::expr_return_copied(&comp_expr.kind);
                 let comp_expr = self.walk_expr(*comp_expr)?;
                 let mut is_mutable = comp_expr.is_mutable;
-
-                let loc = if should_store {
-                    if let Type::App(TypeCon::Pointer(..), _) = &comp_expr.ty {
-                        None
-                    } else {
-                        Some(self.new_temp_var(comp_expr.ty.clone()))
-                    }
-                } else {
-                    None
-                };
 
                 let ty = self.expand_name(comp_expr.ty.clone())?;
                 let mut ty = expand_wrap(ty);
@@ -896,39 +874,32 @@ impl Analyzer {
                 };
 
                 let ir = translate::field(
-                    loc.map(|loc| self.variables.relative_loc(&loc)),
+                    &mut self.ir_funcs[self.current_func_index].1,
+                    &mut self.variables,
                     comp_expr,
                     offset,
                 );
                 return Some(ExprInfo::new_lvalue(ir, field_ty, expr.span, is_mutable));
             }
             Expr::Subscript(expr, subscript_expr) => {
-                let should_store = Self::expr_return_copied(&expr.kind);
-
                 let expr = self.walk_expr_with_unwrap(*expr);
                 let subscript_expr = self.walk_expr_with_conversion(*subscript_expr, &Type::Int);
                 try_some!(expr, subscript_expr);
 
                 let mut expr = expr;
 
-                let loc = if should_store {
-                    Some(self.new_temp_var(expr.ty.clone()))
-                } else {
-                    None
+                let ty = match &expr.ty {
+                    Type::App(TypeCon::InHeap, types) => types[0].clone(),
+                    _ => expr.ty.clone(),
                 };
 
-                let (ty, is_in_heap) = match &expr.ty {
-                    Type::App(TypeCon::InHeap, types) => (types[0].clone(), true),
-                    _ => (expr.ty.clone(), false),
-                };
-
-                let (ty, is_pointer) = match ty {
-                    Type::App(TypeCon::Array(_), tys) => (tys[0].clone(), false),
+                let ty = match ty {
+                    Type::App(TypeCon::Array(_), tys) => tys[0].clone(),
                     Type::App(TypeCon::Pointer(is_mutable), tys) => {
                         expr.is_mutable = is_mutable;
 
                         match &tys[0] {
-                            Type::App(TypeCon::Array(_), tys) => (tys[0].clone(), true),
+                            Type::App(TypeCon::Array(_), tys) => tys[0].clone(),
                             ty => {
                                 error!(&expr.span, "expected array but got type `{}`", ty);
                                 return None;
@@ -946,14 +917,10 @@ impl Analyzer {
                 let span = expr.span.clone();
                 let is_lvalue = expr.is_lvalue;
                 let is_mutable = expr.is_mutable;
-                let ir = translate::subscript(
-                    loc.map(|loc| self.variables.relative_loc(&loc)),
-                    is_in_heap,
-                    is_pointer,
-                    expr,
-                    subscript_expr,
-                    &ty,
-                );
+
+                let ir_func = &mut self.ir_funcs[self.current_func_index].1;
+                let ir =
+                    translate::subscript(ir_func, &mut self.variables, expr, subscript_expr, &ty);
 
                 return Some(ExprInfo {
                     ty,
@@ -1209,11 +1176,11 @@ impl Analyzer {
             Expr::Block(block) => {
                 self.push_scope();
 
-                let (ty, ir) = self.walk_block(block, None)?;
+                let expr = self.walk_block(block, None)?;
 
                 self.pop_scope();
 
-                (ir, ty)
+                return Some(expr);
             }
             Expr::If(cond, then_expr, None) => {
                 let cond = self.walk_expr_with_conversion(*cond, &Type::Bool);
@@ -1614,7 +1581,7 @@ impl Analyzer {
     }
 
     #[inline(always)]
-    fn walk_block(&mut self, block: Block, impls: Option<Vec<Impl>>) -> Option<(Type, IRExpr)> {
+    fn walk_block(&mut self, block: Block, impls: Option<Vec<Impl>>) -> Option<ExprInfo> {
         // 1. Import extern modules
         self.insert_extern_module_headers(&block.imports);
 
@@ -1670,6 +1637,7 @@ impl Analyzer {
         }
 
         let result_expr = result_expr?;
+
         let result_expr_ir = IRExpr::Copy(box result_expr.ir, type_size_nocheck(&result_expr.ty));
 
         // Wrap in Seq if necessary
@@ -1679,7 +1647,7 @@ impl Analyzer {
             IRExpr::Seq(stmts, box result_expr_ir)
         };
 
-        Some((result_expr.ty, block_expr))
+        Some(ExprInfo::new(block_expr, result_expr.ty, result_expr.span))
     }
 
     // =======================================
@@ -2157,8 +2125,8 @@ impl Analyzer {
         self.current_func_index = 0;
 
         let body = self.walk_block(program.main, Some(program.impls));
-        if let Some((_, body)) = body {
-            self.ir_funcs[0].1.body = body;
+        if let Some(body) = body {
+            self.ir_funcs[0].1.body = body.ir;
         }
 
         self.pop_scope();

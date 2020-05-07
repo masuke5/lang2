@@ -1,6 +1,6 @@
 use crate::ast::BinOp;
-use crate::ir::{BinOp as IRBinOp, CodeBuf, Expr, Label, Stmt, VariableLoc};
-use crate::sema::ExprInfo;
+use crate::ir::{BinOp as IRBinOp, CodeBuf, Expr, Function, Label, Stmt, VariableLoc};
+use crate::sema::{ExprInfo, VariableMap};
 use crate::ty::{type_size_nocheck, Type, TypeCon};
 
 #[derive(Debug)]
@@ -102,63 +102,78 @@ pub fn literal_tuple(expr: ExprInfo) -> Expr {
     Expr::Copy(box (expr.ir), type_size_nocheck(&expr.ty))
 }
 
-pub fn field(loc: Option<RelativeVariableLoc>, comp_expr: ExprInfo, offset: usize) -> Expr {
-    let mut expr = comp_expr.ir;
-
-    if let Some(loc) = loc {
-        expr = Expr::Seq(
-            vec![Stmt::Store(loc.as_ir_loc(), expr)],
-            box (Expr::LoadRef(loc.as_ir_loc())),
-        );
-    }
-
-    if let Type::App(TypeCon::InHeap, types) = &comp_expr.ty {
-        if let Type::App(TypeCon::Pointer(_), _) = &types[0] {
-            expr = Expr::Copy(box (expr), 1);
-        } else {
-            expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
-        }
-    }
-
-    if let Type::App(TypeCon::Pointer(_), _) = &comp_expr.ty {
-        expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
-    }
-
-    if let Type::App(TypeCon::Wrapped, _) = &comp_expr.ty {
-        expr = Expr::Copy(box (expr), type_size_nocheck(&comp_expr.ty));
-    }
-
-    Expr::Offset(box (expr), box (Expr::Int(offset as i64)))
-}
-
-pub fn subscript(
-    loc: Option<RelativeVariableLoc>,
-    is_in_heap: bool,
-    is_pointer: bool,
+fn generate_pointer(
+    ir_func: &mut Function,
+    variables: &mut VariableMap,
     expr: ExprInfo,
-    subscript_expr: ExprInfo,
-    element_ty: &Type,
-) -> Expr {
+) -> (Expr, Type) {
     let mut ir = expr.ir;
+    let mut ty = expr.ty;
 
-    if let Some(loc) = loc {
+    if let Type::App(TypeCon::InHeap, types) = ty {
+        assert!(expr.is_lvalue);
+        ir = Expr::Dereference(box Expr::Copy(box ir, 1));
+        ty = types[0].clone();
+    }
+
+    if !expr.is_lvalue && !ty.is_wrapped() {
+        // Store it to temporary location and get a pointer to the location
+        let loc = variables.create_temp(ir_func, ty.clone());
+        let loc = variables.relative_loc(&loc);
+
         ir = Expr::Seq(
             vec![Stmt::Store(loc.as_ir_loc(), ir)],
             box (Expr::LoadRef(loc.as_ir_loc())),
         );
     }
 
-    if is_in_heap {
-        if is_pointer {
-            ir = Expr::Copy(box (ir), 1);
-        } else {
-            ir = Expr::Copy(box (ir), type_size_nocheck(&expr.ty));
+    if expr.is_lvalue {
+        if let Type::App(TypeCon::Wrapped, types) = ty {
+            ir = Expr::Dereference(box Expr::Copy(box ir, 1));
+            ty = types[0].clone();
         }
     }
 
-    if is_pointer {
-        ir = Expr::Copy(box ir, type_size_nocheck(&expr.ty));
+    (ir, ty)
+}
+
+fn generate_pointer_with_deref(
+    ir_func: &mut Function,
+    variables: &mut VariableMap,
+    expr: ExprInfo,
+) -> (Expr, Type) {
+    if let Type::App(TypeCon::Pointer(..), types) = &expr.ty {
+        return (Expr::Copy(box expr.ir, 1), types[0].clone());
     }
+
+    let (mut expr, mut ty) = generate_pointer(ir_func, variables, expr);
+    if let Type::App(TypeCon::Pointer(..), types) = ty {
+        expr = Expr::Dereference(box Expr::Copy(box expr, 1));
+        ty = types[0].clone();
+    }
+
+    (expr, ty)
+}
+
+pub fn field(
+    ir_func: &mut Function,
+    variables: &mut VariableMap,
+    comp_expr: ExprInfo,
+    offset: usize,
+) -> Expr {
+    let (expr, _) = generate_pointer_with_deref(ir_func, variables, comp_expr);
+
+    Expr::Offset(box expr, box Expr::Int(offset as i64))
+}
+
+pub fn subscript(
+    ir_func: &mut Function,
+    variables: &mut VariableMap,
+    expr: ExprInfo,
+    subscript_expr: ExprInfo,
+    element_ty: &Type,
+) -> Expr {
+    let (ir, _) = generate_pointer_with_deref(ir_func, variables, expr);
 
     // ir[subscript_expr * type_size_nocheck(element_ty)]
     Expr::Offset(

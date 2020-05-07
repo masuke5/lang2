@@ -213,9 +213,14 @@ fn add_2(n: *mut int): () = {
     return;
 }
 
+# lvalue & not in heap
 let tuple = (3141, 1314, 939);
 let ptr = &tuple;
-test_eq "dereference tuple field" 1314 ptr.1;
+test_eq "dereference tuple field 1" 1314 ptr.1;
+
+let ptr2 = &tuple;
+let ptr3 = &ptr2;
+test_eq "dereference tuple field 2" 939 ptr.2;
 
 let person = Person:{ name: "aa", age: 34, child: Child:{ age: 1, age_in_months: 0 } };
 let ptr = &person;
