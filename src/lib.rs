@@ -192,7 +192,7 @@ impl ExecuteOption {
         }
 
         // Optimization
-        for (_, body) in &mut module_bodies {
+        for body in module_bodies.values_mut() {
             match body {
                 ModuleBody::Normal(module) => opt::optimize(module, &self.optimize_option),
                 ModuleBody::Native(..) => {}

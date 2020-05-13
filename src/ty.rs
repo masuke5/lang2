@@ -322,7 +322,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
         | (b, Type::App(TypeCon::Fun(params, body), tys)) => {
             let mut map = FxHashMap::default();
             for (param, ty) in params.iter().zip(tys.iter()) {
-                map.insert(param.clone(), ty.clone());
+                map.insert(*param, ty.clone());
             }
 
             unify(span, &subst(*body.clone(), &map), b)?;
@@ -373,7 +373,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::App(TypeCon::Fun(params, body), tys) => {
             let mut map = FxHashMap::default();
             for (param, ty) in params.iter().zip(tys.iter()) {
-                map.insert(param.clone(), ty.clone());
+                map.insert(*param, ty.clone());
             }
 
             let body = subst(*body.clone(), &map);

@@ -197,7 +197,7 @@ impl Gc {
                 Entry::Vacant(v) => v.insert(LinkedList::new()),
             };
 
-            freelist.push_front(region_ptr.clone());
+            freelist.push_front(region_ptr);
         }
     }
 
