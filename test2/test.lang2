@@ -297,7 +297,7 @@ fn return_ptr(): *int = {
 
 fn return_ptr_to_copied_arg(arg: int): *int = &arg;
 
-## array ##
+## array and slice ##
 
 let mut arr = [3; 10];
 test_eq "array subscript" 3 arr[0];
@@ -308,6 +308,22 @@ test_eq "assign to array" 9134 arr[3];
 let ptr = &mut arr;
 ptr[4] := 30984304;
 test_eq "assign to pointer to array" 30984304 arr[4];
+
+let mut arr_for_slice = [5; 5];
+arr_for_slice[1] := 6;
+arr_for_slice[2] := 7;
+arr_for_slice[3] := 8;
+let slice = &arr_for_slice[2..4];
+
+test_eq "slice subscript" 7 (*slice[0]);
+
+let mut_slice = &mut arr_for_slice[1..4];
+*mut_slice[0] := 10;
+test_eq "assign to slice" 10 arr_for_slice[1];
+
+let comp_arr_for_slice = [(13241, 41341); 2];
+let comp_slice = &comp_arr_for_slice[0..2];
+test_eq "compound slice subscript" 41341 ((*comp_slice[0]).1);
 
 test_eq "function passed array" 30993462 (sum arr);
 test_eq "function returning array" 4 (one_to_ten ())[3];

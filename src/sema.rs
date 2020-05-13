@@ -900,49 +900,59 @@ impl Analyzer {
                 let subscript_expr = self.walk_expr_with_conversion(*subscript_expr, &Type::Int);
                 try_some!(expr, subscript_expr);
 
-                let mut expr = expr;
-
                 let ty = match &expr.ty {
                     Type::App(TypeCon::InHeap, types) => types[0].clone(),
                     _ => expr.ty.clone(),
                 };
 
-                let ty = match ty {
-                    Type::App(TypeCon::Array(_), tys) => tys[0].clone(),
-                    Type::App(TypeCon::Pointer(is_mutable), tys) => {
-                        expr.is_mutable = is_mutable;
-
-                        match &tys[0] {
-                            Type::App(TypeCon::Array(_), tys) => tys[0].clone(),
-                            ty => {
-                                error!(&expr.span, "expected array but got type `{}`", ty);
-                                return None;
-                            }
-                        }
+                let (ty, is_mutable) = match ty {
+                    Type::App(TypeCon::Pointer(is_mutable), types) => {
+                        (types[0].clone(), is_mutable)
                     }
-                    ty => {
-                        error!(&expr.span, "expected array but got type `{}`", ty);
-                        return None;
-                    }
+                    ty => (ty, expr.is_mutable),
                 };
 
                 unify(&subscript_expr.span, &subscript_expr.ty, &Type::Int);
 
-                let span = expr.span.clone();
-                let is_lvalue = expr.is_lvalue;
-                let is_mutable = expr.is_mutable;
+                match ty {
+                    Type::App(TypeCon::Array(..), types) => {
+                        let element_ty = types[0].clone();
+                        let span = expr.span.clone();
+                        let is_lvalue = expr.is_lvalue;
 
-                let ir_func = &mut self.ir_funcs[self.current_func_index].1;
-                let ir =
-                    translate::subscript(ir_func, &mut self.variables, expr, subscript_expr, &ty);
+                        let ir_func = &mut self.ir_funcs[self.current_func_index].1;
+                        let ir = translate::subscript(
+                            ir_func,
+                            &mut self.variables,
+                            expr,
+                            subscript_expr,
+                            &element_ty,
+                        );
 
-                return Some(ExprInfo {
-                    ty,
-                    ir,
-                    span,
-                    is_lvalue,
-                    is_mutable,
-                });
+                        return Some(ExprInfo {
+                            ty: element_ty,
+                            ir,
+                            span,
+                            is_lvalue,
+                            is_mutable,
+                        });
+                    }
+                    Type::App(TypeCon::Slice(is_mutable), types) => {
+                        let span = expr.span.clone();
+                        let ir = translate::subscript_slice(expr, subscript_expr, &types[0]);
+                        return Some(ExprInfo {
+                            ty: Type::App(TypeCon::Pointer(is_mutable), vec![types[0].clone()]),
+                            ir,
+                            span,
+                            is_lvalue: true,
+                            is_mutable,
+                        });
+                    }
+                    ty => {
+                        error!(&expr.span, "expected array type but got type `{}`", ty);
+                        return None;
+                    }
+                }
             }
             Expr::Variable(name, _) => {
                 let entry = match self.variables.find(name) {
