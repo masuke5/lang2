@@ -48,7 +48,7 @@ impl GcRegion {
 
     fn new(size: usize, consists_of_value: bool) -> NonNull<Self> {
         unsafe {
-            let ptr = libc::malloc(mem::size_of::<Self>() + size) as *mut Self;
+            let ptr = libc::calloc(1, mem::size_of::<Self>() + size) as *mut Self;
             (*ptr).size = size;
             (*ptr).bits = if consists_of_value {
                 Self::CONSISTS_OF_VALUE
