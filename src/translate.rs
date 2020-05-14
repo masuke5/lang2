@@ -1,6 +1,6 @@
 use crate::ast::BinOp;
 use crate::ir::{BinOp as IRBinOp, CodeBuf, Expr, Function, Label, Stmt, VariableLoc};
-use crate::sema::{ExprInfo, VariableMap};
+use crate::sema::{ExprInfo, FunctionHeaderWithId, VariableMap};
 use crate::ty::{type_size_nocheck, Type, TypeCon};
 
 #[derive(Debug)]
@@ -365,8 +365,35 @@ pub fn array_to_slice(array: Expr, size: usize) -> Expr {
     Expr::Alloc(box Expr::Record(vec![array, Expr::Int(size as i64)]))
 }
 
-pub fn slice(list: ExprInfo, start: ExprInfo, end: ExprInfo, elem_size: usize) -> Expr {
+pub fn slice(
+    list: ExprInfo,
+    start: Option<ExprInfo>,
+    end: Option<ExprInfo>,
+    elem_size: usize,
+    len_func: &FunctionHeaderWithId,
+) -> Expr {
     // TODO: Add support for rvalue
+
+    let start = if let Some(start) = start {
+        copy(start.ir, &start.ty)
+    } else {
+        Expr::Int(0)
+    };
+
+    let end = if let Some(end) = end {
+        copy(end.ir, &end.ty)
+    } else {
+        match &list.ty {
+            Type::App(TypeCon::Array(size), _) => Expr::Int(*size as i64),
+            Type::App(TypeCon::Slice(..), _) => Expr::Call(
+                box Expr::FuncPos(len_func.module_id, len_func.func_id),
+                // TODO: Replace with loading temporary location
+                box list.ir.clone(),
+                1,
+            ),
+            _ => Expr::Int(0),
+        }
+    };
 
     // alloc([
     //     &list + start * elem_size,
@@ -377,15 +404,11 @@ pub fn slice(list: ExprInfo, start: ExprInfo, end: ExprInfo, elem_size: usize) -
             box list.ir,
             box Expr::BinOp(
                 IRBinOp::Mul,
-                box copy(start.ir.clone(), &start.ty),
+                box start.clone(),
                 box Expr::Int(elem_size as i64),
             ),
         ),
-        Expr::BinOp(
-            IRBinOp::Sub,
-            box copy(end.ir, &end.ty),
-            box copy(start.ir, &start.ty),
-        ),
+        Expr::BinOp(IRBinOp::Sub, box end, box start),
     ]))
 }
 

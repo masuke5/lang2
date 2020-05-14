@@ -8,10 +8,18 @@ use crate::ir::{
 };
 use crate::module::{FunctionHeader, Implementation, Module, ModuleContainer, ModuleHeader};
 use crate::span::{Span, Spanned};
-use crate::translate;
-use crate::translate::RelativeVariableLoc;
+use crate::translate::{self, RelativeVariableLoc};
 use crate::ty::*;
 use crate::utils::HashMapWithScope;
+
+fn rev_map<T, V>(value: Option<T>, f: impl FnOnce(T) -> Option<V>) -> Option<Option<V>> {
+    let value = if let Some(value) = value {
+        Some(f(value)?)
+    } else {
+        None
+    };
+    Some(value)
+}
 
 macro_rules! try_some {
     ($($var:ident),*) => {
@@ -122,10 +130,10 @@ enum Entry {
 
 #[derive(Debug, Clone)]
 pub struct FunctionHeaderWithId {
-    module_id: Option<usize>,
-    original_name: Option<Id>,
-    func_id: usize,
-    header: FunctionHeader,
+    pub module_id: Option<usize>,
+    pub original_name: Option<Id>,
+    pub func_id: usize,
+    pub header: FunctionHeader,
 }
 
 impl FunctionHeaderWithId {
@@ -1125,8 +1133,10 @@ impl Analyzer {
                 is_mutable,
             ) => {
                 let list_expr = self.walk_expr_with_unwrap_and_deref(*list_expr);
-                let start = self.walk_expr_with_conversion(*start, &Type::Int);
-                let end = self.walk_expr_with_conversion(*end, &Type::Int);
+                let start = rev_map(start, |start| {
+                    self.walk_expr_with_conversion(*start, &Type::Int)
+                });
+                let end = rev_map(end, |end| self.walk_expr_with_conversion(*end, &Type::Int));
                 try_some!(list_expr, start, end);
 
                 if list_expr.is_lvalue && is_mutable && !list_expr.is_mutable {
@@ -1146,7 +1156,13 @@ impl Analyzer {
                     }
                 };
 
-                let ir = translate::slice(list_expr, start, end, type_size_nocheck(&elem_ty));
+                let len_func = match self.variables.find(IdMap::new_id("len")) {
+                    Some(Entry::Function(header)) => header,
+                    _ => panic!("Not found `std::len` function"),
+                };
+
+                let ir =
+                    translate::slice(list_expr, start, end, type_size_nocheck(&elem_ty), len_func);
                 (ir, Type::App(TypeCon::Slice(is_mutable), vec![elem_ty]))
             }
             Expr::Address(expr, is_mutable) => {
@@ -1301,7 +1317,13 @@ impl Analyzer {
                 .iter()
                 .map(|(_, e)| &e.kind)
                 .any(Self::expr_has_side_effects),
-            Subscript(e1, e2) | BinOp(_, e1, e2) | Range(e1, e2) => {
+            Range(s, e) => {
+                s.as_ref()
+                    .map_or(false, |e| Self::expr_has_side_effects(&e.kind))
+                    || e.as_ref()
+                        .map_or(false, |e| Self::expr_has_side_effects(&e.kind))
+            }
+            Subscript(e1, e2) | BinOp(_, e1, e2) => {
                 Self::expr_has_side_effects(&e1.kind) || Self::expr_has_side_effects(&e2.kind)
             }
             Array(expr, _)

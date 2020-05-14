@@ -258,7 +258,7 @@ pub enum Expr {
     Array(Box<Spanned<Expr>>, usize),
     Field(Box<Spanned<Expr>>, Field),
     Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    Range(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    Range(Option<Box<Spanned<Expr>>>, Option<Box<Spanned<Expr>>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Variable(Id, bool),
     Path(SymbolPath),
@@ -528,8 +528,12 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
         }
         Expr::Range(start, end) => {
             println!("range {}", span_to_string(&expr.span));
-            dump_expr(&start, depth + 1);
-            dump_expr(&end, depth + 1);
+            if let Some(start) = start {
+                dump_expr(&start, depth + 1);
+            }
+            if let Some(end) = end {
+                dump_expr(&end, depth + 1);
+            }
         }
         Expr::Variable(name, is_escaped) => {
             println!(

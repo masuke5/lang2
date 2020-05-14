@@ -555,20 +555,6 @@ impl<'a> Parser<'a> {
         Some(expr)
     }
 
-    fn parse_range(&mut self) -> Option<Spanned<Expr>> {
-        let parse = Self::parse_subscript;
-
-        let mut expr = parse(self)?;
-        if self.consume(&Token::DoubleDot) {
-            let start = expr;
-            let end = parse(self)?;
-            let span = Span::merge(&start.span, &end.span);
-            expr = spanned(Expr::Range(Box::new(start), Box::new(end)), span);
-        }
-
-        Some(expr)
-    }
-
     fn next_is_arg(&self) -> bool {
         match &self.peek().kind {
             Token::Number(_)
@@ -583,7 +569,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call(&mut self) -> Option<Spanned<Expr>> {
-        let parse = Self::parse_range;
+        let parse = Self::parse_subscript;
 
         let mut expr = parse(self)?;
 
@@ -591,6 +577,43 @@ impl<'a> Parser<'a> {
             let arg_expr = parse(self)?;
             let span = Span::merge(&expr.span, &arg_expr.span);
             expr = spanned(Expr::Call(Box::new(expr), Box::new(arg_expr)), span);
+        }
+
+        Some(expr)
+    }
+
+    fn parse_range_end(
+        &mut self,
+        parse: fn(&mut Self) -> Option<Spanned<Expr>>,
+        start: Option<Spanned<Expr>>,
+        start_span: &Span,
+    ) -> Option<Spanned<Expr>> {
+        let (end, span) = if self.next_is_arg() {
+            let end = parse(self)?;
+            let span = Span::merge(start_span, &end.span);
+            (Some(end), span)
+        } else {
+            (None, Span::merge(start_span, &self.prev().span))
+        };
+
+        Some(spanned(
+            Expr::Range(start.map(Box::new), end.map(Box::new)),
+            span,
+        ))
+    }
+
+    fn parse_range(&mut self) -> Option<Spanned<Expr>> {
+        let parse = Self::parse_call;
+
+        if self.consume(&Token::DoubleDot) {
+            let start_span = self.prev().span.clone();
+            return self.parse_range_end(parse, None, &start_span);
+        }
+
+        let mut expr = parse(self)?;
+        if self.consume(&Token::DoubleDot) {
+            let start_span = expr.span.clone();
+            expr = self.parse_range_end(parse, Some(expr), &start_span)?;
         }
 
         Some(expr)
@@ -611,7 +634,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> Option<Spanned<Expr>> {
-        let parse = Self::parse_call;
+        let parse = Self::parse_range;
 
         match self.peek().kind {
             Token::Asterisk => self.parse_unary_op(parse, Expr::Dereference),
