@@ -1,7 +1,8 @@
 use crate::ast::SymbolPath;
-use crate::id::reserved_id;
+use crate::id::{reserved_id, IdMap};
 use crate::module::{ModuleBuilder, ModuleWithChild};
-use crate::ty::{Type, TypeCon};
+use crate::ty::{Type, TypeCon, TypeVar};
+use crate::value::Value;
 use crate::vm::VM;
 
 fn printnln(vm: &mut VM) {
@@ -28,6 +29,19 @@ fn println(vm: &mut VM) {
     println!("{}", s);
 }
 
+#[repr(C)]
+#[derive(Debug, Clone)]
+struct Slice {
+    values: *mut Value,
+    len: Value,
+}
+
+fn len(vm: &mut VM) {
+    let slice: *const Slice = vm.get_value(vm.arg_loc(0, 1)).as_ptr();
+    let len = unsafe { (*slice).len.as_i64() };
+    vm.write_return_value(&[Value::new_i64(len)], 1);
+}
+
 pub fn module() -> ModuleWithChild {
     let mut b = ModuleBuilder::new();
 
@@ -35,6 +49,17 @@ pub fn module() -> ModuleWithChild {
     b.define_func("printnln", vec![ltype!(int)], ltype!(unit), printnln);
     b.define_func("print", vec![ltype!(*string)], ltype!(unit), print);
     b.define_func("println", vec![ltype!(*string)], ltype!(unit), println);
+
+    {
+        let var = TypeVar::new();
+        b.define_func_poly(
+            "len",
+            vec![(IdMap::new_id("T"), var)],
+            vec![Type::App(TypeCon::Slice(false), vec![Type::Var(var)])],
+            Type::Int,
+            len,
+        );
+    }
 
     b.build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
 }
