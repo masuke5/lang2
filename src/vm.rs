@@ -168,6 +168,13 @@ impl VM {
         unsafe { &*value.as_ptr() }
     }
 
+    pub fn write_return_value(&mut self, values: &[Value], args_size: usize) {
+        let loc = self.fp - args_size - values.len();
+        for (i, value) in values.iter().enumerate() {
+            self.stack[loc + i] = *value;
+        }
+    }
+
     fn dump_value(value: Value, depth: usize) {
         print!("{}{:x}", "  ".repeat(depth), value.as_u64());
         if value.is_heap_ptr() {
@@ -499,6 +506,8 @@ impl VM {
         }
 
         let func = self.main_func().clone();
+
+        assert!(self.ep.is_null());
         self.ep = self.alloc_stack_frame_in_heap(func.stack_in_heap_size, self.ep);
         self.stack[0] = Value::new_ptr_to_heap(self.ep);
 

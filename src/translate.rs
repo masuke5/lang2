@@ -187,15 +187,17 @@ pub fn subscript(
 }
 
 pub fn subscript_slice(expr: ExprInfo, subscript_expr: ExprInfo, element_ty: &Type) -> Expr {
+    // TODO: Add support for rvalue
+
     // expr[0][subscript_expr * type_size_nocheck(element_ty)]
-    Expr::Offset(
-        box copy(expr.ir, &expr.ty),
+    Expr::Pointer(box Expr::Offset(
+        box Expr::Copy(box Expr::Dereference(box copy(expr.ir, &expr.ty)), 1),
         box Expr::BinOp(
             IRBinOp::Mul,
             box copy(subscript_expr.ir, &subscript_expr.ty),
             box Expr::Int(type_size_nocheck(element_ty) as i64),
         ),
-    )
+    ))
 }
 
 pub fn variable(loc: &RelativeVariableLoc) -> Expr {

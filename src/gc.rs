@@ -16,7 +16,7 @@ impl fmt::Debug for GcRegion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "GcRegion {{ is_marked: {}, consists_of_value: {}, size: {}, data: {:p} }}",
+            "GcRegion {{ is_marked: {}, consists_of_value: {}, size: {}, data ({:p}) }}",
             self.is_marked(),
             self.consists_of_value(),
             self.size,
