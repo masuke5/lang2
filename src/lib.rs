@@ -86,7 +86,7 @@ impl ExecuteOption {
             enable_trace: false,
             enable_measure: false,
             optimize_option: OptimizeOption {
-                calc_at_compile_time: false,
+                constant_folding: false,
             },
         }
     }

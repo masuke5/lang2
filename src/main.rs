@@ -114,11 +114,11 @@ fn main() {
 
     let optimize_option = if matches.is_present("enable-optimization") {
         OptimizeOption {
-            calc_at_compile_time: true,
+            constant_folding: true,
         }
     } else {
         OptimizeOption {
-            calc_at_compile_time: false,
+            constant_folding: false,
         }
     };
 

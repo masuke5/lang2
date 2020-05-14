@@ -6,8 +6,7 @@ use crate::ir::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OptimizeOption {
-    // Calculation at compile time
-    pub calc_at_compile_time: bool,
+    pub constant_folding: bool,
 }
 
 fn try_convert_to_int(expr: &Expr) -> Option<i64> {
@@ -94,7 +93,7 @@ fn scan_expr_in_stmt(stmt: &mut Stmt, func: impl FnMut(&mut Expr) + Clone) {
     }
 }
 
-fn calc_at_compile_time(expr: &mut Expr) {
+fn fold_constant(expr: &mut Expr) {
     scan_expr(expr, |expr| {
         if let Expr::Seq(..) = expr {
             panic!();
@@ -337,10 +336,10 @@ pub fn optimize(module: &mut Module, option: &OptimizeOption) {
             scan_expr_in_stmt(stmt, remove_redundant_copy);
         }
 
-        // Calculation at comple time
-        if option.calc_at_compile_time {
+        // Constant folding
+        if option.constant_folding {
             for stmt in &mut stmts {
-                scan_expr_in_stmt(stmt, calc_at_compile_time);
+                scan_expr_in_stmt(stmt, fold_constant);
             }
         }
 
