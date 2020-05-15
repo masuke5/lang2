@@ -187,8 +187,6 @@ pub fn subscript(
 }
 
 pub fn subscript_slice(expr: ExprInfo, subscript_expr: ExprInfo, element_ty: &Type) -> Expr {
-    // TODO: Add support for rvalue
-
     // expr[0][subscript_expr * type_size_nocheck(element_ty)]
     Expr::Pointer(box Expr::Offset(
         box Expr::Copy(box Expr::Dereference(box copy(expr.ir, &expr.ty)), 1),
@@ -359,10 +357,8 @@ pub fn if_else_expr(cond: ExprInfo, then: ExprInfo, els: ExprInfo) -> Expr {
     )
 }
 
-pub fn array_to_slice(array: Expr, size: usize) -> Expr {
-    // TODO: Add support for rvalue
-
-    Expr::Alloc(box Expr::Record(vec![array, Expr::Int(size as i64)]))
+pub fn array_to_slice(array: ExprInfo, size: usize) -> Expr {
+    Expr::Alloc(box Expr::Record(vec![array.ir, Expr::Int(size as i64)]))
 }
 
 pub fn slice(
@@ -372,8 +368,6 @@ pub fn slice(
     elem_size: usize,
     len_func: &FunctionHeaderWithId,
 ) -> Expr {
-    // TODO: Add support for rvalue
-
     let start = if let Some(start) = start {
         copy(start.ir, &start.ty)
     } else {
@@ -387,7 +381,7 @@ pub fn slice(
             Type::App(TypeCon::Array(size), _) => Expr::Int(*size as i64),
             Type::App(TypeCon::Slice(..), _) => Expr::Call(
                 box Expr::FuncPos(len_func.module_id, len_func.func_id),
-                // TODO: Replace with loading temporary location
+                // TODO: Don't copy
                 box list.ir.clone(),
                 1,
             ),

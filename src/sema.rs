@@ -60,7 +60,7 @@ pub enum ImportedEntry {
     Module(Id),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExprInfo {
     pub ty: Type,
     pub span: Span,
@@ -650,15 +650,10 @@ impl Analyzer {
                 Type::App(TypeCon::Pointer(arr_is_mutable), elem_type),
                 Type::App(TypeCon::Slice(slice_is_mutable), ..),
             ) => {
-                let is_mutable = match (arr_is_mutable, slice_is_mutable) {
-                    (true, true) => true,
-                    (true, false) => false,
-                    (false, true) => false,
-                    (false, false) => false,
-                };
+                let is_mutable = *arr_is_mutable && *slice_is_mutable;
 
                 if let Type::App(TypeCon::Array(size), elem_type) = &elem_type[0] {
-                    expr.ir = translate::array_to_slice(expr.ir, *size);
+                    expr.ir = translate::array_to_slice(expr.clone(), *size);
                     expr.ty = Type::App(TypeCon::Slice(is_mutable), vec![elem_type[0].clone()]);
                 }
             }
@@ -1138,6 +1133,11 @@ impl Analyzer {
                 });
                 let end = rev_map(end, |end| self.walk_expr_with_conversion(*end, &Type::Int));
                 try_some!(list_expr, start, end);
+
+                if !list_expr.is_lvalue {
+                    error!(&list_expr.span, "this expression is not lvalue");
+                    return None;
+                }
 
                 if list_expr.is_lvalue && is_mutable && !list_expr.is_mutable {
                     error!(&list_expr.span, "immutable expression");
