@@ -1127,7 +1127,7 @@ impl Analyzer {
                 },
                 is_mutable,
             ) => {
-                let list_expr = self.walk_expr_with_unwrap_and_deref(*list_expr);
+                let list_expr = self.walk_expr(*list_expr);
                 let start = rev_map(start, |start| {
                     self.walk_expr_with_conversion(*start, &Type::Int)
                 });
@@ -1143,7 +1143,10 @@ impl Analyzer {
                     error!(&list_expr.span, "immutable expression");
                 }
 
-                let elem_ty = match &list_expr.ty {
+                let list_ty = expand_inheap(list_expr.ty.clone());
+                let list_ty = expand_wrap(list_ty);
+
+                let elem_ty = match &list_ty {
                     Type::App(TypeCon::Array(..), types) | Type::App(TypeCon::Slice(..), types) => {
                         types[0].clone()
                     }
@@ -1157,12 +1160,21 @@ impl Analyzer {
                 };
 
                 let len_func = match self.variables.find(IdMap::new_id("len")) {
-                    Some(Entry::Function(header)) => header,
+                    Some(Entry::Function(header)) => header.clone(),
                     _ => panic!("Not found `std::len` function"),
                 };
 
-                let ir =
-                    translate::slice(list_expr, start, end, type_size_nocheck(&elem_ty), len_func);
+                let current_func = &mut self.ir_funcs[self.current_func_index].1;
+                let variables = &mut self.variables;
+                let ir = translate::slice(
+                    current_func,
+                    variables,
+                    list_expr,
+                    start,
+                    end,
+                    type_size_nocheck(&elem_ty),
+                    &len_func,
+                );
                 (ir, Type::App(TypeCon::Slice(is_mutable), vec![elem_ty]))
             }
             Expr::Address(expr, is_mutable) => {

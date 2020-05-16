@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::id::Id;
+use crate::span::Spanned;
 use crate::utils::HashMapWithScope;
 
 struct Finder<'a> {
@@ -92,7 +93,18 @@ impl<'a> Finder<'a> {
                 }
             }
             Expr::Address(expr, _) => {
-                self.mark(&mut expr.kind);
+                if let Expr::Subscript(
+                    ref mut expr,
+                    box Spanned {
+                        kind: Expr::Range(..),
+                        ..
+                    },
+                ) = expr.kind
+                {
+                    self.mark(&mut expr.kind);
+                } else {
+                    self.mark(&mut expr.kind);
+                }
             }
             _ => {}
         }

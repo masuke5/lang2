@@ -362,12 +362,16 @@ pub fn array_to_slice(array: ExprInfo, size: usize) -> Expr {
 }
 
 pub fn slice(
+    ir_func: &mut Function,
+    variables: &mut VariableMap,
     list: ExprInfo,
     start: Option<ExprInfo>,
     end: Option<ExprInfo>,
     elem_size: usize,
     len_func: &FunctionHeaderWithId,
 ) -> Expr {
+    let (list, list_ty) = generate_pointer(ir_func, variables, list);
+
     let start = if let Some(start) = start {
         copy(start.ir, &start.ty)
     } else {
@@ -377,12 +381,11 @@ pub fn slice(
     let end = if let Some(end) = end {
         copy(end.ir, &end.ty)
     } else {
-        match &list.ty {
+        match &list_ty {
             Type::App(TypeCon::Array(size), _) => Expr::Int(*size as i64),
             Type::App(TypeCon::Slice(..), _) => Expr::Call(
                 box Expr::FuncPos(len_func.module_id, len_func.func_id),
-                // TODO: Don't copy
-                box list.ir.clone(),
+                box list.clone(),
                 1,
             ),
             _ => Expr::Int(0),
@@ -395,7 +398,7 @@ pub fn slice(
     // ])
     Expr::Alloc(box Expr::Record(vec![
         Expr::Offset(
-            box list.ir,
+            box list,
             box Expr::BinOp(
                 IRBinOp::Mul,
                 box start.clone(),

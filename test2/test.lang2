@@ -322,6 +322,9 @@ test_eq "make slice 2" 31 (sum_slice (&arr_for_slice[..]));
 test_eq "make slice 3" 13 (sum_slice (&arr_for_slice[3..]));
 test_eq "make slice 4" 18 (sum_slice (&arr_for_slice[..3]));
 
+let wrapped_arr = f arr_for_slice;
+test_eq "make slice from wrapped slice" 21 (sum_slice (&arr_for_slice[1..4]));
+
 let mut_slice = &mut arr_for_slice[1..4];
 *mut_slice[0] := 10;
 test_eq "assign to slice" 10 arr_for_slice[1];
