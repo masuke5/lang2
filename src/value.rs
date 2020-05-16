@@ -172,3 +172,11 @@ impl fmt::Display for Lang2String {
         f.write_str(s)
     }
 }
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct Slice {
+    pub values: *mut Value,
+    pub start: Value,
+    pub end: Value,
+}

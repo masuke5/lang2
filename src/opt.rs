@@ -62,6 +62,7 @@ fn scan_expr(expr: &mut Expr, mut func: impl FnMut(&mut Expr)) {
                 stack.push(expr.as_mut());
             }
             Expr::Offset(expr1, expr2)
+            | Expr::OffsetSlice(expr1, expr2, _)
             | Expr::BinOp(_, expr1, expr2)
             | Expr::Call(expr1, expr2, _) => {
                 stack.push(expr1.as_mut());
@@ -249,6 +250,7 @@ fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
                     scan(expr, new_stmts);
                 }
                 Expr::Offset(expr1, expr2)
+                | Expr::OffsetSlice(expr1, expr2, _)
                 | Expr::BinOp(_, expr1, expr2)
                 | Expr::Call(expr1, expr2, _) => {
                     if !expr_is_seq(expr1) && expr_is_seq(expr2) {

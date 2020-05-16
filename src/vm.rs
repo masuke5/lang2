@@ -9,7 +9,7 @@ use crate::bytecode;
 use crate::bytecode::{opcode, opcode_name, Bytecode, Function};
 use crate::gc::Gc;
 use crate::module::Module;
-use crate::value::{Lang2String, Value};
+use crate::value::{Lang2String, Slice, Value};
 
 pub const SELF_MODULE_ID: usize = 0x7fff_ffff;
 pub const CALL_STACK_SIZE: usize = 5;
@@ -638,6 +638,20 @@ impl VM {
                     let ptr = self.stack[self.sp].as_ptr::<Value>();
                     let new_ptr = unsafe { ptr.add(offset) };
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
+                }
+                opcode::OFFSET_SLICE => {
+                    let offset = pop!(self).as_i64() as usize;
+                    let slice_ptr: *const Slice = pop!(self).as_ptr();
+                    let elem_size = arg as usize;
+
+                    // (slice_ptr + (slice_ptr[1] * elem_size)) + offset * elem_size
+                    let ptr = unsafe {
+                        let start = (*slice_ptr).start.as_i64() as usize;
+                        let start_ptr = (*slice_ptr).values.add(start * elem_size);
+                        start_ptr.add(offset * elem_size)
+                    };
+
+                    push!(self, Value::new_ptr(ptr));
                 }
                 opcode::DUPLICATE => {
                     // Get argument from ref

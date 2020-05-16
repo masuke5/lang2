@@ -1166,15 +1166,8 @@ impl Analyzer {
 
                 let current_func = &mut self.ir_funcs[self.current_func_index].1;
                 let variables = &mut self.variables;
-                let ir = translate::slice(
-                    current_func,
-                    variables,
-                    list_expr,
-                    start,
-                    end,
-                    type_size_nocheck(&elem_ty),
-                    &len_func,
-                );
+                let ir =
+                    translate::slice(current_func, variables, list_expr, start, end, &len_func);
                 (ir, Type::App(TypeCon::Slice(is_mutable), vec![elem_ty]))
             }
             Expr::Address(expr, is_mutable) => {

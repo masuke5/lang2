@@ -187,15 +187,12 @@ pub fn subscript(
 }
 
 pub fn subscript_slice(expr: ExprInfo, subscript_expr: ExprInfo, element_ty: &Type) -> Expr {
-    // expr[0][subscript_expr * type_size_nocheck(element_ty)]
-    Expr::Pointer(box Expr::Offset(
-        box Expr::Copy(box Expr::Dereference(box copy(expr.ir, &expr.ty)), 1),
-        box Expr::BinOp(
-            IRBinOp::Mul,
-            box copy(subscript_expr.ir, &subscript_expr.ty),
-            box Expr::Int(type_size_nocheck(element_ty) as i64),
-        ),
-    ))
+    // expr[0][expr[1] * sizeof(element_ty)][subscript_expr * sizeof(element_ty)]
+    Expr::OffsetSlice(
+        box copy(expr.ir, &expr.ty),
+        box copy(subscript_expr.ir, &subscript_expr.ty),
+        type_size_nocheck(element_ty),
+    )
 }
 
 pub fn variable(loc: &RelativeVariableLoc) -> Expr {
@@ -358,7 +355,11 @@ pub fn if_else_expr(cond: ExprInfo, then: ExprInfo, els: ExprInfo) -> Expr {
 }
 
 pub fn array_to_slice(array: ExprInfo, size: usize) -> Expr {
-    Expr::Alloc(box Expr::Record(vec![array.ir, Expr::Int(size as i64)]))
+    Expr::Alloc(box Expr::Record(vec![
+        array.ir,
+        Expr::Int(0),
+        Expr::Int(size as i64),
+    ]))
 }
 
 pub fn slice(
@@ -367,7 +368,6 @@ pub fn slice(
     list: ExprInfo,
     start: Option<ExprInfo>,
     end: Option<ExprInfo>,
-    elem_size: usize,
     len_func: &FunctionHeaderWithId,
 ) -> Expr {
     let (list, list_ty) = generate_pointer(ir_func, variables, list);
@@ -392,21 +392,8 @@ pub fn slice(
         }
     };
 
-    // alloc([
-    //     &list + start * elem_size,
-    //     end - start,
-    // ])
-    Expr::Alloc(box Expr::Record(vec![
-        Expr::Offset(
-            box list,
-            box Expr::BinOp(
-                IRBinOp::Mul,
-                box start.clone(),
-                box Expr::Int(elem_size as i64),
-            ),
-        ),
-        Expr::BinOp(IRBinOp::Sub, box end, box start),
-    ]))
+    // alloc([list, start, end])
+    Expr::Alloc(box Expr::Record(vec![list, start, end]))
 }
 
 // Statement

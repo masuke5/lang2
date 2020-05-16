@@ -127,6 +127,11 @@ impl Generator {
                     insts.push_noarg(opcode::OFFSET);
                 }
             }
+            Expr::OffsetSlice(slice, offset, size) => {
+                insts.append(self.gen_expr(&slice));
+                insts.append(self.gen_expr(&offset));
+                insts.push(opcode::OFFSET_SLICE, *size as u8);
+            }
             Expr::Duplicate(expr, count) => {
                 if *count > std::u32::MAX as usize {
                     panic!("too many count: {}", count);

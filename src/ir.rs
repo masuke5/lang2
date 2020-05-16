@@ -105,6 +105,7 @@ pub enum Expr {
     Dereference(Box<Expr>),
     Copy(Box<Expr>, usize),
     Offset(Box<Expr>, Box<Expr>),
+    OffsetSlice(Box<Expr>, Box<Expr>, usize),
     Duplicate(Box<Expr>, usize),
     LoadCopy(VariableLoc, usize),
     LoadRef(VariableLoc),
@@ -130,7 +131,7 @@ impl Expr {
             Expr::Unit => 0,
             Expr::Pointer(..) | Expr::Dereference(..) => 1,
             Expr::Copy(_, size) => *size,
-            Expr::Offset(..) => 1,
+            Expr::Offset(..) | Expr::OffsetSlice(..) => 1,
             Expr::Duplicate(expr, count) => expr.size() * count,
             Expr::LoadCopy(_, size) => *size,
             Expr::LoadRef(..) => 1,
@@ -163,6 +164,9 @@ impl fmt::Display for Expr {
             Expr::Dereference(expr) => write!(f, "*{}", expr),
             Expr::Copy(expr, size) => write!(f, "copy({}, {})", expr, size),
             Expr::Offset(expr, offset) => write!(f, "offset({}, {})", expr, offset),
+            Expr::OffsetSlice(slice, offset, size) => {
+                write!(f, "s_offset({}, {}, size={})", slice, offset, size)
+            }
             Expr::Duplicate(expr, count) => write!(f, "dup({}, {})", expr, count),
             Expr::LoadCopy(loc, size) => write!(f, "lcopy({}, {})", loc, size),
             Expr::LoadRef(loc) => write!(f, "&{}", loc),

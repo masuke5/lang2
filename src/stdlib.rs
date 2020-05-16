@@ -2,7 +2,7 @@ use crate::ast::SymbolPath;
 use crate::id::{reserved_id, IdMap};
 use crate::module::{ModuleBuilder, ModuleWithChild};
 use crate::ty::{Type, TypeCon, TypeVar};
-use crate::value::Value;
+use crate::value::{Slice, Value};
 use crate::vm::VM;
 
 fn printnln(vm: &mut VM) {
@@ -29,16 +29,14 @@ fn println(vm: &mut VM) {
     println!("{}", s);
 }
 
-#[repr(C)]
-#[derive(Debug, Clone)]
-struct Slice {
-    values: *mut Value,
-    len: Value,
-}
-
 fn len(vm: &mut VM) {
     let slice: *const Slice = vm.get_value(vm.arg_loc(0, 1)).as_ptr();
-    let len = unsafe { (*slice).len.as_i64() };
+    let len = unsafe {
+        let start = (*slice).start.as_i64();
+        let end = (*slice).end.as_i64();
+        end - start
+    };
+
     vm.write_return_value(&[Value::new_i64(len)], 1);
 }
 

@@ -88,6 +88,7 @@ pub mod opcode {
     pub const LOAD_HEAP: u8 = 0x2a;
     pub const LOAD_HEAP_TRACE: u8 = 0x2b;
     pub const EP: u8 = 0x2c;
+    pub const OFFSET_SLICE: u8 = 0x2d;
 
     pub const END: u8 = 0x50;
 }
@@ -108,6 +109,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::COPY => "COPY",
         opcode::OFFSET => "OFFSET",
         opcode::CONST_OFFSET => "CONST_OFFSET",
+        opcode::OFFSET_SLICE => "OFFSET_SLICE",
         opcode::DUPLICATE => "DUPLICATE",
         opcode::LOAD_REF => "LOAD_REF",
         opcode::LOAD_COPY => "LOAD_COPY",
@@ -330,6 +332,7 @@ impl Bytecode {
             opcode::COPY => println!("size={}", arg),
             opcode::OFFSET => println!(),
             opcode::CONST_OFFSET => println!("{}", arg),
+            opcode::OFFSET_SLICE => println!("elem_size={}", arg),
             opcode::DUPLICATE => {
                 let value = self.read_u64(ref_start + arg as usize * 8);
                 let size = (value >> 32) as usize; // upper 32 bits
