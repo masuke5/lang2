@@ -1,9 +1,10 @@
-fn test_eq(name: *string, expected: int, actual: int) = {
+fn test_eq(name: *string, expected: int, actual: int): bool = {
     print name;
     print " => ";
 
     if expected = actual {
         println "\x1b[92msucceed\x1b[0m";
+        true
     } else {
         print "\x1b[91m";
         print "expected:";
@@ -11,17 +12,20 @@ fn test_eq(name: *string, expected: int, actual: int) = {
         print ", actual:";
         printnln actual;
         print "\x1b[0m";
+        false
     }
 }
 
-fn testo(name: *string, ok: bool) = {
+fn test(name: *string, ok: bool): bool = {
     print name;
     print " => ";
 
     if ok {
         println "\x1b[92msucceed\x1b[0m";
+        true
     } else {
         println "\x1b[91mfailed\x1b[0m";
+        false
     }
 }
 

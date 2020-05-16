@@ -1,5 +1,21 @@
-import assert::{testo as test, test_eq};
+import assert::{test as assert_test, test_eq as assert_test_eq};
 import module::{module1::*, module2::Dir};
+
+let mut failed = false;
+
+fn test_eq(mess: *string, expected: int, actual: int) = {
+    if (assert_test_eq mess expected actual) {
+    } else {
+        failed := true;
+    }
+}
+
+fn test(mess: *string, b: bool) = {
+    if (assert_test mess b) {
+    } else {
+        failed := true;
+    }
+}
 
 ## literals ##
 
@@ -453,3 +469,9 @@ let num = if false {
     f 12834
 };
 test_eq "if expression" 12834 num;
+
+if failed {
+    println "\x1b[91mTests failed\x1b[0m";
+} else {
+    println "\x1b[92mAll tests succeed\x1b[0m";
+}
