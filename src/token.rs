@@ -3,10 +3,7 @@ use crate::span::Spanned;
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Token {
-    Number(i64),
-    String(String),
-    Identifier(Id),
+pub enum Keyword {
     True,
     False,
     Null,
@@ -26,6 +23,65 @@ pub enum Token {
     Impl,
     As,
     Not,
+}
+
+impl Keyword {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::True => "true",
+            Self::False => "false",
+            Self::Null => "__null__",
+            Self::Let => "let",
+            Self::Mut => "mut",
+            Self::Fn => "fn",
+            Self::Int => "int",
+            Self::Bool => "bool",
+            Self::StringType => "string",
+            Self::Return => "return",
+            Self::If => "if",
+            Self::Else => "else",
+            Self::While => "while",
+            Self::Type => "type",
+            Self::Struct => "struct",
+            Self::Import => "import",
+            Self::Impl => "impl",
+            Self::As => "as",
+            Self::Not => "not",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "true" => Self::True,
+            "false" => Self::False,
+            "__null__" => Self::Null,
+            "let" => Self::Let,
+            "mut" => Self::Mut,
+            "fn" => Self::Fn,
+            "int" => Self::Int,
+            "bool" => Self::Bool,
+            "string" => Self::StringType,
+            "return" => Self::Return,
+            "if" => Self::If,
+            "else" => Self::Else,
+            "while" => Self::While,
+            "type" => Self::Type,
+            "struct" => Self::Struct,
+            "import" => Self::Import,
+            "impl" => Self::Impl,
+            "as" => Self::As,
+            "not" => Self::Not,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
+    Number(i64),
+    String(String),
+    Identifier(Id),
+    Keyword(Keyword),
     Add,
     Sub,
     Asterisk,
@@ -67,25 +123,7 @@ impl fmt::Display for Token {
             Token::Number(_) => write!(f, "number"),
             Token::String(_) => write!(f, "string"),
             Token::Identifier(_) => write!(f, "identifier"),
-            Token::True => write!(f, "true"),
-            Token::False => write!(f, "false"),
-            Token::Null => write!(f, "__null__"),
-            Token::Let => write!(f, "let"),
-            Token::Mut => write!(f, "mut"),
-            Token::Fn => write!(f, "fn"),
-            Token::Int => write!(f, "int"),
-            Token::Bool => write!(f, "bool"),
-            Token::StringType => write!(f, "string"),
-            Token::Return => write!(f, "return"),
-            Token::If => write!(f, "if"),
-            Token::Else => write!(f, "else"),
-            Token::While => write!(f, "while"),
-            Token::Type => write!(f, "type"),
-            Token::Struct => write!(f, "struct"),
-            Token::Import => write!(f, "import"),
-            Token::Impl => write!(f, "impl"),
-            Token::As => write!(f, "as"),
-            Token::Not => write!(f, "not"),
+            Token::Keyword(kw) => write!(f, "{}", kw.to_str()),
             Token::Add => write!(f, "+"),
             Token::Sub => write!(f, "-"),
             Token::Asterisk => write!(f, "*"),

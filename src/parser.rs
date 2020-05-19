@@ -430,15 +430,15 @@ impl<'a> Parser<'a> {
                 Some(spanned(Expr::Literal(Literal::String(s)), token.span))
             }
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
-            Token::True => {
+            Token::Keyword(Keyword::True) => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::True), token.span))
             }
-            Token::False => {
+            Token::Keyword(Keyword::False) => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::False), token.span))
             }
-            Token::Null => {
+            Token::Keyword(Keyword::Null) => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::Null), token.span))
             }
@@ -467,7 +467,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::Lbrace => self.parse_block_expr(),
-            Token::If => self.parse_if_expr(),
+            Token::Keyword(Keyword::If) => self.parse_if_expr(),
             _ => {
                 error!(
                     &token.span,
@@ -560,9 +560,9 @@ impl<'a> Parser<'a> {
             Token::Number(_)
             | Token::String(_)
             | Token::Identifier(_)
-            | Token::True
-            | Token::False
-            | Token::Null
+            | Token::Keyword(Keyword::True)
+            | Token::Keyword(Keyword::False)
+            | Token::Keyword(Keyword::Null)
             | Token::Lparen => true,
             _ => false,
         }
@@ -639,12 +639,12 @@ impl<'a> Parser<'a> {
         match self.peek().kind {
             Token::Asterisk => self.parse_unary_op(parse, Expr::Dereference),
             Token::Sub => self.parse_unary_op(parse, Expr::Negative),
-            Token::Not => self.parse_unary_op(parse, Expr::Not),
+            Token::Keyword(Keyword::Not) => self.parse_unary_op(parse, Expr::Not),
             Token::Ampersand => {
                 let symbol_span = self.peek().span.clone();
                 self.next();
 
-                let is_mutable = self.consume(&Token::Mut);
+                let is_mutable = self.consume(&Token::Keyword(Keyword::Mut));
                 let expr = parse(self)?;
 
                 let span = Span::merge(&symbol_span, &expr.span);
@@ -711,7 +711,7 @@ impl<'a> Parser<'a> {
         let let_span = self.peek().span.clone();
         self.next();
 
-        let is_mutable = self.consume(&Token::Mut);
+        let is_mutable = self.consume(&Token::Keyword(Keyword::Mut));
 
         // Bind name
         let name = self.expect_identifier(&[Token::Semicolon])?;
@@ -892,13 +892,16 @@ impl<'a> Parser<'a> {
         self.next();
 
         // Parse condition expression
-        let expr = self.parse_skip(Self::parse_expr, &[Token::Lbrace, Token::Else]);
+        let expr = self.parse_skip(
+            Self::parse_expr,
+            &[Token::Lbrace, Token::Keyword(Keyword::Else)],
+        );
         // Parse then-clause
         let then_expr = self.expect_block_expr()?;
 
         // Parse else-clause
-        let else_expr = if self.consume(&Token::Else) {
-            if self.peek().kind == Token::If {
+        let else_expr = if self.consume(&Token::Keyword(Keyword::Else)) {
+            if self.peek().kind == Token::Keyword(Keyword::If) {
                 Some(self.parse_skip(Self::parse_if_expr, &[Token::Rbrace])?)
             } else {
                 Some(self.expect_block_expr()?)
@@ -941,7 +944,7 @@ impl<'a> Parser<'a> {
         let first = self.expect_identifier(&[Token::Scope])?;
         let first_span = self.prev().span.clone();
 
-        if self.consume(&Token::As) {
+        if self.consume(&Token::Keyword(Keyword::As)) {
             let renamed = self.expect_identifier(&[Token::Semicolon])?;
             let span = Span::merge(&first_span, &self.prev().span);
             return Some(spanned(ImportRange::Renamed(first, renamed), span));
@@ -955,7 +958,7 @@ impl<'a> Parser<'a> {
                     let id = *id;
                     self.next();
 
-                    if self.consume(&Token::As) {
+                    if self.consume(&Token::Keyword(Keyword::As)) {
                         let renamed = self.expect_identifier(&[Token::Semicolon])?;
                         top = Some(ImportRange::Renamed(id, renamed));
 
@@ -1093,18 +1096,18 @@ impl<'a> Parser<'a> {
     fn parse_stmt_without_expr(&mut self) -> (bool, Option<Spanned<Stmt>>) {
         let token = self.peek();
         let stmt = match token.kind {
-            Token::Let => self.parse_bind_stmt(),
-            Token::Return => self.parse_return(),
-            Token::While => self.parse_while_stmt(),
-            Token::Import => self.parse_import_stmt(),
-            Token::Fn => {
+            Token::Keyword(Keyword::Let) => self.parse_bind_stmt(),
+            Token::Keyword(Keyword::Return) => self.parse_return(),
+            Token::Keyword(Keyword::While) => self.parse_while_stmt(),
+            Token::Keyword(Keyword::Import) => self.parse_import_stmt(),
+            Token::Keyword(Keyword::Fn) => {
                 let func = self.parse_fn_decl();
                 if let Some(func) = func {
                     self.blocks_builder.def().functions.push(func);
                 }
                 None
             }
-            Token::Type => {
+            Token::Keyword(Keyword::Type) => {
                 let tydef = self.parse_def_type();
                 if let Some(tydef) = tydef {
                     self.blocks_builder.def().types.push(tydef);
@@ -1142,7 +1145,7 @@ impl<'a> Parser<'a> {
         let asterisk_span = self.peek().span.clone();
         self.next(); // eat '*'
 
-        let is_mutable = self.consume(&Token::Mut);
+        let is_mutable = self.consume(&Token::Keyword(Keyword::Mut));
         let ty = self.parse_type()?;
 
         let span = Span::merge(&asterisk_span, &self.prev().span);
@@ -1321,7 +1324,7 @@ impl<'a> Parser<'a> {
         let and_token_span = self.peek().span.clone();
         self.next();
 
-        let is_mutable = self.consume(&Token::Mut);
+        let is_mutable = self.consume(&Token::Keyword(Keyword::Mut));
 
         self.expect(&Token::Lbracket, &[Token::Lbracket])?;
         let inner_type = self.parse_type()?;
@@ -1337,9 +1340,13 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Option<Spanned<AstType>> {
         let first_span = self.peek().span.clone();
         let ty = match self.peek().kind {
-            Token::Int => self.next_and(Some(spanned(AstType::Int, first_span))),
-            Token::Bool => self.next_and(Some(spanned(AstType::Bool, first_span))),
-            Token::StringType => self.next_and(Some(spanned(AstType::String, first_span))),
+            Token::Keyword(Keyword::Int) => self.next_and(Some(spanned(AstType::Int, first_span))),
+            Token::Keyword(Keyword::Bool) => {
+                self.next_and(Some(spanned(AstType::Bool, first_span)))
+            }
+            Token::Keyword(Keyword::StringType) => {
+                self.next_and(Some(spanned(AstType::String, first_span)))
+            }
             Token::Identifier(name) => {
                 let id = self.next_and(spanned(name, first_span));
                 let ty = self.parse_type_app(id);
@@ -1347,7 +1354,7 @@ impl<'a> Parser<'a> {
             }
             Token::Asterisk => self.parse_type_pointer(),
             Token::Lparen => self.parse_type_tuple(), // tuple
-            Token::Struct => self.parse_type_struct(), // struct
+            Token::Keyword(Keyword::Struct) => self.parse_type_struct(), // struct
             Token::Lbracket => self.parse_type_array(), // array
             Token::Ampersand => self.parse_type_slice(),
             _ => {
@@ -1369,7 +1376,7 @@ impl<'a> Parser<'a> {
     fn parse_param(&mut self) -> Option<Param> {
         let tokens_to_skip = [Token::Comma, Token::Rparen];
 
-        let is_mutable = self.consume(&Token::Mut);
+        let is_mutable = self.consume(&Token::Keyword(Keyword::Mut));
 
         // Parse the parameter name
         let name = self.expect_identifier(&tokens_to_skip)?;
@@ -1511,7 +1518,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_defs_in_impl(&mut self, imple: &mut Impl) -> Option<()> {
-        if let Token::Fn = self.peek().kind {
+        if let Token::Keyword(Keyword::Fn) = self.peek().kind {
             let func = self.parse_fn_decl()?;
             imple.add_function(func);
         }
@@ -1545,7 +1552,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if self.consume(&Token::Impl) {
+            if self.consume(&Token::Keyword(Keyword::Impl)) {
                 if let Some(impl_) = self.parse_impl() {
                     self.impls.push(impl_);
                 }

@@ -148,31 +148,14 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        match &self.raw[start_pos..self.pos] {
-            "let" => Token::Let,
-            "mut" => Token::Mut,
-            "fn" => Token::Fn,
-            "int" => Token::Int,
-            "bool" => Token::Bool,
-            "string" => Token::StringType,
-            "return" => Token::Return,
-            "if" => Token::If,
-            "else" => Token::Else,
-            "while" => Token::While,
-            "true" => Token::True,
-            "false" => Token::False,
-            "type" => Token::Type,
-            "struct" => Token::Struct,
-            "import" => Token::Import,
-            "as" => Token::As,
-            "impl" => Token::Impl,
-            "not" => Token::Not,
-            "__null__" => Token::Null,
-            s => {
+        let s = &self.raw[start_pos..self.pos];
+        Keyword::from_str(s).map_or_else(
+            || {
                 let id = IdMap::new_id(s);
                 Token::Identifier(id)
-            }
-        }
+            },
+            Token::Keyword,
+        )
     }
 
     fn lex_string(&mut self) -> Option<Token> {
