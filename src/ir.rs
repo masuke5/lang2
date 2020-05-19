@@ -111,6 +111,7 @@ pub enum Expr {
     LoadRef(VariableLoc),
     BinOp(BinOp, Box<Expr>, Box<Expr>),
     Negative(Box<Expr>),
+    Not(Box<Expr>),
     Alloc(Box<Expr>),
     Record(Vec<Expr>),
     Wrap(Box<Expr>),
@@ -137,6 +138,7 @@ impl Expr {
             Expr::LoadRef(..) => 1,
             Expr::BinOp(..) => 1,    // bool or int
             Expr::Negative(..) => 1, // int
+            Expr::Not(..) => 1,      // int or uint
             Expr::Alloc(..) => 1,
             Expr::Record(exprs) => exprs.iter().map(Expr::size).sum(),
             Expr::Wrap(..) => 1,
@@ -172,6 +174,7 @@ impl fmt::Display for Expr {
             Expr::LoadRef(loc) => write!(f, "&{}", loc),
             Expr::BinOp(binop, lhs, rhs) => write!(f, "({} {} {})", lhs, binop.to_symbol(), rhs),
             Expr::Negative(expr) => write!(f, "-{}", expr),
+            Expr::Not(expr) => write!(f, "!{}", expr),
             Expr::Alloc(expr) => write!(f, "alloc({})", expr),
             Expr::Record(exprs) => write!(f, "[{}]", format_iter(exprs.iter())),
             Expr::Wrap(expr) => write!(f, "wrap({})", expr),

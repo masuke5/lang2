@@ -316,6 +316,10 @@ pub fn negative(expr: ExprInfo) -> Expr {
     Expr::Negative(box Expr::Copy(box expr.ir, type_size_nocheck(&expr.ty)))
 }
 
+pub fn not(expr: ExprInfo) -> Expr {
+    Expr::Not(box Expr::Copy(box expr.ir, type_size_nocheck(&expr.ty)))
+}
+
 pub fn copy_in_heap(expr: Expr, ty: &Type, inner_ty: &Type) -> Expr {
     // **expr
     Expr::Copy(

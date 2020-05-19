@@ -604,6 +604,10 @@ impl VM {
                     let tos = &mut self.stack[self.sp];
                     *tos = Value::new_i64(-tos.as_i64());
                 }
+                opcode::NOT => {
+                    let tos = &mut self.stack[self.sp];
+                    *tos = Value::new_i64(tos.as_i64() ^ 1);
+                }
                 opcode::COPY => {
                     let size = arg as usize;
                     if self.sp + size >= STACK_SIZE {

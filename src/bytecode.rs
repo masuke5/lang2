@@ -89,6 +89,7 @@ pub mod opcode {
     pub const LOAD_HEAP_TRACE: u8 = 0x2b;
     pub const EP: u8 = 0x2c;
     pub const OFFSET_SLICE: u8 = 0x2d;
+    pub const NOT: u8 = 0x2e;
 
     pub const END: u8 = 0x50;
 }
@@ -106,6 +107,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::POINTER => "POINTER",
         opcode::DEREFERENCE => "DEREFERENCE",
         opcode::NEGATIVE => "NEGATIVE",
+        opcode::NOT => "NOT",
         opcode::COPY => "COPY",
         opcode::OFFSET => "OFFSET",
         opcode::CONST_OFFSET => "CONST_OFFSET",
@@ -329,6 +331,7 @@ impl Bytecode {
             opcode::POINTER => println!(),
             opcode::DEREFERENCE => println!(),
             opcode::NEGATIVE => println!(),
+            opcode::NOT => println!(),
             opcode::COPY => println!("size={}", arg),
             opcode::OFFSET => println!(),
             opcode::CONST_OFFSET => println!("{}", arg),

@@ -55,6 +55,7 @@ fn scan_expr(expr: &mut Expr, mut func: impl FnMut(&mut Expr)) {
             | Expr::Copy(expr, _)
             | Expr::Duplicate(expr, _)
             | Expr::Negative(expr)
+            | Expr::Not(expr)
             | Expr::Alloc(expr)
             | Expr::Wrap(expr)
             | Expr::Unwrap(expr, _)
@@ -244,6 +245,7 @@ fn remove_seq(stmts: Vec<Stmt>) -> Vec<Stmt> {
                 | Expr::Copy(expr, _)
                 | Expr::Duplicate(expr, _)
                 | Expr::Negative(expr)
+                | Expr::Not(expr)
                 | Expr::Alloc(expr)
                 | Expr::Wrap(expr)
                 | Expr::Unwrap(expr, _) => {

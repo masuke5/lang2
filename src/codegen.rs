@@ -194,6 +194,10 @@ impl Generator {
                 insts.append(self.gen_expr(&expr));
                 insts.push_noarg(opcode::NEGATIVE);
             }
+            Expr::Not(expr) => {
+                insts.append(self.gen_expr(&expr));
+                insts.push_noarg(opcode::NOT);
+            }
             Expr::Alloc(expr) => {
                 insts.append(self.gen_expr(&expr));
 

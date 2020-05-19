@@ -266,6 +266,7 @@ pub enum Expr {
     Dereference(Box<Spanned<Expr>>),
     Address(Box<Spanned<Expr>>, bool),
     Negative(Box<Spanned<Expr>>),
+    Not(Box<Spanned<Expr>>),
     Block(Block),
     If(
         Box<Spanned<Expr>>,
@@ -571,6 +572,10 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
         }
         Expr::Negative(expr_) => {
             println!("neg {}", span_to_string(&expr.span));
+            dump_expr(&expr_, depth + 1);
+        }
+        Expr::Not(expr_) => {
+            println!("not {}", span_to_string(&expr.span));
             dump_expr(&expr_, depth + 1);
         }
         Expr::Block(block) => {

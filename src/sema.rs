@@ -1223,6 +1223,13 @@ impl Analyzer {
                     },
                 }
             }
+            Expr::Not(expr) => {
+                let expr = self.walk_expr_with_conversion(*expr, &Type::Bool)?;
+                unify(&expr.span, &expr.ty, &Type::Bool);
+
+                let ty = expr.ty.clone();
+                (translate::not(expr), ty)
+            }
             Expr::Block(block) => {
                 self.push_scope();
 
@@ -1336,6 +1343,7 @@ impl Analyzer {
             | Dereference(expr)
             | Address(expr, _)
             | Negative(expr)
+            | Not(expr)
             | App(expr, _) => Self::expr_has_side_effects(&expr.kind),
             If(cond, then, els) => {
                 Self::expr_has_side_effects(&cond.kind)

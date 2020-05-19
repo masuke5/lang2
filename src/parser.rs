@@ -639,6 +639,7 @@ impl<'a> Parser<'a> {
         match self.peek().kind {
             Token::Asterisk => self.parse_unary_op(parse, Expr::Dereference),
             Token::Sub => self.parse_unary_op(parse, Expr::Negative),
+            Token::Not => self.parse_unary_op(parse, Expr::Not),
             Token::Ampersand => {
                 let symbol_span = self.peek().span.clone();
                 self.next();

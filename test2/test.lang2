@@ -4,15 +4,13 @@ import module::{module1::*, module2::Dir};
 let mut failed = false;
 
 fn test_eq(mess: *string, expected: int, actual: int) = {
-    if (assert_test_eq mess expected actual) {
-    } else {
+    if not (assert_test_eq mess expected actual) {
         failed := true;
     }
 }
 
 fn test(mess: *string, b: bool) = {
-    if (assert_test mess b) {
-    } else {
+    if not (assert_test mess b) {
         failed := true;
     }
 }
@@ -454,6 +452,7 @@ test_eq "implementation importing" 1588485402 (File::parent_file (&file)).create
 ## other expressions ##
 
 test_eq "negative" (-39) (-15 - 24);
+test "not" (not false);
 
 let num = {
     let num = 120944;
