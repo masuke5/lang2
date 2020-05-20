@@ -171,7 +171,8 @@ impl<'a> Parser<'a> {
                 "expected `{}` but got `{}`", expected, token.kind
             );
 
-            self.skip_to(skip);
+            self.skip_until(skip);
+            // TODO: Improve it
             if self.peek().kind == *expected {
                 self.next();
             }
@@ -195,7 +196,8 @@ impl<'a> Parser<'a> {
                     "expected `identifier` but got `{}`", token.kind
                 );
 
-                self.skip_to(skip);
+                self.skip_until(skip);
+                // TODO: Improve it
                 if let Token::Identifier(_) = self.peek().kind {
                     self.next();
                 }
@@ -206,8 +208,26 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn skip_to(&mut self, tokens: &[Token]) {
-        while !tokens.contains(&self.peek().kind) && self.peek().kind != Token::EOF {
+    fn skip_until(&mut self, tokens: &[Token]) {
+        let tokens_to_dec: Vec<&Token> =
+            tokens.iter().filter(|t| t.is_close_parenthese()).collect();
+        let tokens_to_inc: Vec<Token> = tokens_to_dec
+            .iter()
+            .map(|t| t.matching_parenthese().unwrap())
+            .collect();
+        let mut depth = 0;
+
+        dbg!((&tokens_to_inc, &tokens_to_dec));
+
+        while depth > 0 || (!tokens.contains(&self.peek().kind) && self.peek().kind != Token::EOF) {
+            let curr = &self.peek().kind;
+
+            if tokens_to_dec.contains(&curr) {
+                depth -= 1;
+            } else if tokens_to_inc.contains(&curr) {
+                depth += 1;
+            }
+
             self.next();
         }
     }
@@ -219,7 +239,7 @@ impl<'a> Parser<'a> {
     {
         let res = func(self);
         if res.is_none() {
-            self.skip_to(tokens);
+            self.skip_until(tokens);
         }
 
         res
@@ -331,7 +351,7 @@ impl<'a> Parser<'a> {
 
             match self.parse_field_init() {
                 Some(field) => fields.push(field),
-                None => self.skip_to(&[Token::Comma, Token::Rbrace]),
+                None => self.skip_until(&[Token::Comma, Token::Rbrace]),
             };
 
             while self.peek().kind != Token::Rbrace && self.consume(&Token::Comma) {
@@ -341,7 +361,7 @@ impl<'a> Parser<'a> {
 
                 match self.parse_field_init() {
                     Some(field) => fields.push(field),
-                    None => self.skip_to(&[Token::Comma, Token::Rbrace]),
+                    None => self.skip_until(&[Token::Comma, Token::Rbrace]),
                 };
             }
 
@@ -729,7 +749,7 @@ impl<'a> Parser<'a> {
         let expr = match self.parse_expr() {
             Some(expr) => expr,
             None => {
-                self.skip_to(&[Token::Semicolon]);
+                self.skip_until(&[Token::Semicolon]);
                 return None;
             }
         };

@@ -162,6 +162,35 @@ impl fmt::Display for Token {
 }
 
 impl Token {
+    #[allow(dead_code)]
+    pub fn is_open_parenthese(&self) -> bool {
+        match self {
+            Token::Lparen | Token::Lbracket | Token::Lbrace | Token::LTypeArgs => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_close_parenthese(&self) -> bool {
+        match self {
+            Token::Rparen | Token::Rbracket | Token::Rbrace | Token::GreaterThan => true,
+            _ => false,
+        }
+    }
+
+    pub fn matching_parenthese(&self) -> Option<Token> {
+        match self {
+            Token::Lparen => Some(Token::Rparen),
+            Token::Lbracket => Some(Token::Rbracket),
+            Token::Lbrace => Some(Token::Rbrace),
+            Token::LTypeArgs => Some(Token::GreaterThan),
+            Token::Rparen => Some(Token::Lparen),
+            Token::Rbracket => Some(Token::Lbracket),
+            Token::Rbrace => Some(Token::Rbrace),
+            Token::GreaterThan => Some(Token::LTypeArgs),
+            _ => None,
+        }
+    }
+
     fn detail(&self) -> String {
         match self {
             Token::Number(n) => format!("{}", n),
