@@ -2,7 +2,7 @@ use crate::ast::SymbolPath;
 use crate::id::{reserved_id, IdMap};
 use crate::module::{ModuleBuilder, ModuleWithChild};
 use crate::ty::{Type, TypeCon, TypeVar};
-use crate::value::{Slice, Value};
+use crate::value::{Lang2String, Slice, Value};
 use crate::vm::VM;
 
 fn printnln(vm: &mut VM) {
@@ -40,6 +40,12 @@ fn len(vm: &mut VM) {
     vm.write_return_value(&[Value::new_i64(len)], 1);
 }
 
+fn string_len(vm: &mut VM) {
+    let s: *const Lang2String = vm.get_value(vm.arg_loc(0, 1)).as_ptr();
+    let len = unsafe { (*s).len };
+    vm.write_return_value(&[Value::new_i64(len as i64)], 1);
+}
+
 pub fn module() -> ModuleWithChild {
     let mut b = ModuleBuilder::new();
 
@@ -58,6 +64,8 @@ pub fn module() -> ModuleWithChild {
             len,
         );
     }
+
+    b.define_func("string_len", vec![ltype!(*string)], ltype!(int), string_len);
 
     b.build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
 }
