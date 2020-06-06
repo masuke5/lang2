@@ -951,7 +951,7 @@ impl VM {
         self.stack[loc]
     }
 
-    pub fn write_return_value(&mut self, values: &[Value], args_size: usize) {
+    pub fn return_values(&mut self, values: &[Value], args_size: usize) {
         let loc = self.fp - args_size - values.len();
         for (i, value) in values.iter().enumerate() {
             self.stack[loc + i] = *value;

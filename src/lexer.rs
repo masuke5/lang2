@@ -9,16 +9,6 @@ fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-fn make_compound_assignment_operator(c: char) -> Option<Token> {
-    match c {
-        '+' => Some(Token::AddAssign),
-        '-' => Some(Token::SubAssign),
-        '*' => Some(Token::MulAssign),
-        '/' => Some(Token::DivAssign),
-        _ => None,
-    }
-}
-
 pub struct Lexer<'a> {
     file: Id,
     raw: &'a str,
@@ -27,7 +17,6 @@ pub struct Lexer<'a> {
     start_col: u32,
     line: u32,
     col: u32,
-    // To make slice for identifier
     pos: usize,
 }
 
@@ -45,16 +34,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn error(&mut self, msg: &str) {
-        let span = Span {
+    fn span(&self) -> Span {
+        Span {
             file: self.file,
             start_line: self.start_line,
             start_col: self.start_col,
             end_line: self.line,
             end_col: self.col,
-        };
-        let error = Error::new(msg, &span);
-        ErrorList::push(error);
+        }
     }
 
     fn read_char(&mut self) -> char {
@@ -158,38 +145,50 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    fn lex_escape_sequence(&mut self) -> Option<char> {
+        match self.read_char() {
+            '"' => Some('"'),
+            '\\' => Some('\\'),
+            'n' => Some('\n'),
+            'r' => Some('\r'),
+            't' => Some('\t'),
+            // ASCII 7-bit character code
+            'x' => {
+                // Read hex number
+                let mut n = 0u32;
+                let mut count = 0;
+                while self.peek().is_digit(16) && count < 2 {
+                    n = n * 16 + self.peek().to_digit(16).unwrap();
+                    count += 1;
+                    self.read_char();
+                }
+
+                if count == 2 && n <= 0x7f {
+                    Some(std::char::from_u32(n).unwrap())
+                } else if count <= 1 {
+                    error!(&self.span(), "character code is too short");
+                    None
+                } else {
+                    error!(&self.span(), "invalid character code '{:x}'", n);
+                    None
+                }
+            }
+            ch => {
+                error!(&self.span(), "unknown escape sequence '\\{}'", ch);
+                None
+            }
+        }
+    }
+
     fn lex_string(&mut self) -> Option<Token> {
         let mut s = String::new();
         while self.peek() != '"' && self.peek() != '\0' {
             if self.peek() == '\\' {
                 self.read_char();
-                match self.read_char() {
-                    '"' => s.push('"'),
-                    '\\' => s.push('\\'),
-                    'n' => s.push('\n'),
-                    'r' => s.push('\r'),
-                    't' => s.push('\t'),
-                    // ASCII 7-bit character code
-                    'x' => {
-                        let mut n = 0u32;
-                        let mut count = 0;
-                        while self.peek().is_digit(16) && count < 2 {
-                            n = n * 16 + self.peek().to_digit(16).unwrap();
-                            count += 1;
-                            self.read_char();
-                        }
 
-                        if count == 2 && n <= 0x7f {
-                            s.push(std::char::from_u32(n).unwrap());
-                        } else {
-                            self.error(&format!("invalid character code '{:x}'", n));
-                        }
-                    }
-                    ch => {
-                        self.error(&format!("unknown escape sequence '\\{}'", ch));
-                        return None;
-                    }
-                };
+                if let Some(ch) = self.lex_escape_sequence() {
+                    s.push(ch);
+                }
             } else {
                 s.push(self.peek());
                 self.read_char();
@@ -197,7 +196,7 @@ impl<'a> Lexer<'a> {
         }
 
         if self.peek() == '\0' {
-            self.error("unexpected EOF");
+            error!(&self.span(), "unexpected EOF");
             None
         } else {
             self.read_char();
@@ -228,10 +227,11 @@ impl<'a> Lexer<'a> {
         match self.read_char() {
             c if c.is_digit(10) => Some(self.lex_number(c)),
             c if is_identifier_char(c) => Some(self.lex_identifier(c)),
-            c if self.next_is('=') && make_compound_assignment_operator(c).is_some() => {
-                self.two_char(make_compound_assignment_operator(c).unwrap())
-            }
             '"' => self.lex_string(),
+            '+' if self.next_is('=') => self.two_char(Token::AddAssign),
+            '-' if self.next_is('=') => self.two_char(Token::SubAssign),
+            '*' if self.next_is('=') => self.two_char(Token::MulAssign),
+            '/' if self.next_is('=') => self.two_char(Token::DivAssign),
             '+' => Some(Token::Add),
             '-' if self.next_is('>') => self.two_char(Token::Arrow),
             '-' => Some(Token::Sub),
@@ -265,7 +265,7 @@ impl<'a> Lexer<'a> {
                 None
             }
             c => {
-                self.error(&format!("Invalid character `{}`", c));
+                error!(&self.span(), "unknown character `{}`", c);
                 None
             }
         }
@@ -281,16 +281,7 @@ impl<'a> Lexer<'a> {
             self.start_col = self.col;
 
             if let Some(token) = self.next_token() {
-                tokens.push(Spanned::<Token>::new(
-                    token,
-                    Span {
-                        file: self.file,
-                        start_line: self.start_line,
-                        end_line: self.line,
-                        start_col: self.start_col,
-                        end_col: self.col,
-                    },
-                ));
+                tokens.push(Spanned::new(token, self.span()));
             }
 
             self.skip_whitespace();

@@ -38,14 +38,14 @@ fn len(vm: &mut VM) {
         end - start
     };
 
-    vm.write_return_value(&[Value::new_i64(len)], 1);
+    vm.return_values(&[Value::new_i64(len)], 1);
 }
 
 fn string_len(vm: &mut VM) {
     get_args!(vm, s: *const Lang2String);
 
     let len = unsafe { (*s).len };
-    vm.write_return_value(&[Value::new_i64(len as i64)], 1);
+    vm.return_values(&[Value::new_i64(len as i64)], 1);
 }
 
 pub fn module() -> ModuleWithChild {
