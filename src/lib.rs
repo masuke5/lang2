@@ -11,6 +11,8 @@ mod utils;
 pub mod error;
 #[macro_use]
 mod ty;
+#[macro_use]
+mod vm;
 mod ast;
 mod bytecode;
 mod codegen;
@@ -29,7 +31,6 @@ mod stdlib;
 mod token;
 mod translate;
 mod value;
-mod vm;
 
 pub use opt::OptimizeOption;
 

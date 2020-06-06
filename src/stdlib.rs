@@ -1,36 +1,37 @@
 use crate::ast::SymbolPath;
 use crate::id::{reserved_id, IdMap};
 use crate::module::{ModuleBuilder, ModuleWithChild};
-use crate::ty::{Type, TypeCon, TypeVar};
-use crate::value::{Lang2String, Slice, Value};
+use crate::ty::{type_size_nocheck, Type, TypeCon, TypeVar};
+use crate::value::{FromValue, Lang2String, Slice, ToType, Value};
 use crate::vm::VM;
 
 fn printnln(vm: &mut VM) {
-    let n = vm.get_value(vm.arg_loc(0, 1)).as_i64();
+    get_args!(vm, n: i64);
 
     println!("{}", n);
 }
 
 fn printn(vm: &mut VM) {
-    let n = vm.get_value(vm.arg_loc(0, 1)).as_i64();
+    get_args!(vm, n: i64);
 
     print!("{}", n);
 }
 
 fn print(vm: &mut VM) {
-    let s = vm.get_string(vm.arg_loc(0, 1));
+    get_args!(vm, s: *const Lang2String);
 
-    print!("{}", s);
+    print!("{}", unsafe { &*s });
 }
 
 fn println(vm: &mut VM) {
-    let s = vm.get_string(vm.arg_loc(0, 1));
+    get_args!(vm, s: *const Lang2String);
 
-    println!("{}", s);
+    println!("{}", unsafe { &*s });
 }
 
 fn len(vm: &mut VM) {
-    let slice: *const Slice = vm.get_value(vm.arg_loc(0, 1)).as_ptr();
+    get_args!(vm, slice: *const Slice);
+
     let len = unsafe {
         let start = (*slice).start.as_i64();
         let end = (*slice).end.as_i64();
@@ -41,7 +42,8 @@ fn len(vm: &mut VM) {
 }
 
 fn string_len(vm: &mut VM) {
-    let s: *const Lang2String = vm.get_value(vm.arg_loc(0, 1)).as_ptr();
+    get_args!(vm, s: *const Lang2String);
+
     let len = unsafe { (*s).len };
     vm.write_return_value(&[Value::new_i64(len as i64)], 1);
 }

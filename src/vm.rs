@@ -151,30 +151,6 @@ impl VM {
         }
     }
 
-    pub fn arg_loc(&self, n: usize, args_size: usize) -> usize {
-        self.fp - args_size - n
-    }
-
-    pub fn get_value(&self, loc: usize) -> Value {
-        self.stack[loc]
-    }
-
-    pub fn get_string(&self, loc: usize) -> &Lang2String {
-        let value = self.stack[loc];
-        if !value.is_heap_ptr() {
-            self.panic("no heap ptr");
-        }
-
-        unsafe { &*value.as_ptr() }
-    }
-
-    pub fn write_return_value(&mut self, values: &[Value], args_size: usize) {
-        let loc = self.fp - args_size - values.len();
-        for (i, value) in values.iter().enumerate() {
-            self.stack[loc + i] = *value;
-        }
-    }
-
     fn dump_value(value: Value, depth: usize) {
         print!("{}{:x}", "  ".repeat(depth), value.as_u64());
         if value.is_heap_ptr() {
@@ -947,6 +923,38 @@ impl VM {
                     p.total / total * 100.0,
                 );
             }
+        }
+    }
+}
+
+// Utilities for native module
+
+macro_rules! get_args {
+    ($vm:expr, $($name:ident : $ty:ty),*) => {
+        let mut size = 0;
+        $(size += type_size_nocheck(&<$ty as ToType>::to_type());)*
+        let mut n = 0;
+        $(
+            let $name = <$ty as FromValue>::from_value($vm.get_value($vm.arg_loc(n, size)));
+            #[allow(unused_assignments)]
+            { n += type_size_nocheck(&<$ty as ToType>::to_type()); }
+        )*
+    }
+}
+
+impl VM {
+    pub fn arg_loc(&self, n: usize, args_size: usize) -> usize {
+        self.fp - args_size + n
+    }
+
+    pub fn get_value(&self, loc: usize) -> Value {
+        self.stack[loc]
+    }
+
+    pub fn write_return_value(&mut self, values: &[Value], args_size: usize) {
+        let loc = self.fp - args_size - values.len();
+        for (i, value) in values.iter().enumerate() {
+            self.stack[loc + i] = *value;
         }
     }
 }

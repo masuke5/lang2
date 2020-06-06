@@ -4,6 +4,8 @@ use std::ptr;
 use std::slice;
 use std::str;
 
+use crate::ty::{Type, TypeCon};
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Value(u64);
 
@@ -107,6 +109,80 @@ impl Value {
     #[inline(always)]
     pub unsafe fn raw_i64(self) -> i64 {
         mem::transmute(self.0)
+    }
+}
+
+pub trait FromValue {
+    fn from_value(value: Value) -> Self;
+}
+
+impl FromValue for Value {
+    fn from_value(value: Value) -> Self {
+        value
+    }
+}
+
+impl<V: FromValue> FromValue for *mut V {
+    fn from_value(value: Value) -> Self {
+        value.as_ptr()
+    }
+}
+
+impl<V: FromValue> FromValue for *const V {
+    fn from_value(value: Value) -> Self {
+        value.as_ptr()
+    }
+}
+
+impl FromValue for i64 {
+    fn from_value(value: Value) -> Self {
+        value.as_i64()
+    }
+}
+
+impl FromValue for Lang2String {
+    fn from_value(_: Value) -> Self {
+        panic!();
+    }
+}
+
+impl FromValue for Slice {
+    fn from_value(_: Value) -> Self {
+        panic!();
+    }
+}
+
+pub trait ToType {
+    fn to_type() -> Type;
+}
+
+impl ToType for i64 {
+    fn to_type() -> Type {
+        Type::Int
+    }
+}
+
+impl<T: ToType> ToType for *const T {
+    fn to_type() -> Type {
+        Type::App(TypeCon::Pointer(false), vec![<T as ToType>::to_type()])
+    }
+}
+
+impl<T: ToType> ToType for *mut T {
+    fn to_type() -> Type {
+        Type::App(TypeCon::Pointer(true), vec![<T as ToType>::to_type()])
+    }
+}
+
+impl ToType for Slice {
+    fn to_type() -> Type {
+        Type::App(TypeCon::Slice(false), vec![Type::Int])
+    }
+}
+
+impl ToType for Lang2String {
+    fn to_type() -> Type {
+        Type::String
     }
 }
 

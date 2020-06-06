@@ -105,9 +105,16 @@ impl ModuleContainer {
 }
 
 #[derive(Debug)]
+pub struct ImplementationBuilder {
+    func_bodies: Vec<(usize, NativeFunctionBody)>,
+    func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
+}
+
+#[derive(Debug)]
 pub struct ModuleBuilder {
     func_bodies: Vec<(usize, NativeFunctionBody)>,
     func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
+    impls: Vec<Implementation>,
 }
 
 impl ModuleBuilder {
@@ -115,6 +122,7 @@ impl ModuleBuilder {
         Self {
             func_bodies: Vec::new(),
             func_headers: FxHashMap::default(),
+            impls: Vec::new(),
         }
     }
 
