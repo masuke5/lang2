@@ -115,7 +115,7 @@ impl Gc {
         }
     }
 
-    pub fn alloc<T>(
+    fn alloc_region<T>(
         &mut self,
         count: usize,
         consists_of_value: bool,
@@ -139,6 +139,19 @@ impl Gc {
         // Push the region and return a reference to it
         self.values.push_front(region);
         *self.values.front_mut().unwrap()
+    }
+
+    pub fn alloc<T>(
+        &mut self,
+        count: usize,
+        consists_of_value: bool,
+        stack: &mut [Value],
+    ) -> NonNull<T> {
+        unsafe {
+            self.alloc_region::<T>(count, consists_of_value, stack)
+                .as_mut()
+                .as_non_null()
+        }
     }
 
     fn mark(&mut self, stack: &mut [Value]) {
@@ -249,17 +262,17 @@ mod tests {
         unsafe {
             let mut gc = Gc::new();
 
-            let mut region1 = gc.alloc::<Value>(2, true, &mut []);
+            let mut region1 = gc.alloc_region::<Value>(2, true, &mut []);
             write(region1, &[Value::new_i64(1), Value::new_i64(2)]);
 
             let mut region2 =
-                gc.alloc::<Value>(2, true, &mut [Value::new_ptr_to_heap(region1.as_mut())]);
+                gc.alloc_region::<Value>(2, true, &mut [Value::new_ptr_to_heap(region1.as_mut())]);
             write(
                 region2,
                 &[Value::new_i64(3), Value::new_ptr_to_heap(region1.as_mut())],
             );
 
-            let region3 = gc.alloc::<Value>(
+            let region3 = gc.alloc_region::<Value>(
                 1,
                 true,
                 &mut [

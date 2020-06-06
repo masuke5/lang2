@@ -320,7 +320,7 @@ impl VM {
             .alloc::<Value>(size + 1, true, &mut self.stack[..=self.sp]);
         // Write the pointer to the parent stack frame
         unsafe {
-            let value: *mut Value = region.as_mut().as_mut_ptr();
+            let value = region.as_ptr();
             if !parent.is_null() {
                 *value = Value::new_ptr_to_heap(parent);
             } else {
@@ -546,18 +546,19 @@ impl VM {
 
                     // Allocate a region for the string
                     let size = s.len() as usize + size_of::<u64>();
-                    let mut region = self
-                        .gc
-                        .alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
+                    let allocated_str =
+                        self.gc
+                            .alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
 
                     // Write the string
                     unsafe {
-                        let str_ptr = region.as_mut().as_mut_ptr::<Lang2String>();
+                        // This is safe because `size` is 8 or more at least
+                        #[allow(clippy::cast_ptr_alignment)]
+                        let str_ptr: *mut Lang2String = allocated_str.as_ptr() as *mut _;
                         (*str_ptr).write_string(s.as_str());
                     }
 
-                    let value =
-                        unsafe { Value::new_ptr_to_heap(region.as_mut().as_ptr::<Value>()) };
+                    let value = Value::new_ptr_to_heap(allocated_str.as_ptr());
                     push!(self, value);
                 }
                 opcode::TRUE => {
@@ -724,7 +725,7 @@ impl VM {
                                 .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                         unsafe {
-                            let dst = region.as_mut().as_mut_ptr::<Value>();
+                            let dst = region.as_ptr();
                             let src: *const _ = &self.stack[self.sp - size + 1];
                             ptr::copy_nonoverlapping(src, dst, size);
                         }
@@ -785,7 +786,7 @@ impl VM {
                             .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                     unsafe {
-                        let dst = region.as_mut().as_mut_ptr::<Value>();
+                        let dst = region.as_ptr();
                         let src = &self.stack[self.sp - size + 1];
                         ptr::copy_nonoverlapping(src, dst, size);
                     }
