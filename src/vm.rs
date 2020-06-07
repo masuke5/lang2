@@ -315,20 +315,19 @@ impl VM {
     }
 
     fn alloc_stack_frame_in_heap(&mut self, size: usize, parent: *const Value) -> *const Value {
-        let mut region = self
+        let mut value = self
             .gc
             .alloc::<Value>(size + 1, true, &mut self.stack[..=self.sp]);
         // Write the pointer to the parent stack frame
         unsafe {
-            let value = region.as_ptr();
             if !parent.is_null() {
-                *value = Value::new_ptr_to_heap(parent);
+                *value.as_mut() = Value::new_ptr_to_heap(parent);
             } else {
-                *value = Value::new_ptr(parent);
+                *value.as_mut() = Value::new_ptr(parent);
             }
         }
 
-        unsafe { region.as_mut().as_ptr() }
+        value.as_ptr()
     }
 
     #[inline(always)]
@@ -720,20 +719,19 @@ impl VM {
                 opcode::WRAP => {
                     let size = arg as usize;
                     if size != 1 {
-                        let mut region =
+                        let allocated =
                             self.gc
                                 .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                         unsafe {
-                            let dst = region.as_ptr();
+                            let dst = allocated.as_ptr();
                             let src: *const _ = &self.stack[self.sp - size + 1];
                             ptr::copy_nonoverlapping(src, dst, size);
                         }
 
                         self.sp -= size;
 
-                        let region = unsafe { region.as_mut() };
-                        push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
+                        push!(self, Value::new_ptr_to_heap::<Value>(allocated.as_ptr()));
                     }
                 }
                 opcode::UNWRAP => {
@@ -781,20 +779,19 @@ impl VM {
                 opcode::ALLOC => {
                     let size = arg as usize;
 
-                    let mut region =
-                        self.gc
-                            .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
+                    let allocated = self
+                        .gc
+                        .alloc::<Value>(size, true, &mut self.stack[..=self.sp]);
 
                     unsafe {
-                        let dst = region.as_ptr();
+                        let dst = allocated.as_ptr();
                         let src = &self.stack[self.sp - size + 1];
                         ptr::copy_nonoverlapping(src, dst, size);
                     }
 
                     self.sp -= size;
 
-                    let region = unsafe { region.as_mut() };
-                    push!(self, Value::new_ptr_to_heap::<Value>(region.as_ptr()));
+                    push!(self, Value::new_ptr_to_heap::<Value>(allocated.as_ptr()));
                 }
                 opcode::CALL => {
                     self.call(self.current_module, arg as usize, None);

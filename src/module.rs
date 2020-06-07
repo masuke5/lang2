@@ -127,23 +127,23 @@ impl ModuleBuilder {
     }
 
     pub fn define_func(
-        &mut self,
+        self,
         name: &str,
         params: Vec<Type>,
         return_ty: Type,
         body: fn(&mut VM),
-    ) {
-        self.define_func_poly(name, Vec::new(), params, return_ty, body);
+    ) -> Self {
+        self.define_func_poly(name, Vec::new(), params, return_ty, body)
     }
 
     pub fn define_func_poly(
-        &mut self,
+        mut self,
         name: &str,
         ty_params: Vec<(Id, TypeVar)>,
         params: Vec<Type>,
         return_ty: Type,
         body: fn(&mut VM),
-    ) {
+    ) -> Self {
         let name = IdMap::new_id(name);
         let param_size = params.iter().fold(0, |size, ty| {
             size + type_size(ty).expect("Param size couldn't be calculated")
@@ -162,6 +162,8 @@ impl ModuleBuilder {
                 },
             ),
         );
+
+        self
     }
 
     pub fn build(self, path: SymbolPath) -> ModuleWithChild {

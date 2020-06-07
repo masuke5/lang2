@@ -49,25 +49,20 @@ fn string_len(vm: &mut VM) {
 }
 
 pub fn module() -> ModuleWithChild {
-    let mut b = ModuleBuilder::new();
+    let var = TypeVar::new();
 
-    b.define_func("printn", vec![ltype!(int)], ltype!(unit), printn);
-    b.define_func("printnln", vec![ltype!(int)], ltype!(unit), printnln);
-    b.define_func("print", vec![ltype!(*string)], ltype!(unit), print);
-    b.define_func("println", vec![ltype!(*string)], ltype!(unit), println);
-
-    {
-        let var = TypeVar::new();
-        b.define_func_poly(
+    ModuleBuilder::new()
+        .define_func("printn", vec![ltype!(int)], ltype!(unit), printn)
+        .define_func("printnln", vec![ltype!(int)], ltype!(unit), printnln)
+        .define_func("print", vec![ltype!(*string)], ltype!(unit), print)
+        .define_func("println", vec![ltype!(*string)], ltype!(unit), println)
+        .define_func_poly(
             "len",
             vec![(IdMap::new_id("T"), var)],
             vec![Type::App(TypeCon::Slice(false), vec![Type::Var(var)])],
             Type::Int,
             len,
-        );
-    }
-
-    b.define_func("string_len", vec![ltype!(*string)], ltype!(int), string_len);
-
-    b.build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
+        )
+        .define_func("string_len", vec![ltype!(*string)], ltype!(int), string_len)
+        .build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
 }
