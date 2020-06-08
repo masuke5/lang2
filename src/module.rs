@@ -108,21 +108,15 @@ impl ModuleContainer {
 pub struct ImplementationBuilder {
     func_bodies: Vec<(usize, NativeFunctionBody)>,
     func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
+    target: Id,
 }
 
-#[derive(Debug)]
-pub struct ModuleBuilder {
-    func_bodies: Vec<(usize, NativeFunctionBody)>,
-    func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
-    impls: Vec<Implementation>,
-}
-
-impl ModuleBuilder {
-    pub fn new() -> Self {
+impl ImplementationBuilder {
+    pub fn new(target: Id) -> Self {
         Self {
             func_bodies: Vec::new(),
             func_headers: FxHashMap::default(),
-            impls: Vec::new(),
+            target,
         }
     }
 
@@ -165,6 +159,79 @@ impl ModuleBuilder {
 
         self
     }
+}
+
+#[derive(Debug)]
+pub struct ModuleBuilder {
+    func_bodies: Vec<(usize, NativeFunctionBody)>,
+    func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
+    impls: FxHashMap<Id, Implementation>,
+}
+
+impl ModuleBuilder {
+    pub fn new() -> Self {
+        Self {
+            func_bodies: Vec::new(),
+            func_headers: FxHashMap::default(),
+            impls: FxHashMap::default(),
+        }
+    }
+
+    pub fn implmentation(mut self, mut builder: ImplementationBuilder) -> Self {
+        for (_, (id, _)) in &mut builder.func_headers {
+            *id = self.func_bodies.len();
+        }
+
+        self.func_bodies.append(&mut builder.func_bodies);
+        self.impls.insert(
+            builder.target,
+            Implementation {
+                functions: builder.func_headers,
+            },
+        );
+
+        self
+    }
+
+    pub fn define_func(
+        self,
+        name: &str,
+        params: Vec<Type>,
+        return_ty: Type,
+        body: fn(&mut VM),
+    ) -> Self {
+        self.define_func_poly(name, Vec::new(), params, return_ty, body)
+    }
+
+    pub fn define_func_poly(
+        mut self,
+        name: &str,
+        ty_params: Vec<(Id, TypeVar)>,
+        params: Vec<Type>,
+        return_ty: Type,
+        body: fn(&mut VM),
+    ) -> Self {
+        let name = IdMap::new_id(name);
+        let param_size = params.iter().fold(0, |size, ty| {
+            size + type_size(ty).expect("Param size couldn't be calculated")
+        });
+
+        self.func_headers.insert(
+            name,
+            (
+                self.func_bodies.len(),
+                FunctionHeader {
+                    params,
+                    return_ty,
+                    ty_params,
+                },
+            ),
+        );
+        self.func_bodies
+            .push((param_size, NativeFunctionBody(body)));
+
+        self
+    }
 
     pub fn build(self, path: SymbolPath) -> ModuleWithChild {
         let module = Module::Native(self.func_bodies);
@@ -172,7 +239,7 @@ impl ModuleBuilder {
             path,
             functions: self.func_headers,
             types: FxHashMap::default(),
-            impls: FxHashMap::default(),
+            impls: self.impls,
         };
 
         ModuleWithChild {

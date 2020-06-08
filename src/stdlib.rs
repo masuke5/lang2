@@ -1,6 +1,6 @@
 use crate::ast::SymbolPath;
 use crate::id::{reserved_id, IdMap};
-use crate::module::{ModuleBuilder, ModuleWithChild};
+use crate::module::{ImplementationBuilder, ModuleBuilder, ModuleWithChild};
 use crate::ty::{type_size_nocheck, Type, TypeCon, TypeVar};
 use crate::value::{FromValue, Lang2String, Slice, ToType, Value};
 use crate::vm::VM;
@@ -63,6 +63,13 @@ pub fn module() -> ModuleWithChild {
             Type::Int,
             len,
         )
-        .define_func("string_len", vec![ltype!(*string)], ltype!(int), string_len)
+        .implmentation(
+            ImplementationBuilder::new(IdMap::new_id("String")).define_func(
+                "len",
+                vec![ltype!(*string)],
+                ltype!(int),
+                string_len,
+            ),
+        )
         .build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
 }

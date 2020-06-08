@@ -217,8 +217,6 @@ impl<'a> Parser<'a> {
             .collect();
         let mut depth = 0;
 
-        dbg!((&tokens_to_inc, &tokens_to_dec));
-
         while depth > 0 || (!tokens.contains(&self.peek().kind) && self.peek().kind != Token::EOF) {
             let curr = &self.peek().kind;
 
