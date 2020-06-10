@@ -364,11 +364,6 @@ impl VM {
         self.sp += func.stack_size;
     }
 
-    fn panic(&self, message: &str) -> ! {
-        eprintln!("PANICKED AT RUNTIME: {}", message);
-        std::process::exit(10)
-    }
-
     #[inline(always)]
     fn next_inst(&mut self, bytecode: &Bytecode) -> [u8; 2] {
         let mut buf = [0u8; 2];
@@ -954,5 +949,28 @@ impl VM {
         for (i, value) in values.iter().enumerate() {
             self.stack[loc + i] = *value;
         }
+    }
+
+    pub fn panic(&self, message: &str) -> ! {
+        eprintln!("PANICKED AT RUNTIME: {}", message);
+        std::process::exit(10)
+    }
+
+    pub fn alloc_str(&mut self, s: &str) -> *mut Lang2String {
+        // Allocate a region for the string
+        let size = s.len() + size_of::<u64>();
+        let allocated_str = self
+            .gc
+            .alloc::<u8>(size, false, &mut self.stack[..=self.sp]);
+
+        // Write the string
+        unsafe {
+            // This is safe because `size` is 8 or more at least
+            #[allow(clippy::cast_ptr_alignment)]
+            let str_ptr: *mut Lang2String = allocated_str.as_ptr() as *mut _;
+            (*str_ptr).write_string(s);
+        }
+
+        allocated_str.as_ptr() as *mut _
     }
 }

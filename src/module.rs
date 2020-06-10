@@ -179,7 +179,7 @@ impl ModuleBuilder {
 
     pub fn implmentation(mut self, mut builder: ImplementationBuilder) -> Self {
         for (_, (id, _)) in &mut builder.func_headers {
-            *id = self.func_bodies.len();
+            *id += self.func_bodies.len();
         }
 
         self.func_bodies.append(&mut builder.func_bodies);

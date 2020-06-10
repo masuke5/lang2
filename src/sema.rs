@@ -1017,7 +1017,7 @@ impl Analyzer {
                 };
 
                 let mut ty = header.return_ty.clone();
-                for param_ty in &header.params {
+                for param_ty in header.params.iter().rev() {
                     ty = Type::App(TypeCon::Arrow, vec![param_ty.clone(), ty]);
                 }
 

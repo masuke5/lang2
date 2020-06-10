@@ -48,6 +48,22 @@ fn string_len(vm: &mut VM) {
     vm.return_values(&[Value::new_i64(len as i64)], 1);
 }
 
+fn string_index(vm: &mut VM) {
+    get_args!(vm, index: i64, s: *const Lang2String);
+
+    // Check bounds
+    let len = unsafe { (*s).len };
+    if index < 0 || index >= len as i64 {
+        vm.panic("out of bounds");
+    }
+
+    // Return character as new string
+    let ch = unsafe { *(*s).bytes.as_ptr().add(index as usize) as char };
+    let s = vm.alloc_str(&ch.to_string());
+
+    vm.return_values(&[Value::new_ptr_to_heap(s)], 2);
+}
+
 pub fn module() -> ModuleWithChild {
     let var = TypeVar::new();
 
@@ -65,7 +81,13 @@ pub fn module() -> ModuleWithChild {
         )
         .implmentation(
             ImplementationBuilder::new(SymbolPath::new().append_str("std").append_str("String"))
-                .define_func("len", vec![ltype!(*string)], ltype!(int), string_len),
+                .define_func("len", vec![ltype!(*string)], ltype!(int), string_len)
+                .define_func(
+                    "index",
+                    vec![ltype!(int), ltype!(*string)],
+                    ltype!(*string),
+                    string_index,
+                ),
         )
         .build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
 }
