@@ -296,11 +296,12 @@ pub struct Analyzer {
     visible_modules: FxHashSet<SymbolPath>,
     module_headers: FxHashMap<SymbolPath, (usize, ModuleHeader)>,
     next_module_id: usize,
+    self_path: SymbolPath,
 
     types: HashMapWithScope<Id, Type>,
     tycons: TypeDefinitions,
     tycon_spans: HashMapWithScope<Id, Span>,
-    impls: FxHashMap<Id, Implementation>,
+    impls: FxHashMap<SymbolPath, Implementation>,
 
     variables: VariableMap,
 
@@ -311,7 +312,7 @@ pub struct Analyzer {
 }
 
 impl Analyzer {
-    pub fn new() -> Self {
+    pub fn new(self_path: SymbolPath) -> Self {
         let mut slf = Self {
             visible_modules: FxHashSet::default(),
             module_headers: FxHashMap::default(),
@@ -325,6 +326,7 @@ impl Analyzer {
             current_func: *reserved_id::MAIN_FUNC,
             ir_funcs: Vec::new(),
             ir_func_ids: HashMapWithScope::new(),
+            self_path,
         };
         slf.push_type_scope();
         slf.push_scope();
@@ -477,9 +479,10 @@ impl Analyzer {
                 if module_path.is_empty() {
                     if let Some(module_path) = self.tycons.module_path(type_name) {
                         let (module_id, module_header) = self.module_headers.get(module_path)?;
+                        let type_path = module_path.clone().append_id(type_name);
                         let (func_id, func_header) = module_header
                             .impls
-                            .get(&type_name)?
+                            .get(&type_path)?
                             .functions
                             .get(&func_name)?;
                         let func_header =
@@ -488,8 +491,8 @@ impl Analyzer {
                         Some(ImportedEntry::Function(func_name, func_header))
                     } else {
                         // Search self.impls if `type_name` is a self implementation
-                        let (func_id, header) =
-                            self.impls.get(&type_name)?.functions.get(&func_name)?;
+                        let path = self.self_path.clone().append_id(type_name);
+                        let (func_id, header) = self.impls.get(&path)?.functions.get(&func_name)?;
                         let header = FunctionHeaderWithId::new_self(header.clone(), *func_id);
 
                         Some(ImportedEntry::Function(func_name, header))
@@ -501,8 +504,9 @@ impl Analyzer {
                     }
 
                     let (module_id, module) = self.module_headers.get(&module_path)?;
+                    let type_path = module_path.append_id(type_name);
                     let (func_id, header) =
-                        module.impls.get(&type_name)?.functions.get(&func_name)?;
+                        module.impls.get(&type_path)?.functions.get(&func_name)?;
                     let header = FunctionHeaderWithId::new(*module_id, *func_id, header.clone());
 
                     Some(ImportedEntry::Function(func_name, header))
@@ -1983,11 +1987,13 @@ impl Analyzer {
             }
         }
 
-        self.impls.insert(implementation.target.kind, new_impl);
+        let path = self.self_path.clone().append_id(implementation.target.kind);
+        self.impls.insert(path, new_impl);
     }
 
     fn walk_impl(&mut self, implementation: Impl) {
-        let impl_header = match self.impls.get(&implementation.target.kind) {
+        let path = self.self_path.clone().append_id(implementation.target.kind);
+        let impl_header = match self.impls.get(&path) {
             Some(imp) => imp,
             None => return,
         };
@@ -2225,7 +2231,7 @@ pub fn do_semantics_analysis(
 
     // Initialize and insert type headers
     for (path, program) in &module_buffers {
-        analyzers.insert(path.clone(), Analyzer::new());
+        analyzers.insert(path.clone(), Analyzer::new(path.clone()));
         module_headers.insert(path.clone(), ModuleHeader::new(path));
 
         let analyzer = analyzers.get_mut(path).unwrap();

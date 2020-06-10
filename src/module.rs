@@ -51,7 +51,7 @@ pub struct ModuleHeader {
     pub path: SymbolPath,
     pub functions: FxHashMap<Id, (usize, FunctionHeader)>,
     pub types: FxHashMap<Id, Option<TypeCon>>,
-    pub impls: FxHashMap<Id, Implementation>,
+    pub impls: FxHashMap<SymbolPath, Implementation>,
 }
 
 impl ModuleHeader {
@@ -108,11 +108,11 @@ impl ModuleContainer {
 pub struct ImplementationBuilder {
     func_bodies: Vec<(usize, NativeFunctionBody)>,
     func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
-    target: Id,
+    target: SymbolPath,
 }
 
 impl ImplementationBuilder {
-    pub fn new(target: Id) -> Self {
+    pub fn new(target: SymbolPath) -> Self {
         Self {
             func_bodies: Vec::new(),
             func_headers: FxHashMap::default(),
@@ -165,7 +165,7 @@ impl ImplementationBuilder {
 pub struct ModuleBuilder {
     func_bodies: Vec<(usize, NativeFunctionBody)>,
     func_headers: FxHashMap<Id, (usize, FunctionHeader)>,
-    impls: FxHashMap<Id, Implementation>,
+    impls: FxHashMap<SymbolPath, Implementation>,
 }
 
 impl ModuleBuilder {

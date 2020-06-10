@@ -64,12 +64,8 @@ pub fn module() -> ModuleWithChild {
             len,
         )
         .implmentation(
-            ImplementationBuilder::new(IdMap::new_id("String")).define_func(
-                "len",
-                vec![ltype!(*string)],
-                ltype!(int),
-                string_len,
-            ),
+            ImplementationBuilder::new(SymbolPath::new().append_str("std").append_str("String"))
+                .define_func("len", vec![ltype!(*string)], ltype!(int), string_len),
         )
         .build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
 }
