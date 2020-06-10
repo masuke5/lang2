@@ -12,6 +12,10 @@ use crate::id::{Id, IdMap};
 use crate::span::Span;
 use crate::utils::{format_bool, HashMapWithScope};
 
+lazy_static! {
+    pub static ref MODULE_STD_PATH: SymbolPath = SymbolPath::new().append_str("std");
+}
+
 macro_rules! _ltype_arrow {
     ($arg:expr, -> $($ret:tt)*) => {
         Type::App(TypeCon::Arrow, vec![$arg, ltype!($($ret)*)])
@@ -515,12 +519,24 @@ pub struct TypeDefinitions {
 
 impl TypeDefinitions {
     pub fn new() -> Self {
-        Self {
+        Self::init(Self {
             tycons: HashMapWithScope::new(),
             sizes: HashMapWithScope::new(),
             modules: HashMapWithScope::new(),
             is_resolved: false,
-        }
+        })
+    }
+
+    fn init(mut self) -> Self {
+        self.modules.push_scope();
+
+        self.modules
+            .insert(IdMap::new_id("Int"), MODULE_STD_PATH.clone());
+        self.modules
+            .insert(IdMap::new_id("String"), MODULE_STD_PATH.clone());
+        self.modules
+            .insert(IdMap::new_id("Bool"), MODULE_STD_PATH.clone());
+        self
     }
 
     pub fn push_scope(&mut self) {

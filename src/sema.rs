@@ -314,7 +314,11 @@ pub struct Analyzer {
 impl Analyzer {
     pub fn new(self_path: SymbolPath) -> Self {
         let mut slf = Self {
-            visible_modules: FxHashSet::default(),
+            visible_modules: {
+                let mut hs = FxHashSet::default();
+                hs.insert(MODULE_STD_PATH.clone());
+                hs
+            },
             module_headers: FxHashMap::default(),
             next_module_id: 0,
             variables: VariableMap::new(),
@@ -478,6 +482,8 @@ impl Analyzer {
 
                 if module_path.is_empty() {
                     if let Some(module_path) = self.tycons.module_path(type_name) {
+                        // If `type_name` exists in `module_path`
+
                         let (module_id, module_header) = self.module_headers.get(module_path)?;
                         let type_path = module_path.clone().append_id(type_name);
                         let (func_id, func_header) = module_header
