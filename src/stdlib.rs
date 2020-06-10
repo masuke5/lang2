@@ -64,6 +64,37 @@ fn string_index(vm: &mut VM) {
     vm.return_values(&[Value::new_ptr_to_heap(s)], 2);
 }
 
+fn string_concat(vm: &mut VM) {
+    get_args!(vm, a: *const Lang2String, b: *const Lang2String);
+
+    let a = unsafe { format!("{}", (*a)) };
+    let b = unsafe { format!("{}", (*b)) };
+    let c = a + &b;
+
+    let s = vm.alloc_str(&c);
+
+    vm.return_values(&[Value::new_ptr_to_heap(s)], 2);
+}
+
+fn string_sub(vm: &mut VM) {
+    get_args!(vm, start: i64, len: i64, s: *const Lang2String);
+
+    // Check bounds
+    let s_len = unsafe { (*s).len };
+    if start < 0 || start >= s_len as i64 || start + len < 0 || start + len >= s_len as i64 {
+        vm.panic("out of bounds");
+    }
+
+    let start = start as usize;
+    let len = len as usize;
+
+    let s = unsafe { format!("{}", *s) };
+    let s = &s[start..start + len];
+    let s = vm.alloc_str(s);
+
+    vm.return_values(&[Value::new_ptr_to_heap(s)], 3);
+}
+
 pub fn module() -> ModuleWithChild {
     let var = TypeVar::new();
 
@@ -87,6 +118,18 @@ pub fn module() -> ModuleWithChild {
                     vec![ltype!(int), ltype!(*string)],
                     ltype!(*string),
                     string_index,
+                )
+                .define_func(
+                    "concat",
+                    vec![ltype!(*string), ltype!(*string)],
+                    ltype!(*string),
+                    string_concat,
+                )
+                .define_func(
+                    "sub",
+                    vec![ltype!(int), ltype!(int), ltype!(*string)],
+                    ltype!(*string),
+                    string_sub,
                 ),
         )
         .build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
