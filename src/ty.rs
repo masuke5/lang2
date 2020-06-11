@@ -536,6 +536,8 @@ impl TypeDefinitions {
             .insert(IdMap::new_id("String"), MODULE_STD_PATH.clone());
         self.modules
             .insert(IdMap::new_id("Bool"), MODULE_STD_PATH.clone());
+        self.modules
+            .insert(IdMap::new_id("Slice"), MODULE_STD_PATH.clone());
         self
     }
 

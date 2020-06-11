@@ -95,6 +95,19 @@ fn string_sub(vm: &mut VM) {
     vm.return_values(&[Value::new_ptr_to_heap(s)], 3);
 }
 
+fn string_first_byte(vm: &mut VM) {
+    get_args!(vm, s: *const Lang2String);
+
+    // Check length
+    let len = unsafe { (*s).len };
+    if len < 1 {
+        vm.panic("empty string");
+    }
+
+    let byte = unsafe { *(*s).bytes.as_ptr() };
+    vm.return_values(&[Value::new_i64(byte as i64)], 1);
+}
+
 pub fn module() -> ModuleWithChild {
     let var = TypeVar::new();
 
@@ -130,6 +143,12 @@ pub fn module() -> ModuleWithChild {
                     vec![ltype!(int), ltype!(int), ltype!(*string)],
                     ltype!(*string),
                     string_sub,
+                )
+                .define_func(
+                    "first_byte",
+                    vec![ltype!(*string)],
+                    ltype!(int),
+                    string_first_byte,
                 ),
         )
         .build(SymbolPath::new().append_id(*reserved_id::STD_MODULE))
