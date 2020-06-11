@@ -1016,11 +1016,7 @@ impl Analyzer {
                     }
                 };
 
-                let mut ty = header.return_ty.clone();
-                for param_ty in header.params.iter().rev() {
-                    ty = Type::App(TypeCon::Arrow, vec![param_ty.clone(), ty]);
-                }
-
+                let ty = generate_func_type(&header.params, &header.return_ty, &header.ty_params);
                 let ir = translate::func_pos(module_id, func_id);
                 (ir, ty)
             }
