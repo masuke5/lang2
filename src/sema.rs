@@ -1669,23 +1669,10 @@ impl Analyzer {
             }
         }
 
-        // 5. Walk implementations
-        if let Some(impls) = impls {
-            let current_func = self.current_func;
-            let current_func_index = self.current_func_index;
-
-            for implementation in impls {
-                self.walk_impl(implementation);
-            }
-
-            self.current_func = current_func;
-            self.current_func_index = current_func_index;
-        }
-
-        // 6. Insert function headers in the statements
+        // 5. Insert function headers in the statements
         self.insert_func_headers_in_stmts(&block.functions);
 
-        // 7. Walk statements
+        // 6. Walk statements
         let mut stmts: Vec<IRStmt> = Vec::new();
         for stmt in block.stmts {
             let stmt_irs = self.walk_stmt(stmt);
@@ -1697,6 +1684,19 @@ impl Analyzer {
         }
 
         let result_expr = self.walk_expr(*block.result_expr);
+
+        // 7. Walk implementations
+        if let Some(impls) = impls {
+            let current_func = self.current_func;
+            let current_func_index = self.current_func_index;
+
+            for implementation in impls {
+                self.walk_impl(implementation);
+            }
+
+            self.current_func = current_func;
+            self.current_func_index = current_func_index;
+        }
 
         // 8. Walk function bodies
         for func in block.functions {
