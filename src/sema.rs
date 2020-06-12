@@ -370,10 +370,6 @@ impl Analyzer {
 
     fn expand_name(&self, ty: Type) -> Option<Type> {
         match ty {
-            Type::App(TypeCon::Fun(params, body), types) => {
-                let map = params.into_iter().zip(types.into_iter()).collect();
-                self.expand_name(subst(*body, &map))
-            }
             Type::App(TypeCon::Named(name, _), types)
             | Type::App(TypeCon::UnsizedNamed(name), types) => match self.tycons.get(name) {
                 Some(TypeBody::Resolved(tycon)) | Some(TypeBody::Unresolved(tycon)) => {
@@ -381,15 +377,6 @@ impl Analyzer {
                 }
                 None => None,
             },
-            Type::App(tycon, types) => {
-                let mut new_types = Vec::with_capacity(types.len());
-                for ty in types {
-                    let ty = self.expand_name(ty)?;
-                    new_types.push(ty);
-                }
-
-                Some(Type::App(tycon, new_types))
-            }
             ty => Some(ty),
         }
     }
@@ -517,49 +504,6 @@ impl Analyzer {
 
                     Some(ImportedEntry::Function(func_name, header))
                 }
-            }
-        }
-    }
-
-    // Pointer
-    //   Struct => ok
-    //   _ => error
-    // Struct => ok
-    // _ => error
-    fn get_struct_fields<'b>(
-        &'b mut self,
-        ty: &'b Type,
-        span: &Span,
-        is_mutable: bool,
-    ) -> Option<(Vec<(Id, Type)>, bool)> {
-        let ty = expand_unique(ty.clone());
-        match ty {
-            Type::App(TypeCon::Struct(fields), tys) => Some((
-                fields.into_iter().zip(tys.into_iter()).collect(),
-                is_mutable,
-            )),
-            Type::App(TypeCon::Pointer(is_mutable), tys) => {
-                let ty = expand_unique(tys[0].clone());
-                match ty {
-                    Type::App(TypeCon::Struct(fields), tys) => Some((
-                        fields.into_iter().zip(tys.into_iter()).collect(),
-                        is_mutable,
-                    )),
-                    ty => {
-                        error!(
-                            &span.clone(),
-                            "expected type `struct` or `*struct` but got type `{}`", ty
-                        );
-                        None
-                    }
-                }
-            }
-            ty => {
-                error!(
-                    &span.clone(),
-                    "expected type `struct` or `*struct` but got type `{}`", ty
-                );
-                None
             }
         }
     }
@@ -842,24 +786,35 @@ impl Analyzer {
                 let comp_expr = self.walk_expr(*comp_expr)?;
                 let mut is_mutable = comp_expr.is_mutable;
 
-                let ty = self.expand_name(comp_expr.ty.clone())?;
+                // dereference
+                // expand wrap
+                // expand in heap
+                // expand name
+                // expand unique
+                // subst
+
+                let ty = match comp_expr.ty.clone() {
+                    Type::App(TypeCon::Pointer(is_mutable_), tys) => {
+                        is_mutable = is_mutable_;
+                        tys[0].clone()
+                    }
+                    ty => ty,
+                };
+
                 let mut ty = expand_wrap(ty);
 
                 if let Type::App(TypeCon::InHeap, types) = ty {
                     ty = types[0].clone();
                 }
 
+                let ty = self.expand_name(ty)?;
+                let ty = expand_unique(ty);
+                let ty = subst(ty, &FxHashMap::default());
+
                 // Get the field type and offset
                 let (field_ty, offset) = match field {
                     Field::Number(i) => {
-                        let types = match &ty {
-                            Type::App(TypeCon::Pointer(is_mutable_), tys) => {
-                                is_mutable = *is_mutable_;
-                                expect_tuple(&tys[0], &comp_expr.span)?
-                            }
-                            ty => expect_tuple(ty, &comp_expr.span)?,
-                        };
-
+                        let types = expect_tuple(&ty, &comp_expr.span)?;
                         match types.get(i) {
                             Some(ty) => {
                                 let offset = types
@@ -875,9 +830,15 @@ impl Analyzer {
                         }
                     }
                     Field::Id(name) => {
-                        let (fields, is_mutable_) =
-                            self.get_struct_fields(&ty, &comp_expr.span, is_mutable)?;
-                        is_mutable = is_mutable_;
+                        let fields: Vec<(Id, Type)> = match ty {
+                            Type::App(TypeCon::Struct(fields), tys) => {
+                                fields.into_iter().zip(tys.into_iter()).collect()
+                            }
+                            _ => {
+                                error!(&expr.span, "error");
+                                return None;
+                            }
+                        };
 
                         let i = match fields.iter().position(|(id, _)| *id == name) {
                             Some(i) => i,
