@@ -1996,19 +1996,23 @@ impl Analyzer {
     fn walk_impl(&mut self, implementation: Impl) {
         let path = self.self_path.clone().append_id(implementation.target.kind);
         let impl_header = match self.impls.get(&path) {
-            Some(imp) => imp,
+            Some(imp) => imp.clone(),
             None => return,
         };
 
-        let iter = impl_header
-            .functions
-            .clone()
-            .into_iter()
-            .map(|(_, (_, h))| h)
-            .zip(implementation.functions.into_iter());
+        for func in implementation.functions {
+            // TODO: Improve it
+            // Get func_name from Struct.func_name
+            let func_name = IdMap::name(func.name.kind);
+            let real_func_name: String = func_name
+                .chars()
+                .skip_while(|c| *c != '.')
+                .skip(1)
+                .collect();
+            let real_func_name = IdMap::new_id(&real_func_name);
 
-        for (header, func) in iter {
-            self.walk_function(func, &header);
+            let (_, header) = &impl_header.functions[&real_func_name];
+            self.walk_function(func, header);
         }
     }
 

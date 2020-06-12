@@ -348,6 +348,7 @@ impl Impl {
         let original_name = func.name.kind;
 
         // Concatenate the structure name and the function name
+        // because conflict with function names outside impl
         let func_name = format!(
             "{}.{}",
             IdMap::name(self.target.kind),
