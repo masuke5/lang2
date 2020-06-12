@@ -301,6 +301,15 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 }
 
 pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
+    let result = unify_inner(span, a, b);
+    if result.is_none() {
+        error!(&span.clone(), "`{}` is not equivalent to `{}`", a, b);
+    }
+
+    result
+}
+
+pub fn unify_inner(span: &Span, a: &Type, b: &Type) -> Option<()> {
     if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
         let ok = match (a_tycon, b_tycon) {
             (TypeCon::Named(a, _), TypeCon::UnsizedNamed(b))
@@ -314,7 +323,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
 
         if ok {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
-                unify(span, a_ty, b_ty)?;
+                unify_inner(span, a_ty, b_ty)?;
             }
 
             return Some(());
@@ -329,7 +338,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
                 map.insert(*param, ty.clone());
             }
 
-            unify(span, &subst(*body.clone(), &map), b)?;
+            unify_inner(span, &subst(*body.clone(), &map), b)?;
             Some(())
         }
         (
@@ -341,7 +350,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
             }
 
             for (ty1, ty2) in tys1.iter().zip(tys2.iter()) {
-                unify(span, ty1, ty2)?;
+                unify_inner(span, ty1, ty2)?;
             }
 
             Some(())
@@ -353,7 +362,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
                 .zip(vars1.iter().map(|v| Type::Var(*v)))
                 .collect();
 
-            unify(span, ty1, &subst(*ty2.clone(), &map))?;
+            unify_inner(span, ty1, &subst(*ty2.clone(), &map))?;
             Some(())
         }
         (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Some(()),
@@ -363,10 +372,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
         (Type::Unit, Type::Unit) => Some(()),
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
-        (a, b) => {
-            error!(&span.clone(), "`{}` is not equivalent to `{}`", a, b);
-            None
-        }
+        _ => None,
     }
 }
 
