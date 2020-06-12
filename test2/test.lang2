@@ -256,9 +256,11 @@ type Person struct {
     child: Child,
 };
 
+let mistery = 10;
+
 impl Person {
     fn sum(p: *Person): int = {
-        p.age + p.child.age + p.child.age_in_months
+        p.age + p.child.age + p.child.age_in_months + mistery
     }
 }
 
@@ -283,7 +285,7 @@ test_eq "struct field 3" 8 person.child.age_in_months;
 
 # Avoid to allocate `person` in heap
 let person2 = person;
-test_eq "implementation" 242 (Person::sum (&person2));
+test_eq "implementation" 252 (Person::sum (&person2));
 
 ## heap ##
 

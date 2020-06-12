@@ -21,6 +21,26 @@ impl<'a> Finder<'a> {
         self.variables.pop_scope();
     }
 
+    fn find_func(&mut self, func: &'a mut AstFunction) {
+        self.push_scope();
+
+        for param in &mut func.params {
+            self.variables.insert(param.name, &mut param.is_escaped);
+        }
+        self.find_expr(&mut func.body.kind);
+
+        // Check for variables or arguments to escape
+        let current_level = self.variables.level();
+        let has_escaped_variables = self
+            .variables
+            .iter()
+            .filter(|(level, _, _)| *level >= current_level)
+            .any(|(_, _, is_escaped)| **is_escaped);
+        func.has_escaped_variables = has_escaped_variables;
+
+        self.pop_scope();
+    }
+
     fn find_block(&mut self, block: &'a mut Block) {
         for stmt in &mut block.stmts {
             self.find_stmt(&mut stmt.kind);
@@ -28,23 +48,7 @@ impl<'a> Finder<'a> {
         self.find_expr(&mut block.result_expr.kind);
 
         for func in &mut block.functions {
-            self.push_scope();
-
-            for param in &mut func.params {
-                self.variables.insert(param.name, &mut param.is_escaped);
-            }
-            self.find_expr(&mut func.body.kind);
-
-            // Check for variables or arguments to escape
-            let current_level = self.variables.level();
-            let has_escaped_variables = self
-                .variables
-                .iter()
-                .filter(|(level, _, _)| *level == current_level)
-                .any(|(_, _, is_escaped)| **is_escaped);
-            func.has_escaped_variables = has_escaped_variables;
-
-            self.pop_scope();
+            self.find_func(func);
         }
     }
 
@@ -123,7 +127,14 @@ impl<'a> Finder<'a> {
 
     fn find(&mut self, program: &'a mut Program) {
         self.push_scope();
+
         self.find_block(&mut program.main);
+        for imple in &mut program.impls {
+            for func in &mut imple.functions {
+                self.find_func(func);
+            }
+        }
+
         self.pop_scope();
     }
 }
