@@ -81,7 +81,7 @@ fn string_sub(vm: &mut VM) {
 
     // Check bounds
     let s_len = unsafe { (*s).len };
-    if start < 0 || start >= s_len as i64 || start + len < 0 || start + len >= s_len as i64 {
+    if start < 0 || start >= s_len as i64 || start + len < 0 || start + len > s_len as i64 {
         vm.panic("out of bounds");
     }
 
