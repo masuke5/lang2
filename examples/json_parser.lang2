@@ -1,0 +1,245 @@
+import list::*;
+
+fn print_indent(depth: int) = {
+    let mut i = 0;
+    while i < depth {
+        print "  ";
+        i += 1;
+    }
+}
+
+let VALUE_OBJECT = 0;
+let VALUE_STRING = 1;
+let VALUE_NUMBER = 2;
+let VALUE_BOOL = 3;
+let VALUE_ARRAY = 4;
+let VALUE_NULL = 4;
+
+type Value struct {
+    ty: int,
+    text: *string,
+    num: int,
+    map: List<(*string, *Value)>,
+};
+
+impl Value {
+    fn new(ty: int): Value = {
+        Value:{
+            ty: ty,
+            text: "",
+            num: 0,
+            map: List::new.<(*string, *Value)> (),
+        }
+    }
+
+    fn dump(value: *Value) = {
+        fn dump(value: *Value, depth: int) = {
+            print_indent depth;
+
+            if value = __null__ {
+                println "dump error";
+                return;
+            }
+
+            if value.ty = VALUE_OBJECT {
+                print "\r";
+
+                let mut node = value.map.front;
+                while node <> __null__ {
+                    let t = node.value;
+                    let key = t.0;
+                    let value = t.1;
+
+                    print_indent depth;
+
+                    print "\"";
+                    print key;
+                    println "\":";
+
+                    dump value (depth + 1);
+
+                    node := node.next;
+                }
+            } else if value.ty = VALUE_STRING {
+                print "\"";
+                print value.text;
+                println "\"";
+            } else if value.ty = VALUE_NUMBER {
+                printnln value.num;
+            } else if value.ty = VALUE_BOOL {
+                if value.num = 0 {
+                    println "false";
+                } else {
+                    println "true";
+                }
+            } else if value.ty = VALUE_NULL {
+                println "null";
+            }
+        }
+
+        dump value 0
+    }
+}
+
+let code = "{\"fruits\":{\"apple\":{\"color\":\"red\",\"tree\":true},\"watermelon\":{\"color\":\"red\",\"tree\":false},\"grape\":null}}";
+let mut pos = 0;
+
+fn next() = {
+    if pos <= (String::len code) - 1 {
+        pos += 1;
+    }
+}
+
+fn peek(): *string = {
+    if pos < String::len code {
+        String::index pos code
+    } else {
+        "\x00"
+    }
+}
+
+fn error(msg: *string) = {
+    print "Error at ";
+    printn (pos + 1);
+    print ": ";
+    println msg;
+}
+
+fn string_equal(a: *string, b: *string): bool = {
+    if String::len a <> String::len b {
+        return false;
+    }
+
+    let len = String::len a;
+    let mut i = 0;
+
+    while i < len {
+        let ab = String::first_byte (String::index i a);
+        let bb = String::first_byte (String::index i b);
+        if ab <> bb {
+            return false;
+        }
+
+        i += 1;
+    }
+
+    true
+}
+
+fn eat(str: *string): bool = {
+    let len = String::len str;
+    if pos > (String::len code) - len {
+        return false;
+    }
+
+    let s = String::sub pos len code;
+    if string_equal str s {
+        pos += len;
+        true
+    } else {
+        false
+    }
+}
+
+fn expect(str: *string) = {
+    if not (eat str) {
+        error "unexpected character";
+    }
+}
+
+fn start_with_digit(): bool = {
+    let b = String::first_byte (peek ());
+    b >= 48 && b <= 57
+}
+
+fn parse_string(): *Value = {
+    expect "\"";
+
+    let start = pos;
+    let mut len = 0;
+
+    while not (eat "\"") {
+        len += 1;
+        next ();
+    }
+
+    let str = String::sub start len code;
+
+    let mut node = Value::new VALUE_STRING;
+    node.text := str;
+    &node
+}
+
+fn parse_number(): *Value = {
+    let mut num = 0;
+    while start_with_digit () {
+        let digit = (String::first_byte (peek ())) - 48;
+        num := num * 10 + digit;
+        next ();
+    }
+
+    let mut node = Value::new VALUE_NUMBER;
+    node.num := num;
+    &node
+}
+
+fn parse_object(): *Value = {
+    expect "{";
+
+    let mut map = List::new.<(*string, *Value)> ();
+
+    let mut stop = false;
+    while not stop {
+        let key = (parse_string ()).text;
+        expect ":";
+        let value = parse_value ();
+
+        List::push_front (&mut map) (key, value);
+        
+        if eat "}" {
+            stop := true;
+        } else if not (eat ",") {
+            error "expected , or }";
+        }
+    }
+
+    let mut node = Value::new VALUE_OBJECT;
+    node.map := map;
+    &node
+}
+
+fn parse_keyword(): *Value = {
+    if eat "true" {
+        let mut node = Value::new VALUE_BOOL;
+        node.num := 1;
+        &node
+    } else if eat "false" {
+        let mut node = Value::new VALUE_BOOL;
+        node.num := 0;
+        &node
+    } else if eat "null" {
+        let mut node = Value::new VALUE_NULL;
+        &node
+    } else {
+        __null__
+    }
+}
+
+fn parse_value(): *Value = {
+    if start_with_digit () {
+        parse_number ()
+    } else if string_equal (peek ()) "\"" {
+        parse_string ()
+    } else if string_equal (peek ()) "{" {
+        parse_object ()
+    } else {
+        parse_keyword ()
+    }
+}
+
+let value = parse_value();
+if value = __null__ {
+    println "failed to parse";
+} else {
+    Value::dump value;
+}
