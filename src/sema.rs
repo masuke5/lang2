@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast::{Param as AstParam, *};
@@ -291,10 +294,13 @@ impl VariableMap {
     }
 }
 
+type ModuleHeaderMap = FxHashMap<SymbolPath, ModuleHeader>;
+
 #[derive(Debug)]
 pub struct Analyzer {
     visible_modules: FxHashSet<SymbolPath>,
-    module_headers: FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+    all_module_headers: Rc<RefCell<ModuleHeaderMap>>,
+    imported_module_ids: FxHashMap<SymbolPath, usize>,
     next_module_id: usize,
     self_path: SymbolPath,
     imported_types: FxHashMap<Id, SymbolPath>,
@@ -313,14 +319,15 @@ pub struct Analyzer {
 }
 
 impl Analyzer {
-    pub fn new(self_path: SymbolPath) -> Self {
+    pub fn new(self_path: SymbolPath, all_module_headers: Rc<RefCell<ModuleHeaderMap>>) -> Self {
         Self::init(Self {
             visible_modules: {
                 let mut hs = FxHashSet::default();
                 hs.insert(MODULE_STD_PATH.clone());
                 hs
             },
-            module_headers: FxHashMap::default(),
+            all_module_headers,
+            imported_module_ids: FxHashMap::default(),
             next_module_id: 0,
             variables: VariableMap::new(),
             types: HashMapWithScope::new(),
@@ -408,7 +415,8 @@ impl Analyzer {
                     let type_name = path.tail().unwrap().id;
 
                     // Find the type
-                    let (_, module_header) = self.module_headers.get(&module_path)?;
+                    let module_headers = self.all_module_headers.borrow();
+                    let module_header = module_headers.get(&module_path)?;
                     let tycon = module_header
                         .types
                         .get(&type_name)?
@@ -471,7 +479,7 @@ impl Analyzer {
         assert!(!path.is_empty());
 
         // Return ImportedEntry::Module if `path` is a module
-        if self.module_headers.contains_key(path) {
+        if self.all_module_headers.borrow().contains_key(path) {
             return Some(ImportedEntry::Module(path.tail().unwrap().id));
         }
 
@@ -482,10 +490,11 @@ impl Analyzer {
             return None;
         }
 
-        match self.module_headers.get(&module_or_struct_path) {
+        match self.all_module_headers.borrow().get(&module_or_struct_path) {
             // Find a function or a type of `entry_id`
-            Some((module_id, module)) => {
+            Some(module) => {
                 let module_path = module_or_struct_path;
+                let module_id = self.imported_module_ids[&module_path];
 
                 // Not imported modules are invisible
                 if !self.visible_modules.contains(&module_path) {
@@ -498,7 +507,7 @@ impl Analyzer {
                 }
 
                 let (func_id, header) = module.functions.get(&entry_name)?;
-                let header = FunctionHeaderWithId::new(*module_id, *func_id, header.clone());
+                let header = FunctionHeaderWithId::new(module_id, *func_id, header.clone());
 
                 Some(ImportedEntry::Function(entry_name, header))
             }
@@ -512,15 +521,20 @@ impl Analyzer {
                     if let Some(type_path) = self.imported_types.get(&type_name) {
                         // If type `type_name` is external
 
+                        // Get the module
                         let module_path = type_path.parent().unwrap();
-                        let (module_id, module_header) = self.module_headers.get(&module_path)?;
+                        let module_headers = self.all_module_headers.borrow();
+                        let module_header = module_headers.get(&module_path)?;
+                        let module_id = self.imported_module_ids[&module_path];
+
+                        // Get the function from the module
                         let (func_id, func_header) = module_header
                             .impls
                             .get(&type_path)?
                             .functions
                             .get(&func_name)?;
                         let func_header =
-                            FunctionHeaderWithId::new(*module_id, *func_id, func_header.clone());
+                            FunctionHeaderWithId::new(module_id, *func_id, func_header.clone());
 
                         Some(ImportedEntry::Function(func_name, func_header))
                     } else {
@@ -537,11 +551,14 @@ impl Analyzer {
                         return None;
                     }
 
-                    let (module_id, module) = self.module_headers.get(&module_path)?;
+                    let module_headers = self.all_module_headers.borrow();
+                    let module = module_headers.get(&module_path)?;
+                    let module_id = self.imported_module_ids[&module_path];
+
                     let type_path = module_path.append_id(type_name);
                     let (func_id, header) =
                         module.impls.get(&type_path)?.functions.get(&func_name)?;
-                    let header = FunctionHeaderWithId::new(*module_id, *func_id, header.clone());
+                    let header = FunctionHeaderWithId::new(module_id, *func_id, header.clone());
 
                     Some(ImportedEntry::Function(func_name, header))
                 }
@@ -1475,23 +1492,25 @@ impl Analyzer {
         match path {
             ImportRangePath::All(spath) => {
                 // Import all functions if module `spath` exists
-                match self.module_headers.get(&spath) {
-                    Some((module_id, module)) => {
+                match self.all_module_headers.borrow().get(&spath) {
+                    Some(module) => {
+                        let module_id = self.imported_module_ids[&spath];
+
                         // Insert functions
                         for func_name in module.functions.keys() {
-                            insert(*module_id, *func_name, *func_name);
+                            insert(module_id, *func_name, *func_name);
                         }
 
                         // Insert types
                         for name in module.types.keys() {
-                            insert(*module_id, *name, *name);
+                            insert(module_id, *name, *name);
                         }
                     }
                     _ => error!(&range_span.clone(), "undefined module `{}`", spath),
                 }
             }
             ImportRangePath::Path(spath) | ImportRangePath::Renamed(spath, _)
-                if self.module_headers.contains_key(spath) =>
+                if self.all_module_headers.borrow().contains_key(spath) =>
             {
                 // if path is module
                 self.visible_modules.insert(path.as_path().clone());
@@ -1510,7 +1529,7 @@ impl Analyzer {
                 let entry = spath.tail().unwrap();
 
                 // Find the module
-                let (module_id, _) = match self.module_headers.get(&module_path) {
+                let module_id = match self.imported_module_ids.get(&module_path) {
                     Some(t) => t,
                     None => {
                         error!(&range_span.clone(), "undefined module `{}`", spath);
@@ -1553,11 +1572,12 @@ impl Analyzer {
         span: &Span,
     ) -> Option<ImportedEntry> {
         // Find the module by ID
-        let (_, header) = self
-            .module_headers
-            .values()
-            .find(|(id, _)| *id == module_id)
+        let (module_path, _) = self
+            .imported_module_ids
+            .iter()
+            .find(|(_, id)| **id == module_id)
             .unwrap();
+        let header = &self.all_module_headers.borrow()[module_path];
 
         match header.types.get(&original_name) {
             Some(Some(body)) => Some(ImportedEntry::Type(renamed_name, body.clone())),
@@ -1663,7 +1683,7 @@ impl Analyzer {
 
         // 3. Walk types
         self.walk_type_def_in_stmts(block.types);
-        let _ = self.tycons.resolve(&self.module_headers);
+        let _ = self.tycons.resolve(&*self.all_module_headers.borrow());
 
         // 4. Insert implementation headers
         if let Some(impls) = &impls {
@@ -1732,16 +1752,19 @@ impl Analyzer {
             let module_path = path.parent().unwrap();
             let type_name = path.tail().unwrap().id;
 
-            let module_header = match self.module_headers.get(&module_path) {
-                Some((_, mh)) => mh,
+            let module_headers = self.all_module_headers.borrow();
+            let module_header = match module_headers.get(&module_path) {
+                Some(mh) => mh,
                 None => {
                     error!(span, "undefined module `{}`", module_path);
                     return None;
                 }
             };
 
+            // println!("WANT:{:?},BUT:{:?}", type_name, module_header);
             let tycon = match module_header.types.get(&type_name) {
-                Some(tycon) => tycon.as_ref().unwrap().clone(),
+                Some(Some(tycon)) => tycon.clone(),
+                Some(None) => return Some(TypeCon::UnsizedNamed(path.clone())),
                 None => {
                     error!(
                         span,
@@ -2053,44 +2076,31 @@ impl Analyzer {
     // Module
     // =========================================
 
-    pub fn load_modules(
-        &mut self,
-        imported_modules: &[SymbolPath],
-        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
-    ) {
-        assert!(self.module_headers.is_empty());
-
-        let mut headers = FxHashMap::default();
+    pub fn load_modules(&mut self, imported_modules: &[SymbolPath]) {
         for path in imported_modules {
-            let module_header = module_headers[&path].clone();
-
+            // Create module path and ID map
             let module_id = self.next_module_id;
+            self.imported_module_ids.insert(path.clone(), module_id);
             self.next_module_id += 1;
-            headers.insert(path.clone(), (module_id, module_header));
-        }
-
-        self.module_headers = headers;
-    }
-
-    pub fn update_modules(&mut self, module_headers: &FxHashMap<SymbolPath, ModuleHeader>) {
-        for (path, (_, header)) in &mut self.module_headers {
-            *header = module_headers[path].clone();
         }
     }
 
-    pub fn insert_public_type_headers(
+    pub fn generate_public_type_headers(
         &mut self,
         program: &Program,
-        module_header: &mut ModuleHeader,
-    ) {
+    ) -> FxHashMap<Id, Option<TypeCon>> {
+        let mut types = FxHashMap::default();
+
         // Insert type headers
         for tydef in &program.main.types {
-            module_header.types.insert(tydef.name, None);
+            types.insert(tydef.name, None);
             self.tycons.insert(tydef.name);
         }
+
+        types
     }
 
-    pub fn walk_public_type(&mut self, program: &Program, module_header: &mut ModuleHeader) {
+    pub fn walk_public_type(&mut self, program: &Program) -> FxHashMap<Id, Option<TypeCon>> {
         // Import extern module types
         for range in &program.main.imports {
             for path in range.kind.to_paths() {
@@ -2100,11 +2110,12 @@ impl Analyzer {
                 });
 
                 for (module_id, original, renamed) in list {
-                    let (_, header) = self
-                        .module_headers
-                        .values()
-                        .find(|(id, _)| *id == module_id)
+                    let (module_path, _) = self
+                        .imported_module_ids
+                        .iter()
+                        .find(|(_, id)| **id == module_id)
                         .unwrap();
+                    let header = &self.all_module_headers.borrow()[module_path];
 
                     if header.types.get(&original).is_some() {
                         self.imported_types
@@ -2117,6 +2128,7 @@ impl Analyzer {
         // Import type headers only
         self.walk_type_def_in_stmts(program.main.types.clone());
 
+        let mut types = FxHashMap::default();
         for tydef in &program.main.types {
             let body = match self.tycons.get(tydef.name) {
                 Some(body) => body,
@@ -2124,19 +2136,22 @@ impl Analyzer {
             };
 
             let tycon = body.tycon().clone();
-            module_header.types.insert(tydef.name, Some(tycon));
+            types.insert(tydef.name, Some(tycon));
         }
+
+        types
     }
 
     pub fn resolve_type(&mut self, _: &Program) {
-        let _ = self.tycons.resolve(&self.module_headers);
+        let _ = self.tycons.resolve(&*self.all_module_headers.borrow());
     }
 
-    pub fn insert_public_functions(&mut self, program: &Program, module_header: &mut ModuleHeader) {
+    pub fn insert_public_functions(&mut self, module_header: &mut ModuleHeader, program: &Program) {
         // Insert type headers
-        for tydef in &program.main.types {
-            self.insert_type_header(tydef);
-        }
+        // TODO: 必要？
+        // for tydef in &program.main.types {
+        //     self.insert_type_header(tydef);
+        // }
 
         // Insert main function header
         let header = FunctionHeader {
@@ -2157,20 +2172,21 @@ impl Analyzer {
         module_header.impls = self.impls.clone();
 
         // Walk the type definitions
-        for tydef in &program.main.types {
-            self.walk_type_def(tydef.clone());
-        }
+        // TODO: 必要？
+        // for tydef in &program.main.types {
+        //     self.walk_type_def(tydef.clone());
+        // }
 
-        if let Err(ids) = self.tycons.resolve(&self.module_headers) {
-            for id in ids {
-                let span = self.tycon_spans.get(&id).unwrap();
-                error!(
-                    span,
-                    "The type `{}` could not be calculated",
-                    IdMap::name(id)
-                )
-            }
-        }
+        // if let Err(ids) = self.tycons.resolve(&*self.all_module_headers.borrow()) {
+        //     for id in ids {
+        //         let span = self.tycon_spans.get(&id).unwrap();
+        //         error!(
+        //             span,
+        //             "The type `{}` could not be calculated",
+        //             IdMap::name(id)
+        //         )
+        //     }
+        // }
 
         for func in &program.main.functions {
             if let Some(header) = self.generate_function_header(&func) {
@@ -2241,27 +2257,39 @@ pub fn do_semantics_analysis(
     native_modules: &ModuleContainer,
 ) -> FxHashMap<String, ModuleBody> {
     let mut analyzers: FxHashMap<SymbolPath, Analyzer> = FxHashMap::default();
-    let mut module_headers: FxHashMap<SymbolPath, ModuleHeader> = FxHashMap::default();
+    let module_headers: Rc<RefCell<ModuleHeaderMap>> = Rc::new(RefCell::new(FxHashMap::default()));
     let mut bodies: FxHashMap<String, ModuleBody> = FxHashMap::default();
 
     let mut imported_native_modules: FxHashSet<SymbolPath> = FxHashSet::default();
 
-    // Initialize and insert type headers
+    // Initialize module headers
     for (path, program) in &module_buffers {
-        analyzers.insert(path.clone(), Analyzer::new(path.clone()));
-        module_headers.insert(path.clone(), ModuleHeader::new(path));
+        module_headers
+            .borrow_mut()
+            .insert(path.clone(), ModuleHeader::new(path));
 
-        let analyzer = analyzers.get_mut(path).unwrap();
-        let module_header = module_headers.get_mut(path).unwrap();
-        analyzer.insert_public_type_headers(program, module_header);
-
-        // Native modules
+        // Initialize native module headers
         for path in &program.imported_modules {
             if let Some(module) = native_modules.get(path) {
-                module_headers.insert(path.clone(), module.header.clone());
+                module_headers
+                    .borrow_mut()
+                    .insert(path.clone(), module.header.clone());
                 imported_native_modules.insert(path.clone());
             }
         }
+    }
+
+    for (path, program) in &module_buffers {
+        // Initialize semantic analyzer
+        analyzers.insert(
+            path.clone(),
+            Analyzer::new(path.clone(), module_headers.clone()),
+        );
+        let analyzer = analyzers.get_mut(path).unwrap();
+
+        // Generate public type headers
+        let types = analyzer.generate_public_type_headers(program);
+        module_headers.borrow_mut().get_mut(path).unwrap().types = types;
     }
 
     // Walk types
@@ -2269,30 +2297,30 @@ pub fn do_semantics_analysis(
         let analyzer = analyzers.get_mut(path).unwrap();
 
         // Load modules
-        analyzer.load_modules(&program.imported_modules, &module_headers);
+        analyzer.load_modules(&program.imported_modules);
 
-        let module_header = module_headers.get_mut(path).unwrap();
-        analyzer.walk_public_type(program, module_header);
+        let types = analyzer.walk_public_type(program);
+        module_headers.borrow_mut().get_mut(path).unwrap().types = types;
     }
 
+    // Resolve type sizes
     for (path, program) in &module_buffers {
         let analyzer = analyzers.get_mut(path).unwrap();
-        analyzer.update_modules(&module_headers);
         analyzer.resolve_type(program);
     }
 
     // Insert function headers
     for (path, program) in &module_buffers {
         let analyzer = analyzers.get_mut(path).unwrap();
-        let module_header = module_headers.get_mut(path).unwrap();
 
-        // Insert function headers
-        analyzer.insert_public_functions(program, module_header);
+        // Insert function headers to module_headers
+        let mut module_headers = module_headers.borrow_mut();
+        let module_header = module_headers.get_mut(path).unwrap();
+        analyzer.insert_public_functions(module_header, program);
     }
 
     for (name, program) in module_buffers {
-        let mut analyzer = analyzers.remove(&name).unwrap();
-        analyzer.update_modules(&module_headers);
+        let analyzer = analyzers.remove(&name).unwrap();
 
         let bytecode = analyzer.analyze(program);
         bodies.insert(format!("{}", name), ModuleBody::Normal(bytecode));

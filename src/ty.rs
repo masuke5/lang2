@@ -578,7 +578,7 @@ impl TypeDefinitions {
     fn resolve_in_type(
         &mut self,
         ty: &mut Type,
-        module_headers: &FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
     ) -> Option<()> {
         match ty {
             Type::App(tycon, types) => {
@@ -603,7 +603,7 @@ impl TypeDefinitions {
     fn resolve_in_tycon(
         &mut self,
         tycon: &mut TypeCon,
-        module_headers: &FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
     ) -> Option<()> {
         match tycon {
             // self module
@@ -634,7 +634,7 @@ impl TypeDefinitions {
                 let type_name = path.tail().unwrap().id;
 
                 // Find the type
-                let (_, module_header) = module_headers.get(&module_path)?;
+                let module_header = module_headers.get(&module_path)?;
                 let tycon_to_calc = module_header
                     .types
                     .get(&type_name)?
@@ -657,7 +657,7 @@ impl TypeDefinitions {
 
     pub fn resolve(
         &mut self,
-        module_headers: &FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
     ) -> Result<(), Vec<Id>> {
         let mut names_not_calculated = Vec::new();
 
@@ -1008,7 +1008,7 @@ mod tests {
         );
 
         let mut module_headers = FxHashMap::default();
-        module_headers.insert(external_module_path.clone(), (0, module_header));
+        module_headers.insert(external_module_path.clone(), module_header);
 
         // Initialize type definitions
         let mut types = TypeDefinitions::new(&self_module_path);
