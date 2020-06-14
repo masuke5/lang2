@@ -297,6 +297,7 @@ pub struct Analyzer {
     module_headers: FxHashMap<SymbolPath, (usize, ModuleHeader)>,
     next_module_id: usize,
     self_path: SymbolPath,
+    imported_types: FxHashMap<Id, SymbolPath>,
 
     types: HashMapWithScope<Id, Type>,
     tycons: TypeDefinitions,
@@ -313,7 +314,7 @@ pub struct Analyzer {
 
 impl Analyzer {
     pub fn new(self_path: SymbolPath) -> Self {
-        let mut slf = Self {
+        Self::init(Self {
             visible_modules: {
                 let mut hs = FxHashSet::default();
                 hs.insert(MODULE_STD_PATH.clone());
@@ -323,7 +324,7 @@ impl Analyzer {
             next_module_id: 0,
             variables: VariableMap::new(),
             types: HashMapWithScope::new(),
-            tycons: TypeDefinitions::new(),
+            tycons: TypeDefinitions::new(&self_path),
             tycon_spans: HashMapWithScope::new(),
             impls: FxHashMap::default(),
             current_func_index: 0,
@@ -331,11 +332,31 @@ impl Analyzer {
             ir_funcs: Vec::new(),
             ir_func_ids: HashMapWithScope::new(),
             self_path,
-        };
-        slf.push_type_scope();
-        slf.push_scope();
+            imported_types: FxHashMap::default(),
+        })
+    }
 
-        slf
+    fn init(mut self) -> Self {
+        self.imported_types.insert(
+            IdMap::new_id("String"),
+            MODULE_STD_PATH.clone().append_str("String"),
+        );
+        self.imported_types.insert(
+            IdMap::new_id("Slice"),
+            MODULE_STD_PATH.clone().append_str("Slice"),
+        );
+        self.imported_types.insert(
+            IdMap::new_id("Bool"),
+            MODULE_STD_PATH.clone().append_str("Bool"),
+        );
+        self.imported_types.insert(
+            IdMap::new_id("Int"),
+            MODULE_STD_PATH.clone().append_str("Int"),
+        );
+
+        self.push_type_scope();
+        self.push_scope();
+        self
     }
 
     #[inline]
@@ -370,13 +391,33 @@ impl Analyzer {
 
     fn expand_name(&self, ty: Type) -> Option<Type> {
         match ty {
-            Type::App(TypeCon::Named(name, _), types)
-            | Type::App(TypeCon::UnsizedNamed(name), types) => match self.tycons.get(name) {
-                Some(TypeBody::Resolved(tycon)) | Some(TypeBody::Unresolved(tycon)) => {
+            Type::App(TypeCon::Named(path, _), types)
+            | Type::App(TypeCon::UnsizedNamed(path), types) => {
+                assert!(!path.is_empty());
+
+                if path.parent() == Some(self.self_path.clone()) {
+                    // Get from self.types because a type in self module
+                    let type_name = path.tail().unwrap().id;
+                    match self.tycons.get(type_name) {
+                        Some(body) => Some(Type::App(body.tycon().clone(), types)),
+                        None => None,
+                    }
+                } else {
+                    // Get from module headers because a type in external module
+                    let module_path = path.parent().unwrap();
+                    let type_name = path.tail().unwrap().id;
+
+                    // Find the type
+                    let (_, module_header) = self.module_headers.get(&module_path)?;
+                    let tycon = module_header
+                        .types
+                        .get(&type_name)?
+                        .as_ref()
+                        .expect("All type body should be set before resolve size");
+
                     Some(Type::App(tycon.clone(), types))
                 }
-                None => None,
-            },
+            }
             ty => Some(ty),
         }
     }
@@ -468,11 +509,11 @@ impl Analyzer {
                 let func_name = entry_name;
 
                 if module_path.is_empty() {
-                    if let Some(module_path) = self.tycons.module_path(type_name) {
-                        // If `type_name` exists in `module_path`
+                    if let Some(type_path) = self.imported_types.get(&type_name) {
+                        // If type `type_name` is external
 
-                        let (module_id, module_header) = self.module_headers.get(module_path)?;
-                        let type_path = module_path.clone().append_id(type_name);
+                        let module_path = type_path.parent().unwrap();
+                        let (module_id, module_header) = self.module_headers.get(&module_path)?;
                         let (func_id, func_header) = module_header
                             .impls
                             .get(&type_path)?
@@ -807,7 +848,7 @@ impl Analyzer {
                     ty = types[0].clone();
                 }
 
-                let ty = self.expand_name(ty)?;
+                let ty = self.expand_name(ty).unwrap();
                 let ty = expand_unique(ty);
                 let ty = subst(ty, &FxHashMap::default());
 
@@ -1496,8 +1537,9 @@ impl Analyzer {
             ImportedEntry::Function(name, header) => {
                 self.variables.create_func(name, header);
             }
-            ImportedEntry::Type(name, tycon) => {
-                self.tycons.insert_external(module_path, name, tycon);
+            ImportedEntry::Type(name, _) => {
+                self.imported_types
+                    .insert(name, module_path.clone().append_id(name));
             }
             ImportedEntry::Module(..) => {}
         }
@@ -1621,7 +1663,7 @@ impl Analyzer {
 
         // 3. Walk types
         self.walk_type_def_in_stmts(block.types);
-        let _ = self.tycons.resolve();
+        let _ = self.tycons.resolve(&self.module_headers);
 
         // 4. Insert implementation headers
         if let Some(impls) = &impls {
@@ -1685,6 +1727,47 @@ impl Analyzer {
     // Type Definition
     // =======================================
 
+    fn get_named_type(&self, name: Id, span: &Span) -> Option<TypeCon> {
+        if let Some(path) = self.imported_types.get(&name) {
+            let module_path = path.parent().unwrap();
+            let type_name = path.tail().unwrap().id;
+
+            let module_header = match self.module_headers.get(&module_path) {
+                Some((_, mh)) => mh,
+                None => {
+                    error!(span, "undefined module `{}`", module_path);
+                    return None;
+                }
+            };
+
+            let tycon = match module_header.types.get(&type_name) {
+                Some(tycon) => tycon.as_ref().unwrap().clone(),
+                None => {
+                    error!(
+                        span,
+                        "undefined type `{}` in `{}`",
+                        IdMap::name(type_name),
+                        module_path
+                    );
+                    return None;
+                }
+            };
+            let size = type_size_nocheck(&Type::App(tycon, vec![]));
+
+            Some(TypeCon::Named(path.clone(), size))
+        } else {
+            let path = self.self_path.clone().append_id(name);
+            match self.tycons.get_size(name) {
+                Some(size) => Some(TypeCon::Named(path, size)),
+                None if self.tycons.contains(name) => Some(TypeCon::UnsizedNamed(path)),
+                None => {
+                    error!(span, "undefined type `{}`", IdMap::name(name));
+                    return None;
+                }
+            }
+        }
+    }
+
     fn walk_type(&mut self, ty: Spanned<AstType>) -> Option<Type> {
         match ty.kind {
             AstType::Int => Some(Type::Int),
@@ -1694,13 +1777,9 @@ impl Analyzer {
             AstType::Named(name) => {
                 if let Some(ty) = self.types.get(&name) {
                     Some(ty.clone())
-                } else if let Some(size) = self.tycons.get_size(name) {
-                    Some(Type::App(TypeCon::Named(name, size), Vec::new()))
-                } else if self.tycons.contains(name) {
-                    Some(Type::App(TypeCon::UnsizedNamed(name), Vec::new()))
                 } else {
-                    error!(&ty.span, "undefined type `{}`", IdMap::name(name));
-                    None
+                    let tycon = self.get_named_type(name, &ty.span)?;
+                    Some(Type::App(tycon, Vec::new()))
                 }
             }
             AstType::Pointer(ty, is_mutable) => Some(Type::App(
@@ -1735,14 +1814,7 @@ impl Analyzer {
             AstType::App(name, types) => {
                 self.push_type_scope();
 
-                let tycon = match self.tycons.get_size(name.kind) {
-                    Some(size) => TypeCon::Named(name.kind, size),
-                    None if self.tycons.contains(name.kind) => TypeCon::UnsizedNamed(name.kind),
-                    None => {
-                        error!(&name.span, "undefined type `{}`", IdMap::name(name.kind));
-                        return None;
-                    }
-                };
+                let tycon = self.get_named_type(name.kind, &name.span)?;
 
                 let mut new_types = Vec::with_capacity(types.len());
                 for ty in types {
@@ -1983,7 +2055,6 @@ impl Analyzer {
 
     pub fn load_modules(
         &mut self,
-
         imported_modules: &[SymbolPath],
         module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
     ) {
@@ -2036,7 +2107,8 @@ impl Analyzer {
                         .unwrap();
 
                     if header.types.get(&original).is_some() {
-                        self.tycons.insert(renamed);
+                        self.imported_types
+                            .insert(renamed, header.path.clone().append_id(original));
                     }
                 }
             }
@@ -2056,30 +2128,8 @@ impl Analyzer {
         }
     }
 
-    pub fn resolve_type(&mut self, program: &Program) {
-        // Import extern module types
-        for range in &program.main.imports {
-            for path in range.kind.to_paths() {
-                let mut list = Vec::new();
-                self.generate_from_range_path(&range.span, &path, |m, o, r| {
-                    list.push((m, o, r));
-                });
-
-                for (module_id, original, renamed) in list {
-                    let (_, header) = self
-                        .module_headers
-                        .values()
-                        .find(|(id, _)| *id == module_id)
-                        .unwrap();
-
-                    if let Some(Some(tycon)) = header.types.get(&original) {
-                        self.tycons.set_body(renamed, tycon.clone());
-                    }
-                }
-            }
-        }
-
-        let _ = self.tycons.resolve();
+    pub fn resolve_type(&mut self, _: &Program) {
+        let _ = self.tycons.resolve(&self.module_headers);
     }
 
     pub fn insert_public_functions(&mut self, program: &Program, module_header: &mut ModuleHeader) {
@@ -2111,7 +2161,7 @@ impl Analyzer {
             self.walk_type_def(tydef.clone());
         }
 
-        if let Err(ids) = self.tycons.resolve() {
+        if let Err(ids) = self.tycons.resolve(&self.module_headers) {
             for id in ids {
                 let span = self.tycon_spans.get(&id).unwrap();
                 error!(

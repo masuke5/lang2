@@ -9,6 +9,7 @@ use rustc_hash::FxHashMap;
 use crate::ast::SymbolPath;
 use crate::error::{Error, ErrorList};
 use crate::id::{Id, IdMap};
+use crate::module::ModuleHeader;
 use crate::span::Span;
 use crate::utils::{format_bool, HashMapWithScope};
 
@@ -225,8 +226,8 @@ pub enum TypeCon {
     Slice(bool),
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, Unique),
-    Named(Id, usize),
-    UnsizedNamed(Id),
+    Named(SymbolPath, usize),
+    UnsizedNamed(SymbolPath),
     Wrapped,
     InHeap,
 }
@@ -250,8 +251,8 @@ impl fmt::Display for TypeCon {
                 write!(f, ") = {}", body)
             }
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
-            Self::Named(name, size) => write!(f, "{}{{size={}}}", IdMap::name(*name), size),
-            Self::UnsizedNamed(name) => write!(f, "{}{{size=?}} ", IdMap::name(*name)),
+            Self::Named(name, size) => write!(f, "{}{{size={}}}", name, size),
+            Self::UnsizedNamed(name) => write!(f, "{}{{size=?}} ", name),
             Self::Wrapped => write!(f, "wrapped"),
             Self::InHeap => write!(f, "in_heap"),
         }
@@ -519,53 +520,28 @@ impl TypeBody<'_> {
 pub struct TypeDefinitions {
     tycons: HashMapWithScope<Id, Option<TypeCon>>,
     sizes: HashMapWithScope<Id, usize>,
-    modules: HashMapWithScope<Id, SymbolPath>,
     is_resolved: bool,
+    module_path: SymbolPath,
 }
 
 impl TypeDefinitions {
-    pub fn new() -> Self {
-        Self::init(Self {
+    pub fn new(module_path: &SymbolPath) -> Self {
+        Self {
             tycons: HashMapWithScope::new(),
             sizes: HashMapWithScope::new(),
-            modules: HashMapWithScope::new(),
             is_resolved: false,
-        })
-    }
-
-    fn init(mut self) -> Self {
-        self.modules.push_scope();
-
-        self.modules
-            .insert(IdMap::new_id("Int"), MODULE_STD_PATH.clone());
-        self.modules
-            .insert(IdMap::new_id("String"), MODULE_STD_PATH.clone());
-        self.modules
-            .insert(IdMap::new_id("Bool"), MODULE_STD_PATH.clone());
-        self.modules
-            .insert(IdMap::new_id("Slice"), MODULE_STD_PATH.clone());
-        self
+            module_path: module_path.clone(),
+        }
     }
 
     pub fn push_scope(&mut self) {
         self.tycons.push_scope();
         self.sizes.push_scope();
-        self.modules.push_scope();
     }
 
     pub fn pop_scope(&mut self) {
         self.tycons.pop_scope();
         self.sizes.pop_scope();
-        self.modules.pop_scope();
-    }
-
-    pub fn insert_external(&mut self, path: &SymbolPath, name: Id, ty: TypeCon) {
-        self.tycons.insert(name, Some(ty));
-        self.modules.insert(name, path.clone());
-    }
-
-    pub fn module_path(&self, name: Id) -> Option<&SymbolPath> {
-        self.modules.get(&name)
     }
 
     pub fn insert(&mut self, name: Id) {
@@ -598,7 +574,12 @@ impl TypeDefinitions {
         self.tycons.contains_key(&name)
     }
 
-    fn resolve_in_type(&mut self, ty: &mut Type) -> Option<()> {
+    // Replace UnsizedNamed with Named in Type
+    fn resolve_in_type(
+        &mut self,
+        ty: &mut Type,
+        module_headers: &FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+    ) -> Option<()> {
         match ty {
             Type::App(tycon, types) => {
                 match &tycon {
@@ -606,46 +587,78 @@ impl TypeDefinitions {
                     _ => {}
                 }
 
-                self.resolve_in_tycon(tycon)?;
+                self.resolve_in_tycon(tycon, module_headers)?;
                 for ty in types {
-                    self.resolve_in_type(ty)?;
+                    self.resolve_in_type(ty, module_headers)?;
                 }
             }
-            Type::Poly(_, ty) => self.resolve_in_type(ty)?,
+            Type::Poly(_, ty) => self.resolve_in_type(ty, module_headers)?,
             _ => {}
         };
 
         Some(())
     }
 
-    fn resolve_in_tycon(&mut self, tycon: &mut TypeCon) -> Option<()> {
+    // Replace UnsizedNamed with Named in TypeCon
+    fn resolve_in_tycon(
+        &mut self,
+        tycon: &mut TypeCon,
+        module_headers: &FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+    ) -> Option<()> {
         match tycon {
-            TypeCon::UnsizedNamed(name) => match self.sizes.get(name) {
-                Some(size) => *tycon = TypeCon::Named(*name, *size),
-                None => {
-                    // Calculate the type size after resolve it
-                    let (mut tycon_to_calc, level) = self
-                        .tycons
-                        .get_with_level(name)
-                        .map(|(tycon, l)| (tycon.as_ref().unwrap().clone(), l))
-                        .unwrap();
-                    self.resolve_in_tycon(&mut tycon_to_calc)?;
+            // self module
+            TypeCon::UnsizedNamed(path) if path.parent() == Some(self.module_path.clone()) => {
+                let type_name = path.tail().expect("Type with empty name is not allowed").id;
 
-                    let size = type_size(&Type::App(tycon_to_calc, vec![]))?;
-                    self.sizes.insert_with_level(level, *name, size);
+                // Calculate the type size
+                let (tycon_to_calc, level) = self.tycons.get_with_level(&type_name).unwrap();
+                let mut tycon_to_calc = tycon_to_calc
+                    .as_ref()
+                    .expect("A type body should be set before resolve size")
+                    .clone();
+                self.resolve_in_tycon(&mut tycon_to_calc, module_headers)?;
 
-                    *tycon = TypeCon::Named(*name, size);
-                }
-            },
-            TypeCon::Fun(_, ty) => self.resolve_in_type(ty)?,
-            TypeCon::Unique(tycon, _) => self.resolve_in_tycon(tycon)?,
+                // Cache the type size
+                let size = type_size(&Type::App(tycon_to_calc, vec![]))?;
+                self.sizes.insert_with_level(level, type_name, size);
+
+                // Replace with Named
+                *tycon = TypeCon::Named(path.clone(), size);
+            }
+            // external module
+            TypeCon::UnsizedNamed(path) => {
+                assert!(!path.is_empty());
+                assert!(path.parent().is_some());
+
+                let module_path = path.parent().unwrap();
+                let type_name = path.tail().unwrap().id;
+
+                // Find the type
+                let (_, module_header) = module_headers.get(&module_path)?;
+                let tycon_to_calc = module_header
+                    .types
+                    .get(&type_name)?
+                    .as_ref()
+                    .expect("All type body should be set before resolve size");
+
+                // Cache the type size
+                let size = type_size(&Type::App(tycon_to_calc.clone(), vec![]))?;
+
+                // Replace with Named
+                *tycon = TypeCon::Named(path.clone(), size);
+            }
+            TypeCon::Fun(_, ty) => self.resolve_in_type(ty, module_headers)?,
+            TypeCon::Unique(tycon, _) => self.resolve_in_tycon(tycon, module_headers)?,
             _ => {}
         };
 
         Some(())
     }
 
-    pub fn resolve(&mut self) -> Result<(), Vec<Id>> {
+    pub fn resolve(
+        &mut self,
+        module_headers: &FxHashMap<SymbolPath, (usize, ModuleHeader)>,
+    ) -> Result<(), Vec<Id>> {
         let mut names_not_calculated = Vec::new();
 
         let mut tycons = Vec::new();
@@ -662,7 +675,7 @@ impl TypeDefinitions {
         }
 
         for (level, name, tycon) in &mut tycons {
-            if self.resolve_in_tycon(tycon).is_none() {
+            if self.resolve_in_tycon(tycon, module_headers).is_none() {
                 names_not_calculated.push(*name);
                 continue;
             }
@@ -795,18 +808,18 @@ mod tests {
     #[test]
     fn test_unify_with_named() {
         let span = Span::zero(*crate::id::reserved_id::TEST);
-        let id = IdMap::new_id("test");
+        let path = SymbolPath::new().append_str("test");
         assert!(unify(
             &span,
-            &Type::App(TypeCon::Named(id, 0), vec![]),
-            &Type::App(TypeCon::Named(id, 0), vec![]),
+            &Type::App(TypeCon::Named(path.clone(), 0), vec![]),
+            &Type::App(TypeCon::Named(path.clone(), 0), vec![]),
         )
         .is_some());
 
         assert!(unify(
             &span,
-            &Type::App(TypeCon::Named(id, 0), vec![]),
-            &Type::App(TypeCon::UnsizedNamed(id), vec![]),
+            &Type::App(TypeCon::Named(path.clone(), 0), vec![]),
+            &Type::App(TypeCon::UnsizedNamed(path.clone()), vec![]),
         )
         .is_some());
     }
@@ -858,7 +871,7 @@ mod tests {
         let u2 = Unique::new();
 
         // The same unique but the tycon is different
-        assert!(unify(
+        assert!(unify_inner(
             &span,
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u1), vec![]),
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Wrapped), u1), vec![]),
@@ -866,7 +879,7 @@ mod tests {
         .is_some());
 
         // Different unique
-        assert!(unify(
+        assert!(unify_inner(
             &span,
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u1), vec![]),
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u2), vec![]),
@@ -874,7 +887,7 @@ mod tests {
         .is_none());
 
         // The same unique and the same tycon
-        assert!(unify(
+        assert!(unify_inner(
             &span,
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u2), vec![]),
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u2), vec![]),
@@ -905,8 +918,11 @@ mod tests {
     #[test]
     fn resolve_type() {
         let id = IdMap::new_id;
+        fn path(s: &str) -> SymbolPath {
+            SymbolPath::new().append_str("test").append_str(s)
+        }
 
-        let mut types = TypeDefinitions::new();
+        let mut types = TypeDefinitions::new(&SymbolPath::new().append_str("test"));
         types.push_scope();
 
         types.insert(id("def"));
@@ -916,7 +932,7 @@ mod tests {
             id("def"),
             TypeCon::Fun(
                 vec![],
-                Box::new(Type::App(TypeCon::UnsizedNamed(id("abc")), vec![])),
+                Box::new(Type::App(TypeCon::UnsizedNamed(path("abc")), vec![])),
             ),
         );
 
@@ -933,8 +949,8 @@ mod tests {
                 Box::new(Type::App(
                     TypeCon::Tuple,
                     vec![
-                        Type::App(TypeCon::UnsizedNamed(id("abc")), vec![]),
-                        Type::App(TypeCon::UnsizedNamed(id("def")), vec![]),
+                        Type::App(TypeCon::UnsizedNamed(path("abc")), vec![]),
+                        Type::App(TypeCon::UnsizedNamed(path("def")), vec![]),
                     ],
                 )),
             ),
@@ -943,7 +959,7 @@ mod tests {
         // abc = int
         types.set_body(id("abc"), TypeCon::Fun(vec![], Box::new(Type::Int)));
 
-        types.resolve().unwrap();
+        types.resolve(&FxHashMap::default()).unwrap();
 
         assert_eq!(
             types.get(id("abc")).unwrap(),
@@ -956,8 +972,8 @@ mod tests {
                 Box::new(Type::App(
                     TypeCon::Tuple,
                     vec![
-                        Type::App(TypeCon::Named(id("abc"), 1), vec![]),
-                        Type::App(TypeCon::Named(id("def"), 1), vec![]),
+                        Type::App(TypeCon::Named(path("abc"), 1), vec![]),
+                        Type::App(TypeCon::Named(path("def"), 1), vec![]),
                     ],
                 )),
             )),
@@ -969,10 +985,73 @@ mod tests {
             types.get(id("def")).unwrap(),
             TypeBody::Resolved(&TypeCon::Fun(
                 vec![],
-                Box::new(Type::App(TypeCon::Named(id("abc"), 1), vec![])),
+                Box::new(Type::App(TypeCon::Named(path("abc"), 1), vec![])),
             )),
         );
 
         types.pop_scope();
+    }
+
+    #[test]
+    fn resolve_external_type() {
+        let external_module_path = SymbolPath::new().append_str("m1").append_str("m2");
+        let self_module_path = SymbolPath::new().append_str("m3").append_str("m4");
+
+        // Initialize module header
+        let mut module_header = ModuleHeader::new(&external_module_path);
+        module_header.types.insert(
+            IdMap::new_id("Type1"),
+            Some(TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(TypeCon::Tuple, vec![Type::Int, Type::Bool])),
+            )),
+        );
+
+        let mut module_headers = FxHashMap::default();
+        module_headers.insert(external_module_path.clone(), (0, module_header));
+
+        // Initialize type definitions
+        let mut types = TypeDefinitions::new(&self_module_path);
+        types.push_scope();
+
+        // type Type2 = (int, m1::m2::Type1);
+        types.insert(IdMap::new_id("Type2"));
+        types.set_body(
+            IdMap::new_id("Type2"),
+            TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(
+                    TypeCon::Tuple,
+                    vec![
+                        Type::Int,
+                        Type::App(
+                            TypeCon::UnsizedNamed(external_module_path.clone().append_str("Type1")),
+                            vec![],
+                        ),
+                    ],
+                )),
+            ),
+        );
+
+        types.resolve(&module_headers).unwrap();
+
+        // Assert
+        let resolved_tycon = types.get(IdMap::new_id("Type2")).unwrap();
+        assert_eq!(
+            resolved_tycon,
+            TypeBody::Resolved(&TypeCon::Fun(
+                vec![],
+                Box::new(Type::App(
+                    TypeCon::Tuple,
+                    vec![
+                        Type::Int,
+                        Type::App(
+                            TypeCon::Named(external_module_path.clone().append_str("Type1"), 2),
+                            vec![],
+                        ),
+                    ],
+                )),
+            ))
+        );
     }
 }
