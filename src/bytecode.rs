@@ -90,6 +90,7 @@ pub mod opcode {
     pub const EP: u8 = 0x2c;
     pub const OFFSET_SLICE: u8 = 0x2d;
     pub const NOT: u8 = 0x2e;
+    pub const EXTEND_ARG: u8 = 0x2f;
 
     pub const END: u8 = 0x50;
 }
@@ -98,6 +99,7 @@ pub mod opcode {
 pub fn opcode_name(opcode: u8) -> &'static str {
     match opcode {
         opcode::NOP => "NOP",
+        opcode::EXTEND_ARG => "EXTEND_ARG",
         opcode::INT => "INT",
         opcode::TINY_INT => "TINY_INT",
         opcode::STRING => "STRING",
@@ -595,8 +597,43 @@ impl InstList {
     }
 
     #[inline]
-    pub fn push(&mut self, opcode: u8, arg: u8) {
-        self.insts.push_back([opcode, arg]);
+    pub fn push(&mut self, opcode: u8, arg: u32) {
+        if arg >= std::u8::MIN as u32 && arg <= std::u8::MAX as u32 {
+            self.insts.push_back([opcode, arg as u8]);
+        } else {
+            // Panic if arg is 24-bit
+            if arg > ((1 << 24) - 1) {
+                panic!("too large arg: {}", arg);
+            }
+
+            let first_arg = arg >> 16;
+
+            let more_arg = arg as u16;
+            let second_arg = more_arg >> 8;
+            let third_arg = more_arg as u8;
+
+            self.push_noarg(opcode::EXTEND_ARG);
+            self.insts.push_back([opcode, first_arg as u8]);
+            self.insts.push_back([second_arg as u8, third_arg]);
+        }
+    }
+
+    #[inline]
+    pub fn pushi(&mut self, opcode: u8, arg: i32) {
+        if arg >= std::i8::MIN as i32 && arg <= std::i8::MAX as i32 {
+            self.insts.push_back([opcode, arg as u8]);
+        } else {
+            let first_arg = (arg >> 16) as i8;
+
+            let more_arg = arg as i16;
+            let second_arg = (more_arg >> 8) as i8;
+            let third_arg = more_arg as i8;
+
+            self.push_noarg(opcode::EXTEND_ARG);
+            self.insts.push_back([opcode, first_arg.to_le_bytes()[0]]);
+            self.insts
+                .push_back([second_arg.to_le_bytes()[0], third_arg.to_le_bytes()[0]]);
+        }
     }
 
     #[inline]

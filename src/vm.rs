@@ -375,12 +375,12 @@ impl VM {
     }
 
     #[inline(always)]
-    fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u8, ref_start: usize) -> i64 {
+    fn get_ref_value_i64(&mut self, bytecode: &Bytecode, ref_id: u32, ref_start: usize) -> i64 {
         bytecode.read_i64(ref_start + ref_id as usize * 8)
     }
 
     #[inline(always)]
-    fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u8, ref_start: usize) -> u64 {
+    fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u32, ref_start: usize) -> u64 {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
     }
 
@@ -392,8 +392,8 @@ impl VM {
         enable_measure: bool,
     ) {
         #[inline]
-        fn ip_after_jump_to(ip: usize, loc: u8) -> usize {
-            let loc = i8::from_le_bytes([loc]) as isize;
+        fn ip_after_jump_to(ip: usize, loc: u32) -> usize {
+            let loc = i32::from_le_bytes(loc.to_le_bytes()) as isize;
             (ip as isize - 2 + loc * 2) as usize
         }
 
@@ -486,15 +486,32 @@ impl VM {
         self.sp = func.stack_size + 1;
 
         let mut current_bytecode = bytecodes[0].as_ref().unwrap();
+        let mut extend_arg = false;
+        let mut prev_opcode = None;
+        let mut prev_arg = None;
 
         loop {
-            let [opcode, arg] = self.next_inst(current_bytecode);
+            let [mut opcode, arg] = self.next_inst(current_bytecode);
+            let mut arg = arg as u32;
+
+            if extend_arg {
+                prev_arg = Some(arg as u8);
+                prev_opcode = Some(opcode);
+                extend_arg = false;
+                continue;
+            }
+
+            if let Some(prev_arg_) = prev_arg {
+                arg |= ((prev_arg_ as u32) << 16) | ((opcode as u32) << 8);
+                opcode = prev_opcode.unwrap();
+                prev_arg = None;
+            }
 
             if cfg!(debug_assertions) && enable_trace {
                 print!("{}  ", self.ip);
                 current_bytecode.dump_inst(
                     opcode,
-                    arg,
+                    arg as u8,
                     self.ip - 2,
                     string_map_start[self.current_module],
                     ref_start[self.current_module],
@@ -507,6 +524,9 @@ impl VM {
 
             match opcode {
                 opcode::NOP => {}
+                opcode::EXTEND_ARG => {
+                    extend_arg = true;
+                }
                 opcode::ZERO => {
                     let count = arg as usize;
 
@@ -526,7 +546,7 @@ impl VM {
                     push!(self, Value::new_i64(value));
                 }
                 opcode::TINY_INT => {
-                    let n = i8::from_le_bytes([arg]);
+                    let n = i8::from_le_bytes([arg as u8]);
                     push!(self, Value::new_i64(n as i64));
                 }
                 opcode::STRING => {
@@ -648,7 +668,8 @@ impl VM {
                     self.sp += size * count;
                 }
                 opcode::LOAD_REF => {
-                    let loc = (self.fp as isize + i8::from_le_bytes([arg]) as isize) as usize;
+                    let offset = i32::from_le_bytes(arg.to_le_bytes());
+                    let loc = (self.fp as isize + offset as isize) as usize;
                     if loc >= STACK_SIZE {
                         self.panic("out of bounds");
                     }
@@ -681,7 +702,7 @@ impl VM {
                     push!(self, Value::new_ptr(value));
                 }
                 opcode::LOAD_COPY => {
-                    let loc = i8::from_le_bytes([arg & 0b1111_1000]) >> 3;
+                    let loc = i8::from_le_bytes([arg as u8 & 0b1111_1000]) >> 3;
                     let size = (arg & 0b0000_0111) as usize;
 
                     let loc = (self.fp as isize + loc as isize) as usize;
@@ -699,7 +720,6 @@ impl VM {
                 }
                 opcode::STORE => {
                     let size = arg as usize;
-
                     let dst = pop!(self);
                     // TODO: check pointer
 

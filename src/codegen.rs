@@ -64,7 +64,8 @@ impl Generator {
 
             if loc >= -16 && loc <= 15 && size <= 0b111 {
                 let arg = ((loc as i8) << 3) | size as i8;
-                insts.push(opcode::LOAD_COPY, u8::from_le_bytes(arg.to_le_bytes()));
+                let arg = arg.to_le_bytes()[0];
+                insts.push(opcode::LOAD_COPY, arg as u32);
                 return true;
             }
         }
@@ -78,15 +79,15 @@ impl Generator {
         match expr {
             Expr::Int(n) => {
                 if let Ok(n) = TryInto::<i8>::try_into(*n) {
-                    insts.push(opcode::TINY_INT, n.to_le_bytes()[0]);
+                    insts.pushi(opcode::TINY_INT, n as i32);
                 } else {
                     let index = self.builder.new_ref_i64(*n);
-                    insts.push(opcode::INT, index as u8);
+                    insts.pushi(opcode::INT, index as i32);
                 }
             }
             Expr::String(s) => {
                 let id = self.strings.get_id(&s);
-                insts.push(opcode::STRING, id as u8);
+                insts.push(opcode::STRING, id as u32);
             }
             Expr::True => insts.push_noarg(opcode::TRUE),
             Expr::False => insts.push_noarg(opcode::FALSE),
@@ -102,7 +103,7 @@ impl Generator {
                     Expr::LoadRef(loc) if Self::load_copy_if_possible(&mut insts, &loc, *size) => {}
                     Expr::LoadRef(..) | Expr::Dereference(..) | Expr::Offset(..) => {
                         insts.append(self.gen_expr(&expr));
-                        insts.push(opcode::COPY, *size as u8);
+                        insts.push(opcode::COPY, *size as u32);
                     }
                     _ => panic!("not removed redundant copies: {:?}", expr),
                 }
@@ -114,7 +115,7 @@ impl Generator {
                 if let Expr::Int(n) = offset.as_ref() {
                     if *n > 0 {
                         if let Ok(n) = TryInto::<u8>::try_into(*n) {
-                            insts.push(opcode::CONST_OFFSET, n);
+                            insts.push(opcode::CONST_OFFSET, n as u32);
                         } else {
                             let offset_insts = self.gen_expr(&offset);
                             insts.append(offset_insts);
@@ -130,7 +131,7 @@ impl Generator {
             Expr::OffsetSlice(slice, offset, size) => {
                 insts.append(self.gen_expr(&slice));
                 insts.append(self.gen_expr(&offset));
-                insts.push(opcode::OFFSET_SLICE, *size as u8);
+                insts.push(opcode::OFFSET_SLICE, *size as u32);
             }
             Expr::Duplicate(expr, count) => {
                 if *count > std::u32::MAX as usize {
@@ -141,7 +142,7 @@ impl Generator {
 
                 let arg = ((expr.size() as u64) << 32) | (*count as u64 - 1);
                 let index = self.builder.new_ref_u64(arg);
-                insts.push(opcode::DUPLICATE, index as u8);
+                insts.push(opcode::DUPLICATE, index as u32);
             }
             Expr::LoadCopy(loc, size) => {
                 if !Self::load_copy_if_possible(&mut insts, &loc, *size) {
@@ -151,22 +152,22 @@ impl Generator {
             Expr::LoadRef(loc) => match loc {
                 VariableLoc::Local(loc) if *loc < 0 => {
                     let loc = loc - CALL_STACK_SIZE as isize;
-                    insts.push(opcode::LOAD_REF, (loc as i8).to_le_bytes()[0])
+                    insts.pushi(opcode::LOAD_REF, loc as i32);
                 }
                 VariableLoc::Local(loc) => {
-                    insts.push(opcode::LOAD_REF, (*loc as i8).to_le_bytes()[0])
+                    insts.pushi(opcode::LOAD_REF, *loc as i32);
                 }
                 VariableLoc::Heap(loc, 0) => {
-                    insts.push(opcode::LOAD_HEAP, *loc as u8);
+                    insts.push(opcode::LOAD_HEAP, *loc as u32);
                 }
                 VariableLoc::Heap(loc, level) if *level <= std::i8::MAX as usize => {
-                    insts.push(opcode::TINY_INT, (*level as i8).to_le_bytes()[0]);
-                    insts.push(opcode::LOAD_HEAP_TRACE, *loc as u8);
+                    insts.pushi(opcode::TINY_INT, *level as i32);
+                    insts.push(opcode::LOAD_HEAP_TRACE, *loc as u32);
                 }
                 VariableLoc::Heap(loc, level) => {
                     let index = self.builder.new_ref_i64(*level as i64);
-                    insts.push(opcode::INT, index as u8);
-                    insts.push(opcode::LOAD_HEAP_TRACE, *loc as u8);
+                    insts.push(opcode::INT, index as u32);
+                    insts.push(opcode::LOAD_HEAP_TRACE, *loc as u32);
                 }
             },
             Expr::BinOp(binop, lhs, rhs) => {
@@ -203,7 +204,7 @@ impl Generator {
                 insts.append(self.gen_expr(&expr));
 
                 let size = expr.size();
-                insts.push(opcode::ALLOC, size as u8);
+                insts.push(opcode::ALLOC, size as u32);
             }
             Expr::Record(exprs) => {
                 for expr in exprs {
@@ -215,13 +216,13 @@ impl Generator {
 
                 let size = expr.size();
                 if size > 1 {
-                    insts.push(opcode::WRAP, size as u8);
+                    insts.push(opcode::WRAP, size as u32);
                 }
             }
             Expr::Unwrap(expr, size) => {
                 insts.append(self.gen_expr(&expr));
                 if *size > 1 {
-                    insts.push(opcode::UNWRAP, *size as u8);
+                    insts.push(opcode::UNWRAP, *size as u32);
                 }
             }
             Expr::Call(func, arg, rv_size) => {
@@ -235,7 +236,7 @@ impl Generator {
                 }
 
                 if *rv_size > 0 {
-                    insts.push(opcode::ZERO, *rv_size as u8);
+                    insts.push(opcode::ZERO, *rv_size as u32);
                 }
 
                 for arg in args.into_iter().rev() {
@@ -246,10 +247,10 @@ impl Generator {
                     Expr::Record(exprs) => match (&exprs[0], &exprs[1]) {
                         (Expr::FuncPos(Some(module_id @ 0..=15), func_id @ 0..=15), Expr::EP) => {
                             let arg = ((*module_id as u8) << 4) | *func_id as u8;
-                            insts.push(opcode::CALL_EXTERN, arg);
+                            insts.push(opcode::CALL_EXTERN, arg as u32);
                         }
                         (Expr::FuncPos(None, func_id), Expr::EP) => {
-                            insts.push(opcode::CALL, *func_id as u8);
+                            insts.push(opcode::CALL, *func_id as u32);
                         }
                         _ => {
                             insts.append(self.gen_expr(func));
@@ -266,7 +267,7 @@ impl Generator {
                 let module_id = module_id.unwrap_or(SELF_MODULE_ID);
                 let arg = ((module_id as u64) << 32) | *func_id as u64;
                 let index = self.builder.new_ref_u64(arg);
-                insts.push(opcode::INT, index as u8);
+                insts.push(opcode::INT, index as u32);
             }
             Expr::EP => insts.push_noarg(opcode::EP),
             Expr::Seq(stmts, expr) => {
@@ -295,7 +296,7 @@ impl Generator {
                 insts.append(self.gen_expr(&Expr::LoadRef(loc.clone())));
 
                 if expr.size() > 0 {
-                    insts.push(opcode::STORE, expr.size() as u8);
+                    insts.push(opcode::STORE, expr.size() as u32);
                 } else {
                     insts.push_noarg(opcode::POP);
                 }
@@ -305,7 +306,7 @@ impl Generator {
                 insts.append(self.gen_expr(ref_expr));
 
                 if expr.size() > 0 {
-                    insts.push(opcode::STORE, expr.size() as u8);
+                    insts.push(opcode::STORE, expr.size() as u32);
                 } else {
                     insts.push_noarg(opcode::POP);
                 }
@@ -317,7 +318,7 @@ impl Generator {
 
                     if expr.size() > 0 {
                         insts.append(self.gen_expr(&Expr::LoadRef(VariableLoc::Local(loc))));
-                        insts.push(opcode::STORE, expr.size() as u8);
+                        insts.push(opcode::STORE, expr.size() as u32);
                     }
                 }
 
