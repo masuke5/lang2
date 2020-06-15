@@ -263,6 +263,7 @@ pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> Expr {
         BinOp::Sub => IRBinOp::Sub,
         BinOp::Mul => IRBinOp::Mul,
         BinOp::Div => IRBinOp::Div,
+        BinOp::Mod => IRBinOp::Mod,
         BinOp::LessThan => IRBinOp::LessThan,
         BinOp::LessThanOrEqual => IRBinOp::LessThanOrEqual,
         BinOp::GreaterThan => IRBinOp::GreaterThan,

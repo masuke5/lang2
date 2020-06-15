@@ -1080,6 +1080,7 @@ impl Analyzer {
                     (BinOp::Sub, Type::Int, Type::Int) => Type::Int,
                     (BinOp::Mul, Type::Int, Type::Int) => Type::Int,
                     (BinOp::Div, Type::Int, Type::Int) => Type::Int,
+                    (BinOp::Mod, Type::Int, Type::Int) => Type::Int,
                     (BinOp::Equal, Type::Int, Type::Int) => Type::Bool,
                     (BinOp::NotEqual, Type::Int, Type::Int) => Type::Bool,
                     (BinOp::LessThan, Type::Int, Type::Int) => Type::Bool,

@@ -178,6 +178,7 @@ impl Generator {
                     BinOp::Sub => opcode::BINOP_SUB,
                     BinOp::Mul => opcode::BINOP_MUL,
                     BinOp::Div => opcode::BINOP_DIV,
+                    BinOp::Mod => opcode::BINOP_MOD,
                     BinOp::LessThan => opcode::BINOP_LT,
                     BinOp::LessThanOrEqual => opcode::BINOP_LE,
                     BinOp::GreaterThan => opcode::BINOP_GT,

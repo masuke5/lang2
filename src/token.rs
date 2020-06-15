@@ -86,6 +86,7 @@ pub enum Token {
     Sub,
     Asterisk,
     Div,
+    Percent,
     EOF,
     Lparen,
     Rparen,
@@ -115,6 +116,7 @@ pub enum Token {
     SubAssign,
     MulAssign,
     DivAssign,
+    ModAssign,
 }
 
 impl fmt::Display for Token {
@@ -128,6 +130,7 @@ impl fmt::Display for Token {
             Token::Sub => write!(f, "-"),
             Token::Asterisk => write!(f, "*"),
             Token::Div => write!(f, "/"),
+            Token::Percent => write!(f, "%"),
             Token::EOF => write!(f, "EOF"),
             Token::Lparen => write!(f, "("),
             Token::Rparen => write!(f, ")"),
@@ -157,6 +160,7 @@ impl fmt::Display for Token {
             Token::SubAssign => write!(f, "-="),
             Token::MulAssign => write!(f, "*="),
             Token::DivAssign => write!(f, "/="),
+            Token::ModAssign => write!(f, "%="),
         }
     }
 }

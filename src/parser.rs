@@ -676,7 +676,11 @@ impl<'a> Parser<'a> {
         self.parse_binop(
             true,
             Self::parse_unary,
-            &[(&Token::Asterisk, &BinOp::Mul), (&Token::Div, &BinOp::Div)],
+            &[
+                (&Token::Asterisk, &BinOp::Mul),
+                (&Token::Div, &BinOp::Div),
+                (&Token::Percent, &BinOp::Mod),
+            ],
         )
     }
 
@@ -881,6 +885,7 @@ impl<'a> Parser<'a> {
             Token::SubAssign => Ok(self.parse_compound_assignment(BinOp::Sub, lhs)),
             Token::MulAssign => Ok(self.parse_compound_assignment(BinOp::Mul, lhs)),
             Token::DivAssign => Ok(self.parse_compound_assignment(BinOp::Div, lhs)),
+            Token::ModAssign => Ok(self.parse_compound_assignment(BinOp::Mod, lhs)),
             _ => Err(lhs),
         }
     }
