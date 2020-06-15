@@ -392,8 +392,8 @@ impl VM {
         enable_measure: bool,
     ) {
         #[inline]
-        fn ip_after_jump_to(ip: usize, loc: u32) -> usize {
-            let loc = i32::from_le_bytes(loc.to_le_bytes()) as isize;
+        fn ip_after_jump_to(ip: usize, loc: i32) -> usize {
+            let loc = loc as isize;
             (ip as isize - 2 + loc * 2) as usize
         }
 
@@ -492,6 +492,7 @@ impl VM {
 
         loop {
             let [mut opcode, arg] = self.next_inst(current_bytecode);
+            let mut signed_arg = i8::from_le_bytes([arg]) as i32;
             let mut arg = arg as u32;
 
             if extend_arg {
@@ -503,6 +504,7 @@ impl VM {
 
             if let Some(prev_arg_) = prev_arg {
                 arg |= ((prev_arg_ as u32) << 16) | ((opcode as u32) << 8);
+                signed_arg = (arg as i32) | ((prev_arg_ as i32) << 16) | ((opcode as i32) << 8);
                 opcode = prev_opcode.unwrap();
                 prev_arg = None;
             }
@@ -668,7 +670,7 @@ impl VM {
                     self.sp += size * count;
                 }
                 opcode::LOAD_REF => {
-                    let offset = i32::from_le_bytes(arg.to_le_bytes());
+                    let offset = signed_arg;
                     let loc = (self.fp as isize + offset as isize) as usize;
                     if loc >= STACK_SIZE {
                         self.panic("out of bounds");
@@ -888,18 +890,18 @@ impl VM {
                     unimplemented!();
                 }
                 opcode::JUMP => {
-                    self.ip = ip_after_jump_to(self.ip, arg);
+                    self.ip = ip_after_jump_to(self.ip, signed_arg);
                 }
                 opcode::JUMP_IF_FALSE => {
                     let cond = pop!(self);
                     if cond.is_false() {
-                        self.ip = ip_after_jump_to(self.ip, arg);
+                        self.ip = ip_after_jump_to(self.ip, signed_arg);
                     }
                 }
                 opcode::JUMP_IF_TRUE => {
                     let cond = pop!(self);
                     if cond.is_true() {
-                        self.ip = ip_after_jump_to(self.ip, arg);
+                        self.ip = ip_after_jump_to(self.ip, signed_arg);
                     }
                 }
                 opcode::END => {

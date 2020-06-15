@@ -482,5 +482,3 @@ if failed {
 } else {
     println "\x1b[92mAll tests succeed\x1b[0m";
 }
-
-let a = [0; 100];

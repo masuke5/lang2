@@ -307,10 +307,12 @@ impl Bytecode {
         string_map_start: usize,
         ref_start: usize,
     ) {
+        print!("{:02x} {:02x}  ", opcode, arg);
         print!("{} ", opcode_name(opcode));
 
         match opcode {
             opcode::NOP => println!(),
+            opcode::EXTEND_ARG => println!(),
             opcode::INT => {
                 let value = self.read_i64(ref_start + arg as usize * 8);
                 println!("{} ({:x})", arg, value);
