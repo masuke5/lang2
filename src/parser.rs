@@ -1553,6 +1553,11 @@ impl<'a> Parser<'a> {
         let mut impl_ = Impl::new(target);
 
         while !self.consume(&Token::Rbrace) {
+            if self.peek().kind == Token::EOF {
+                error!(&self.peek().span, "unexpected EOF");
+                break;
+            }
+
             self.parse_defs_in_impl(&mut impl_);
         }
 
