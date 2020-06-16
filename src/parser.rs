@@ -696,10 +696,41 @@ impl<'a> Parser<'a> {
         )
     }
 
+    fn parse_shift(&mut self) -> Option<Spanned<Expr>> {
+        self.parse_binop(
+            true,
+            Self::parse_add,
+            &[
+                (&Token::LShift, &BinOp::LShift),
+                (&Token::RShift, &BinOp::RShift),
+            ],
+        )
+    }
+
+    fn parse_bit_and(&mut self) -> Option<Spanned<Expr>> {
+        self.parse_binop(
+            true,
+            Self::parse_shift,
+            &[(&Token::Ampersand, &BinOp::BitAnd)],
+        )
+    }
+
+    fn parse_bit_xor(&mut self) -> Option<Spanned<Expr>> {
+        self.parse_binop(true, Self::parse_bit_and, &[(&Token::Xor, &BinOp::BitXor)])
+    }
+
+    fn parse_bit_or(&mut self) -> Option<Spanned<Expr>> {
+        self.parse_binop(
+            true,
+            Self::parse_bit_xor,
+            &[(&Token::VerticalBar, &BinOp::BitOr)],
+        )
+    }
+
     fn parse_relational(&mut self) -> Option<Spanned<Expr>> {
         self.parse_binop(
             false,
-            Self::parse_add,
+            Self::parse_bit_or,
             &[
                 (&Token::LessThan, &BinOp::LessThan),
                 (&Token::LessThanOrEqual, &BinOp::LessThanOrEqual),

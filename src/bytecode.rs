@@ -12,85 +12,63 @@ use crate::value::Lang2Str;
 
 #[allow(dead_code)]
 pub mod opcode {
-    // Words:
-    // TOS = the top of stack
-    // ARG = the argument
-    // RARG =
-    // SARG =
-
-    // Do nothing.
     pub const NOP: u8 = 0x0;
-    // Push RARG that is a singed 63-bit integer.
     pub const INT: u8 = 0x1;
-    // Push a pointer to SARG
     pub const STRING: u8 = 0x2;
-    // Push a true.
     pub const TRUE: u8 = 0x3;
-    // Push a false.
     pub const FALSE: u8 = 0x4;
-    // Push a null.
     pub const NULL: u8 = 0x5;
-    // Do nothing
-    // Used to prevent copying.
     pub const POINTER: u8 = 0x6;
-    // Do nothing
-    // Used as a marker for copying.
     pub const DEREFERENCE: u8 = 0x7;
-    // Implements TOS = -TOS
     pub const NEGATIVE: u8 = 0x8;
-    // Dereference and copy TOS that is a pointer
     pub const COPY: u8 = 0x9;
-    // Add TOS0 that is a pointer and TOS1 that is a signed 63-bit integer.
     pub const OFFSET: u8 = 0xa;
     pub const DUPLICATE: u8 = 0xb;
     pub const LOAD_REF: u8 = 0xc;
     pub const LOAD_COPY: u8 = 0xd;
     pub const STORE: u8 = 0xe;
-    // Implements TOS0 + TOS1
     pub const BINOP_ADD: u8 = 0xf;
-    // Implements TOS0 - TOS1
     pub const BINOP_SUB: u8 = 0x10;
-    // Implements TOS0 * TOS1
     pub const BINOP_MUL: u8 = 0x11;
-    // Implements TOS0 / TOS1
     pub const BINOP_DIV: u8 = 0x12;
-    // Implements TOS0 % TOS1
     pub const BINOP_MOD: u8 = 0x13;
-    // Implements TOS0 < TOS1
     pub const BINOP_LT: u8 = 0x14;
-    // Implements TOS0 <= TOS1
     pub const BINOP_LE: u8 = 0x15;
-    // Implements TOS0 > TOS1
     pub const BINOP_GT: u8 = 0x16;
-    // Implements TOS0 >= TOS1
     pub const BINOP_GE: u8 = 0x17;
-    // Implements TOS0 = TOS1
     pub const BINOP_EQ: u8 = 0x18;
-    // Implements TOS0 <> TOS1
     pub const BINOP_NEQ: u8 = 0x19;
-    // Pop once.
-    pub const POP: u8 = 0x1a;
-    pub const ALLOC: u8 = 0x1b;
-    pub const CALL: u8 = 0x1c;
-    pub const CALL_NATIVE: u8 = 0x1d;
-    pub const JUMP: u8 = 0x1e;
-    pub const JUMP_IF_FALSE: u8 = 0x1f;
-    pub const JUMP_IF_TRUE: u8 = 0x20;
-    pub const RETURN: u8 = 0x21;
-    pub const ZERO: u8 = 0x22;
-    pub const CALL_EXTERN: u8 = 0x23;
-    pub const TINY_INT: u8 = 0x24;
-    pub const WRAP: u8 = 0x25;
-    pub const UNWRAP: u8 = 0x26;
-    pub const CONST_OFFSET: u8 = 0x27;
-    pub const CALL_POS: u8 = 0x28;
-    pub const CALL_EXTERN_POS: u8 = 0x29;
-    pub const LOAD_HEAP: u8 = 0x2a;
-    pub const LOAD_HEAP_TRACE: u8 = 0x2b;
-    pub const EP: u8 = 0x2c;
-    pub const OFFSET_SLICE: u8 = 0x2d;
-    pub const NOT: u8 = 0x2e;
-    pub const EXTEND_ARG: u8 = 0x2f;
+    // Logical shift
+    pub const BINOP_L_LSHIFT: u8 = 0x1a;
+    pub const BINOP_L_RSHIFT: u8 = 0x1b;
+    // Arithmetic shift
+    pub const BINOP_A_LSHIFT: u8 = 0x1c;
+    pub const BINOP_A_RSHIFT: u8 = 0x1d;
+    pub const BINOP_BITAND: u8 = 0x1e;
+    pub const BINOP_BITOR: u8 = 0x1f;
+    pub const BINOP_BITXOR: u8 = 0x20;
+    pub const POP: u8 = 0x21;
+    pub const ALLOC: u8 = 0x22;
+    pub const CALL: u8 = 0x23;
+    pub const CALL_NATIVE: u8 = 0x24;
+    pub const JUMP: u8 = 0x25;
+    pub const JUMP_IF_FALSE: u8 = 0x26;
+    pub const JUMP_IF_TRUE: u8 = 0x27;
+    pub const RETURN: u8 = 0x28;
+    pub const ZERO: u8 = 0x29;
+    pub const CALL_EXTERN: u8 = 0x2a;
+    pub const TINY_INT: u8 = 0x2b;
+    pub const WRAP: u8 = 0x2c;
+    pub const UNWRAP: u8 = 0x2d;
+    pub const CONST_OFFSET: u8 = 0x2e;
+    pub const CALL_POS: u8 = 0x2f;
+    pub const CALL_EXTERN_POS: u8 = 0x30;
+    pub const LOAD_HEAP: u8 = 0x31;
+    pub const LOAD_HEAP_TRACE: u8 = 0x32;
+    pub const EP: u8 = 0x33;
+    pub const OFFSET_SLICE: u8 = 0x34;
+    pub const NOT: u8 = 0x35;
+    pub const EXTEND_ARG: u8 = 0x36;
 
     pub const END: u8 = 0x50;
 }
@@ -132,6 +110,13 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::BINOP_GE => "BINOP_GE",
         opcode::BINOP_EQ => "BINOP_EQ",
         opcode::BINOP_NEQ => "BINOP_NEQ",
+        opcode::BINOP_L_LSHIFT => "BINOP_L_LSHIFT",
+        opcode::BINOP_L_RSHIFT => "BINOP_L_RSHIFT",
+        opcode::BINOP_A_LSHIFT => "BINOP_A_LSHIFT",
+        opcode::BINOP_A_RSHIFT => "BINOP_A_RSHIFT",
+        opcode::BINOP_BITAND => "BINOP_BITAND",
+        opcode::BINOP_BITOR => "BINOP_BITOR",
+        opcode::BINOP_BITXOR => "BINOP_BITXOR",
         opcode::POP => "POP",
         opcode::ALLOC => "ALLOC",
         opcode::CALL => "CALL",
@@ -368,6 +353,13 @@ impl Bytecode {
             opcode::BINOP_GE => println!(),
             opcode::BINOP_EQ => println!(),
             opcode::BINOP_NEQ => println!(),
+            opcode::BINOP_L_LSHIFT => println!(),
+            opcode::BINOP_L_RSHIFT => println!(),
+            opcode::BINOP_A_LSHIFT => println!(),
+            opcode::BINOP_A_RSHIFT => println!(),
+            opcode::BINOP_BITAND => println!(),
+            opcode::BINOP_BITOR => println!(),
+            opcode::BINOP_BITXOR => println!(),
             opcode::POP => println!(),
             opcode::ALLOC => println!("size={}", arg),
             opcode::CALL => println!("{}", arg),

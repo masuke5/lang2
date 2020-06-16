@@ -38,6 +38,14 @@ test_eq "mod 1" 64 (264 % 100);
 test_eq "mod 2" 29 (64 % 55 + 20);
 test_eq "priority" 18 (3 + 7 * 4 - 13);
 
+test_eq "left shift 1" 0b1000000000 (0b10000 << 5);
+test_eq "left shift 2" (-0b101000) (-0b101 << 3);
+test_eq "right shift" 312 (10000 >> 5);
+test_eq "right shift 2" (-13) (-100 >> 3);
+test_eq "bit and" 0b10010000 (0b10011010 & 0b11110000);
+test_eq "bit or" 0b10011 (0b10001 | 0b00011);
+test_eq "bit xor" 0b011111 (0b111010 ^ 0b100101);
+
 let a = 3 + 35;
 test "equal" (38 = 38);
 test "not equal" (38 <> 39);

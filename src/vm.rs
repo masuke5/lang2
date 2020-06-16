@@ -763,7 +763,26 @@ impl VM {
                         self.sp += size - 1;
                     }
                 }
-                opcode::BINOP_ADD..=opcode::BINOP_NEQ => {
+                opcode::BINOP_L_LSHIFT..=opcode::BINOP_L_RSHIFT => {
+                    let rhs = pop!(self);
+                    let lhs = pop!(self);
+                    assert!(!rhs.is_heap_ptr());
+                    assert!(!lhs.is_heap_ptr());
+
+                    let lhs = unsafe { lhs.raw() };
+                    let rhs = unsafe { rhs.raw() };
+
+                    let value = unsafe {
+                        match opcode {
+                            opcode::BINOP_L_LSHIFT => Value::from_raw(lhs << rhs),
+                            opcode::BINOP_L_RSHIFT => Value::from_raw((lhs >> rhs) & !0b1),
+                            _ => panic!("bug"),
+                        }
+                    };
+
+                    push!(self, value);
+                }
+                opcode::BINOP_ADD..=opcode::BINOP_BITXOR => {
                     let result = unsafe {
                         let rhs = pop!(self).raw_i64();
                         let lhs = pop!(self).raw_i64();
@@ -778,6 +797,13 @@ impl VM {
                             }
                             opcode::BINOP_DIV => Value::new_i64(lhs / rhs),
                             opcode::BINOP_MOD => Value::from_raw_i64(lhs % rhs),
+                            opcode::BINOP_A_LSHIFT => Value::from_raw_i64(lhs << (rhs >> 1)),
+                            opcode::BINOP_A_RSHIFT => {
+                                Value::from_raw_i64((lhs >> (rhs >> 1)) & !0b1)
+                            }
+                            opcode::BINOP_BITAND => Value::from_raw_i64(lhs & rhs),
+                            opcode::BINOP_BITOR => Value::from_raw_i64(lhs | rhs),
+                            opcode::BINOP_BITXOR => Value::from_raw_i64(lhs ^ rhs),
                             opcode::BINOP_LT => Value::new_bool(lhs < rhs),
                             opcode::BINOP_LE => Value::new_bool(lhs <= rhs),
                             opcode::BINOP_GT => Value::new_bool(lhs > rhs),

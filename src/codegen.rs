@@ -186,6 +186,11 @@ impl Generator {
                     BinOp::GreaterThanOrEqual => opcode::BINOP_GE,
                     BinOp::Equal => opcode::BINOP_EQ,
                     BinOp::NotEqual => opcode::BINOP_NEQ,
+                    BinOp::LShift => opcode::BINOP_A_LSHIFT,
+                    BinOp::RShift => opcode::BINOP_A_RSHIFT,
+                    BinOp::BitAnd => opcode::BINOP_BITAND,
+                    BinOp::BitOr => opcode::BINOP_BITOR,
+                    BinOp::BitXor => opcode::BINOP_BITXOR,
                 };
 
                 insts.append(lhs);
