@@ -728,6 +728,7 @@ impl Analyzer {
                 let ty = Type::App(TypeCon::Pointer(false), vec![Type::String]);
                 (translate::literal_str(s), ty)
             }
+            Expr::Literal(Literal::Char(ch)) => (translate::literal_char(ch), Type::Char),
             Expr::Literal(Literal::Unit) => (IRExpr::Unit, Type::Unit),
             Expr::Literal(Literal::True) => (translate::literal_true(), Type::Bool),
             Expr::Literal(Literal::False) => (translate::literal_false(), Type::Bool),
@@ -1796,6 +1797,7 @@ impl Analyzer {
         match ty.kind {
             AstType::Int => Some(Type::Int),
             AstType::Bool => Some(Type::Bool),
+            AstType::Char => Some(Type::Char),
             AstType::Unit => Some(Type::Unit),
             AstType::String => Some(Type::String),
             AstType::Named(name) => {

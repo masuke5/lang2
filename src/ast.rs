@@ -4,7 +4,7 @@ use rustc_hash::FxHashMap;
 
 use crate::id::{Id, IdMap};
 use crate::span::Spanned;
-use crate::utils::{escape_string, format_bool, format_iter, span_to_string};
+use crate::utils::{escape_character, escape_string, format_bool, format_iter, span_to_string};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BinOp {
@@ -47,6 +47,7 @@ impl BinOp {
 pub enum Literal {
     Number(i64),
     String(String),
+    Char(char),
     Unit,
     True,
     False,
@@ -375,6 +376,7 @@ pub struct Program {
 pub enum AstType {
     Int,
     String,
+    Char,
     Bool,
     Unit,
     Named(Id),
@@ -392,6 +394,7 @@ impl fmt::Display for AstType {
         match self {
             AstType::Int => write!(f, "int"),
             AstType::String => write!(f, "string"),
+            AstType::Char => write!(f, "char"),
             AstType::Bool => write!(f, "bool"),
             AstType::Unit => write!(f, "unit"),
             AstType::Named(id) => write!(f, "{}", IdMap::name(*id)),
@@ -495,6 +498,11 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
         Expr::Literal(Literal::String(s)) => {
             println!("\"{}\" {}", escape_string(s), span_to_string(&expr.span))
         }
+        Expr::Literal(Literal::Char(ch)) => println!(
+            "\"{}\" {}",
+            escape_character(*ch),
+            span_to_string(&expr.span)
+        ),
         Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
         Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),

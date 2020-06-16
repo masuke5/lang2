@@ -447,6 +447,10 @@ impl<'a> Parser<'a> {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::String(s)), token.span))
             }
+            Token::Char(ch) => {
+                self.next();
+                Some(spanned(Expr::Literal(Literal::Char(ch)), token.span))
+            }
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::Keyword(Keyword::True) => {
                 self.next();
@@ -1364,6 +1368,9 @@ impl<'a> Parser<'a> {
         let first_span = self.peek().span.clone();
         let ty = match self.peek().kind {
             Token::Keyword(Keyword::Int) => self.next_and(Some(spanned(AstType::Int, first_span))),
+            Token::Keyword(Keyword::Char) => {
+                self.next_and(Some(spanned(AstType::Char, first_span)))
+            }
             Token::Keyword(Keyword::Bool) => {
                 self.next_and(Some(spanned(AstType::Bool, first_span)))
             }

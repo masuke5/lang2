@@ -113,6 +113,7 @@ impl fmt::Debug for Unique {
 pub enum Type {
     Int,
     Bool,
+    Char,
     String,
     Unit,
     Null,
@@ -142,6 +143,7 @@ impl fmt::Display for Type {
         match self {
             Self::Int => write!(f, "int"),
             Self::Bool => write!(f, "bool"),
+            Self::Char => write!(f, "char"),
             Self::String => write!(f, "string"),
             Self::Unit => write!(f, "()"),
             Self::Null => write!(f, "null"),
@@ -270,7 +272,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
     type TC = TypeCon;
 
     match ty {
-        T::Int | T::Bool | T::String | T::Unit | T::Null => ty,
+        T::Int | T::Char | T::Bool | T::String | T::Unit | T::Null => ty,
         T::Var(var) => match map.iter().find(|(v, _)| var == **v) {
             Some((_, ty)) => ty.clone(),
             None => T::Var(var),
@@ -416,7 +418,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::Poly(_, _) | Type::Var(_) => None,
         Type::String => None,
         Type::Unit => Some(0),
-        Type::Int | Type::Null | Type::Bool => Some(1),
+        Type::Int | Type::Char | Type::Null | Type::Bool => Some(1),
     }
 }
 

@@ -74,6 +74,11 @@ pub fn literal_int(n: i64) -> Expr {
     Expr::Int(n)
 }
 
+pub fn literal_char(ch: char) -> Expr {
+    let n = ch as i64;
+    Expr::Int(n)
+}
+
 pub fn literal_str(s: String) -> Expr {
     Expr::String(s)
 }

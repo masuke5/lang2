@@ -204,6 +204,32 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn lex_char(&mut self) -> Option<Token> {
+        let ch = self.read_char();
+        let ch = match ch {
+            '\'' => {
+                error!(&self.span(), "empty character is not allowed");
+                return Some(Token::Char('\0'));
+            }
+            '\\' => match self.lex_escape_sequence() {
+                Some(ch) => ch,
+                None => {
+                    self.read_char();
+                    return Some(Token::Char('\0'));
+                }
+            },
+            ch => ch,
+        };
+
+        if self.peek() == '\'' {
+            self.read_char();
+            Some(Token::Char(ch))
+        } else {
+            error!(&self.span(), "only one character is allowed");
+            return Some(Token::Char('\0'));
+        }
+    }
+
     fn skip_comment(&mut self) {
         if self.peek() == '#' {
             // multi-line comment
@@ -228,6 +254,7 @@ impl<'a> Lexer<'a> {
             c if c.is_digit(10) => Some(self.lex_number(c)),
             c if is_identifier_char(c) => Some(self.lex_identifier(c)),
             '"' => self.lex_string(),
+            '\'' => self.lex_char(),
             '+' if self.next_is('=') => self.two_char(Token::AddAssign),
             '-' if self.next_is('=') => self.two_char(Token::SubAssign),
             '*' if self.next_is('=') => self.two_char(Token::MulAssign),

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::hash_map;
 use std::fmt::Display;
 use std::hash::Hash;
@@ -283,20 +284,25 @@ impl<'a, K: Hash + Eq, V> IntoIterator for &'a mut HashMapWithScope<K, V> {
     }
 }
 
+pub fn escape_character(ch: char) -> Cow<'static, str> {
+    let n = ch as u32;
+    match ch {
+        '\n' => "\\n".into(),
+        '\r' => "\\r".into(),
+        '\t' => "\\t".into(),
+        '\\' => "\\\\".into(),
+        '\0' => "\\0".into(),
+        '"' => "\\\"".into(),
+        _ if n <= 0x1f || n == 0x7f => format!("\\x{:02x}", n).into(),
+        ch => ch.to_string().into(),
+    }
+}
+
 pub fn escape_string(raw: &str) -> String {
     let mut s = String::new();
     for ch in raw.chars() {
-        let n = ch as u32;
-        match ch {
-            '\n' => s.push_str("\\n"),
-            '\r' => s.push_str("\\r"),
-            '\t' => s.push_str("\\t"),
-            '\\' => s.push_str("\\\\"),
-            '\0' => s.push_str("\\0"),
-            '"' => s.push_str("\\\""),
-            _ if n <= 0x1f || n == 0x7f => s.push_str(&format!("\\x{:02x}", n)),
-            ch => s.push(ch),
-        }
+        let new_s = escape_character(ch);
+        s.push_str(&new_s);
     }
 
     s

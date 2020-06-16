@@ -13,6 +13,7 @@ pub enum Keyword {
     Int,
     Bool,
     StringType,
+    Char,
     Return,
     If,
     Else,
@@ -37,6 +38,7 @@ impl Keyword {
             Self::Int => "int",
             Self::Bool => "bool",
             Self::StringType => "string",
+            Self::Char => "char",
             Self::Return => "return",
             Self::If => "if",
             Self::Else => "else",
@@ -61,6 +63,7 @@ impl Keyword {
             "int" => Self::Int,
             "bool" => Self::Bool,
             "string" => Self::StringType,
+            "char" => Self::Char,
             "return" => Self::Return,
             "if" => Self::If,
             "else" => Self::Else,
@@ -80,6 +83,7 @@ impl Keyword {
 pub enum Token {
     Number(i64),
     String(String),
+    Char(char),
     Identifier(Id),
     Keyword(Keyword),
     Add,
@@ -124,6 +128,7 @@ impl fmt::Display for Token {
         match self {
             Token::Number(_) => write!(f, "number"),
             Token::String(_) => write!(f, "string"),
+            Token::Char(_) => write!(f, "char"),
             Token::Identifier(_) => write!(f, "identifier"),
             Token::Keyword(kw) => write!(f, "{}", kw.to_str()),
             Token::Add => write!(f, "+"),
@@ -200,6 +205,7 @@ impl Token {
             Token::Number(n) => format!("{}", n),
             Token::Identifier(id) => format!("`{}`", IdMap::name(*id)),
             Token::String(s) => format!("\"{}\"", s),
+            Token::Char(ch) => format!("'{}'", ch),
             token => format!("{}", token),
         }
     }
