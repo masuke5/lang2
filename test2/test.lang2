@@ -118,6 +118,10 @@ test_eq "/=" 654 b;
 b %= 600;
 test_eq "%=" 54 b;
 
+## type ##
+let num: uint = 300;
+test_eq "int - uint" (-100) (200 - num);
+
 ## function ##
 
 test_eq "simple function" 30 (add 14 16);

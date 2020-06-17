@@ -584,6 +584,116 @@ impl Analyzer {
         }
     }
 
+    fn cast_for_binop(binop: &BinOp, lhs: &Type, rhs: &Type) -> Option<Type> {
+        type B = BinOp;
+
+        const NUMERIC_TYPES: [Type; 2] = [Type::Int, Type::UInt];
+
+        let (cast, allow_pointer) = match binop {
+            B::Add | B::Sub | B::Mul | B::Div | B::Mod => (true, false),
+            B::LShift | B::RShift | B::BitAnd | B::BitOr | B::BitXor => (false, false),
+            B::Equal | B::NotEqual => (true, true),
+            B::LessThan | B::LessThanOrEqual | B::GreaterThan | B::GreaterThanOrEqual => {
+                (true, false)
+            }
+            B::And | B::Or => panic!(),
+        };
+
+        if allow_pointer {
+            match (lhs, rhs) {
+                (Type::App(TypeCon::Pointer(lm), a), Type::App(TypeCon::Pointer(rm), b))
+                    if a[0] == b[0] =>
+                {
+                    return Some(Type::App(TypeCon::Pointer(*lm || *rm), vec![a[0].clone()]));
+                }
+                _ => {}
+            }
+        }
+
+        if !NUMERIC_TYPES.contains(lhs) || !NUMERIC_TYPES.contains(rhs) {
+            return None;
+        }
+
+        if !cast {
+            if lhs != rhs {
+                return None;
+            }
+
+            return Some(lhs.clone());
+        }
+
+        let mut ty = lhs.clone();
+
+        if *rhs == Type::Int {
+            ty = Type::Int;
+        }
+
+        Some(ty)
+    }
+
+    fn convert_expr(&mut self, mut expr: ExprInfo, dest_ty: &Type) -> Option<ExprInfo> {
+        if expr.ty == *dest_ty {
+            return Some(expr);
+        }
+
+        match (&expr.ty, dest_ty) {
+            // Don't need wrap again
+            (Type::App(TypeCon::Wrapped, _), Type::App(TypeCon::Wrapped, _)) => {}
+            // T => Wrapped<T>
+            (expr_ty, Type::App(TypeCon::Wrapped, _)) => {
+                expr.ir = translate::wrap(expr.ir, &expr_ty);
+                expr.ty = Type::App(TypeCon::Wrapped, vec![expr.ty]);
+            }
+            // *mut T => *T
+            (Type::App(TypeCon::Pointer(true), types), Type::App(TypeCon::Pointer(false), _)) => {
+                expr.ty = Type::App(TypeCon::Pointer(false), types.clone());
+            }
+            // &mut [T; N] => &[T]
+            (Type::App(TypeCon::Slice(true), elem_type), Type::App(TypeCon::Slice(false), ..)) => {
+                expr.ty = Type::App(TypeCon::Slice(false), vec![elem_type[0].clone()]);
+            }
+            // *[T; N] => &[T]
+            (
+                Type::App(TypeCon::Pointer(arr_is_mutable), elem_type),
+                Type::App(TypeCon::Slice(slice_is_mutable), ..),
+            ) => {
+                let is_mutable = *arr_is_mutable && *slice_is_mutable;
+
+                if let Type::App(TypeCon::Array(size), elem_type) = &elem_type[0] {
+                    expr.ir = translate::array_to_slice(expr.clone(), *size);
+                    expr.ty = Type::App(TypeCon::Slice(is_mutable), vec![elem_type[0].clone()]);
+                }
+            }
+            // uint => int
+            (Type::UInt, Type::Int) => {
+                expr.ty = Type::Int;
+            }
+            // int => uint
+            (Type::Int, Type::UInt) => {
+                expr.ty = Type::UInt;
+            }
+            _ => {}
+        }
+
+        // Convert to InHeap if necessary
+        if !dest_ty.is_in_heap() {
+            if let Type::App(TypeCon::InHeap, types) = &expr.ty {
+                expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
+                expr.ty = types[0].clone();
+            }
+        }
+
+        // Unwrap if necessary
+        if !dest_ty.is_wrapped() {
+            if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
+                expr.ir = translate::unwrap(expr.ir, &expr.ty);
+                expr.ty = types[0].clone();
+            }
+        }
+
+        Some(expr)
+    }
+
     fn walk_tuple_with_conversion(
         &mut self,
         inner_exprs: Vec<Spanned<Expr>>,
@@ -626,7 +736,7 @@ impl Analyzer {
         mut expr: Spanned<Expr>,
         dest_ty: &Type,
     ) -> Option<ExprInfo> {
-        let mut expr = if let Expr::Tuple(inner_exprs) = &mut expr.kind {
+        let expr = if let Expr::Tuple(inner_exprs) = &mut expr.kind {
             // Extract inner types
             match dest_ty {
                 Type::App(TypeCon::Tuple, dest_inner_types) => self.walk_tuple_with_conversion(
@@ -641,54 +751,7 @@ impl Analyzer {
             self.walk_expr(expr)?
         };
 
-        match (&expr.ty, dest_ty) {
-            // Don't need wrap again
-            (Type::App(TypeCon::Wrapped, _), Type::App(TypeCon::Wrapped, _)) => {}
-            // T => Wrapped<T>
-            (expr_ty, Type::App(TypeCon::Wrapped, _)) => {
-                expr.ir = translate::wrap(expr.ir, &expr_ty);
-                expr.ty = Type::App(TypeCon::Wrapped, vec![expr.ty]);
-            }
-            // *mut T => *T
-            (Type::App(TypeCon::Pointer(true), types), Type::App(TypeCon::Pointer(false), _)) => {
-                expr.ty = Type::App(TypeCon::Pointer(false), types.clone());
-            }
-            // &mut [T; N] => &[T]
-            (Type::App(TypeCon::Slice(true), elem_type), Type::App(TypeCon::Slice(false), ..)) => {
-                expr.ty = Type::App(TypeCon::Slice(false), vec![elem_type[0].clone()]);
-            }
-            // *[T; N] => &[T]
-            (
-                Type::App(TypeCon::Pointer(arr_is_mutable), elem_type),
-                Type::App(TypeCon::Slice(slice_is_mutable), ..),
-            ) => {
-                let is_mutable = *arr_is_mutable && *slice_is_mutable;
-
-                if let Type::App(TypeCon::Array(size), elem_type) = &elem_type[0] {
-                    expr.ir = translate::array_to_slice(expr.clone(), *size);
-                    expr.ty = Type::App(TypeCon::Slice(is_mutable), vec![elem_type[0].clone()]);
-                }
-            }
-            _ => {}
-        }
-
-        // Convert to InHeap if necessary
-        if !dest_ty.is_in_heap() {
-            if let Type::App(TypeCon::InHeap, types) = &expr.ty {
-                expr.ir = translate::copy_in_heap(expr.ir, &expr.ty, &types[0]);
-                expr.ty = types[0].clone();
-            }
-        }
-
-        // Unwrap if necessary
-        if !dest_ty.is_wrapped() {
-            if let Type::App(TypeCon::Wrapped, types) = &expr.ty {
-                expr.ir = translate::unwrap(expr.ir, &expr.ty);
-                expr.ty = types[0].clone();
-            }
-        }
-
-        Some(expr)
+        self.convert_expr(expr, dest_ty)
     }
 
     // Unwrap and dereference an expression if possible
@@ -1041,8 +1104,8 @@ impl Analyzer {
                 (ir, ty)
             }
             Expr::BinOp(BinOp::And, lhs, rhs) => {
-                let lhs = self.walk_expr_with_conversion(*lhs, &Type::Int);
-                let rhs = self.walk_expr_with_conversion(*rhs, &Type::Int);
+                let lhs = self.walk_expr_with_conversion(*lhs, &Type::Bool);
+                let rhs = self.walk_expr_with_conversion(*rhs, &Type::Bool);
                 try_some!(lhs, rhs);
 
                 // Type check
@@ -1056,8 +1119,8 @@ impl Analyzer {
                 (translate::binop_and(lhs, rhs), Type::Bool)
             }
             Expr::BinOp(BinOp::Or, lhs, rhs) => {
-                let lhs = self.walk_expr_with_conversion(*lhs, &Type::Int);
-                let rhs = self.walk_expr_with_conversion(*rhs, &Type::Int);
+                let lhs = self.walk_expr_with_conversion(*lhs, &Type::Bool);
+                let rhs = self.walk_expr_with_conversion(*rhs, &Type::Bool);
                 try_some!(lhs, rhs);
 
                 // Type check
@@ -1075,43 +1138,31 @@ impl Analyzer {
                 let rhs = self.walk_expr_with_unwrap_and_deref(*rhs);
                 try_some!(lhs, rhs);
 
-                let binop_symbol = binop.to_symbol();
-                let ty = match (&binop, &lhs.ty, &rhs.ty) {
-                    (BinOp::Add, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::Sub, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::Mul, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::Div, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::Mod, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::LShift, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::RShift, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::BitAnd, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::BitOr, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::BitXor, Type::Int, Type::Int) => Type::Int,
-                    (BinOp::Equal, Type::Int, Type::Int) => Type::Bool,
-                    (BinOp::NotEqual, Type::Int, Type::Int) => Type::Bool,
-                    (BinOp::LessThan, Type::Int, Type::Int) => Type::Bool,
-                    (BinOp::LessThanOrEqual, Type::Int, Type::Int) => Type::Bool,
-                    (BinOp::GreaterThan, Type::Int, Type::Int) => Type::Bool,
-                    (BinOp::GreaterThanOrEqual, Type::Int, Type::Int) => Type::Bool,
-
-                    (
-                        BinOp::Equal,
-                        Type::App(TypeCon::Pointer(_), _),
-                        Type::App(TypeCon::Pointer(_), _),
-                    ) => Type::Bool,
-                    (BinOp::Equal, Type::Null, Type::App(TypeCon::Pointer(_), _)) => Type::Bool,
-                    (BinOp::Equal, Type::App(TypeCon::Pointer(_), _), Type::Null) => Type::Bool,
-                    (
-                        BinOp::NotEqual,
-                        Type::App(TypeCon::Pointer(_), _),
-                        Type::App(TypeCon::Pointer(_), _),
-                    ) => Type::Bool,
-                    (BinOp::NotEqual, Type::Null, Type::App(TypeCon::Pointer(_), _)) => Type::Bool,
-                    (BinOp::NotEqual, Type::App(TypeCon::Pointer(_), _), Type::Null) => Type::Bool,
-                    _ => {
-                        error!(&expr.span, "`{} {} {}`", lhs.ty, binop_symbol, rhs.ty);
+                let type_to_cast = match Self::cast_for_binop(&binop, &lhs.ty, &rhs.ty) {
+                    Some(ty) => ty,
+                    None => {
+                        error!(&expr.span, "{} {} {}", lhs.ty, binop.to_symbol(), rhs.ty);
                         return None;
                     }
+                };
+
+                let lhs = self.convert_expr(lhs, &type_to_cast)?;
+                let rhs = self.convert_expr(rhs, &type_to_cast)?;
+
+                if lhs.ty != rhs.ty {
+                    error!(&expr.span, "{} {} {}", lhs.ty, binop.to_symbol(), rhs.ty);
+                    return None;
+                }
+
+                type B = BinOp;
+                let ty = match binop {
+                    B::Add | B::Sub | B::Mul | B::Div | B::Mod => type_to_cast,
+                    B::LShift | B::RShift | B::BitAnd | B::BitOr | B::BitXor => type_to_cast,
+                    B::Equal | B::NotEqual => Type::Bool,
+                    B::LessThan | B::LessThanOrEqual | B::GreaterThan | B::GreaterThanOrEqual => {
+                        Type::Bool
+                    }
+                    B::And | B::Or => panic!(),
                 };
 
                 (translate::binop(binop, lhs, rhs), ty)
@@ -1801,6 +1852,7 @@ impl Analyzer {
     fn walk_type(&mut self, ty: Spanned<AstType>) -> Option<Type> {
         match ty.kind {
             AstType::Int => Some(Type::Int),
+            AstType::UInt => Some(Type::UInt),
             AstType::Bool => Some(Type::Bool),
             AstType::Char => Some(Type::Char),
             AstType::Unit => Some(Type::Unit),
@@ -2340,4 +2392,24 @@ pub fn do_semantics_analysis(
     }
 
     bodies
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cast_for_binop() {
+        let cast = Analyzer::cast_for_binop;
+        type B = BinOp;
+        type T = Type;
+
+        assert_eq!(Some(T::Int), cast(&B::Add, &T::Int, &T::UInt));
+        assert_eq!(Some(T::Int), cast(&B::Add, &T::UInt, &T::Int));
+        assert_eq!(Some(T::Int), cast(&B::NotEqual, &T::Int, &T::UInt));
+        assert_eq!(None, cast(&B::Add, &T::Int, &T::Char));
+        assert_eq!(None, cast(&B::BitXor, &T::Int, &T::UInt));
+        assert_eq!(Some(T::UInt), cast(&B::BitXor, &T::UInt, &T::UInt));
+        assert_eq!(Some(T::UInt), cast(&B::Sub, &T::UInt, &T::UInt));
+    }
 }

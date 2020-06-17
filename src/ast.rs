@@ -385,6 +385,7 @@ pub struct Program {
 #[derive(Debug, PartialEq, Clone)]
 pub enum AstType {
     Int,
+    UInt,
     String,
     Char,
     Bool,
@@ -403,6 +404,7 @@ impl fmt::Display for AstType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AstType::Int => write!(f, "int"),
+            AstType::UInt => write!(f, "uint"),
             AstType::String => write!(f, "string"),
             AstType::Char => write!(f, "char"),
             AstType::Bool => write!(f, "bool"),

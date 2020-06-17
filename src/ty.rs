@@ -111,6 +111,7 @@ impl fmt::Debug for Unique {
 
 #[derive(PartialEq, Clone)]
 pub enum Type {
+    UInt,
     Int,
     Bool,
     Char,
@@ -142,6 +143,7 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Int => write!(f, "int"),
+            Self::UInt => write!(f, "uint"),
             Self::Bool => write!(f, "bool"),
             Self::Char => write!(f, "char"),
             Self::String => write!(f, "string"),
@@ -272,7 +274,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
     type TC = TypeCon;
 
     match ty {
-        T::Int | T::Char | T::Bool | T::String | T::Unit | T::Null => ty,
+        T::Int | T::UInt | T::Char | T::Bool | T::String | T::Unit | T::Null => ty,
         T::Var(var) => match map.iter().find(|(v, _)| var == **v) {
             Some((_, ty)) => ty.clone(),
             None => T::Var(var),
@@ -370,8 +372,10 @@ pub fn unify_inner(span: &Span, a: &Type, b: &Type) -> Option<()> {
         }
         (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Some(()),
         (Type::Int, Type::Int) => Some(()),
+        (Type::UInt, Type::UInt) => Some(()),
         (Type::Bool, Type::Bool) => Some(()),
         (Type::String, Type::String) => Some(()),
+        (Type::Char, Type::Char) => Some(()),
         (Type::Unit, Type::Unit) => Some(()),
         (Type::App(TypeCon::Pointer(_), _), Type::Null) => Some(()),
         (Type::Null, Type::App(TypeCon::Pointer(_), _)) => Some(()),
@@ -418,7 +422,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::Poly(_, _) | Type::Var(_) => None,
         Type::String => None,
         Type::Unit => Some(0),
-        Type::Int | Type::Char | Type::Null | Type::Bool => Some(1),
+        Type::Int | Type::UInt | Type::Char | Type::Null | Type::Bool => Some(1),
     }
 }
 

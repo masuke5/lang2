@@ -1398,6 +1398,9 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Option<Spanned<AstType>> {
         let first_span = self.peek().span.clone();
         let ty = match self.peek().kind {
+            Token::Keyword(Keyword::UInt) => {
+                self.next_and(Some(spanned(AstType::UInt, first_span)))
+            }
             Token::Keyword(Keyword::Int) => self.next_and(Some(spanned(AstType::Int, first_span))),
             Token::Keyword(Keyword::Char) => {
                 self.next_and(Some(spanned(AstType::Char, first_span)))
