@@ -106,7 +106,12 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Token::Number(n)
+        if self.peek() == 'u' {
+            self.read_char();
+            Token::UnsignedNumber(n as u64)
+        } else {
+            Token::Number(n)
+        }
     }
 
     fn lex_number(&mut self, start_char: char) -> Token {

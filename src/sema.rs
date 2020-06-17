@@ -787,6 +787,9 @@ impl Analyzer {
     fn walk_expr(&mut self, expr: Spanned<Expr>) -> Option<ExprInfo> {
         let (ir, ty) = match expr.kind {
             Expr::Literal(Literal::Number(n)) => (translate::literal_int(n), Type::Int),
+            Expr::Literal(Literal::UnsignedNumber(n)) => {
+                (translate::literal_unsigned_int(n), Type::UInt)
+            }
             Expr::Literal(Literal::String(s)) => {
                 let ty = Type::App(TypeCon::Pointer(false), vec![Type::String]);
                 (translate::literal_str(s), ty)

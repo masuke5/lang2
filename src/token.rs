@@ -85,6 +85,7 @@ impl Keyword {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Number(i64),
+    UnsignedNumber(u64),
     String(String),
     Char(char),
     Identifier(Id),
@@ -134,6 +135,7 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Token::Number(_) => write!(f, "number"),
+            Token::UnsignedNumber(_) => write!(f, "unsigned number"),
             Token::String(_) => write!(f, "string"),
             Token::Char(_) => write!(f, "char"),
             Token::Identifier(_) => write!(f, "identifier"),
@@ -214,6 +216,7 @@ impl Token {
     fn detail(&self) -> String {
         match self {
             Token::Number(n) => format!("{}", n),
+            Token::UnsignedNumber(n) => format!("{}u", n),
             Token::Identifier(id) => format!("`{}`", IdMap::name(*id)),
             Token::String(s) => format!("\"{}\"", s),
             Token::Char(ch) => format!("'{}'", ch),

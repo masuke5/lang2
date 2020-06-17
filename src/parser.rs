@@ -443,6 +443,13 @@ impl<'a> Parser<'a> {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::Number(n)), token.span))
             }
+            Token::UnsignedNumber(n) => {
+                self.next();
+                Some(spanned(
+                    Expr::Literal(Literal::UnsignedNumber(n)),
+                    token.span,
+                ))
+            }
             Token::String(s) => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::String(s)), token.span))
@@ -580,6 +587,8 @@ impl<'a> Parser<'a> {
     fn next_is_arg(&self) -> bool {
         match &self.peek().kind {
             Token::Number(_)
+            | Token::UnsignedNumber(_)
+            | Token::Char(_)
             | Token::String(_)
             | Token::Identifier(_)
             | Token::Keyword(Keyword::True)

@@ -56,6 +56,7 @@ impl BinOp {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(i64),
+    UnsignedNumber(u64),
     String(String),
     Char(char),
     Unit,
@@ -507,6 +508,9 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
 
     match &expr.kind {
         Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
+        Expr::Literal(Literal::UnsignedNumber(n)) => {
+            println!("{}u {}", n, span_to_string(&expr.span))
+        }
         Expr::Literal(Literal::String(s)) => {
             println!("\"{}\" {}", escape_string(s), span_to_string(&expr.span))
         }

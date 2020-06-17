@@ -22,6 +22,8 @@ test_eq "one" 1 1;
 test_eq "binary number" 5 0b101;
 test_eq "octal number" 27 033;
 test_eq "hex number" 127 0x7f;
+test_eq "unsigned number" 15 15u;
+test_eq "unsigned hex number" 10 0xau;
 
 ## binary operators ##
 

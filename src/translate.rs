@@ -74,6 +74,10 @@ pub fn literal_int(n: i64) -> Expr {
     Expr::Int(n)
 }
 
+pub fn literal_unsigned_int(n: u64) -> Expr {
+    Expr::Int(i64::from_le_bytes(n.to_le_bytes()))
+}
+
 pub fn literal_char(ch: char) -> Expr {
     let n = ch as i64;
     Expr::Int(n)
