@@ -188,6 +188,8 @@ impl Generator {
                     BinOp::NotEqual => opcode::BINOP_NEQ,
                     BinOp::LShift => opcode::BINOP_A_LSHIFT,
                     BinOp::RShift => opcode::BINOP_A_RSHIFT,
+                    BinOp::LogicalLShift => opcode::BINOP_L_LSHIFT,
+                    BinOp::LogicalRShift => opcode::BINOP_L_RSHIFT,
                     BinOp::BitAnd => opcode::BINOP_BITAND,
                     BinOp::BitOr => opcode::BINOP_BITOR,
                     BinOp::BitXor => opcode::BINOP_BITXOR,
