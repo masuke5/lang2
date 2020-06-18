@@ -1417,7 +1417,7 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Bool) => {
                 self.next_and(Some(spanned(AstType::Bool, first_span)))
             }
-            Token::Keyword(Keyword::StringType) => {
+            Token::Keyword(Keyword::String) => {
                 self.next_and(Some(spanned(AstType::String, first_span)))
             }
             Token::Identifier(name) => {
