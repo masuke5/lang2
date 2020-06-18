@@ -2,11 +2,12 @@
 #![deny(trivial_casts, trivial_numeric_casts, elided_lifetimes_in_paths)]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use lang2::error::ErrorList;
 use lang2::id::{reserved_id, IdMap};
+use lang2::BytecodeContainer;
 use lang2::{ExecuteMode, ExecuteOption, OptimizeOption};
 
 use clap::{App, Arg, ArgMatches};
@@ -30,6 +31,14 @@ fn get_option<'a>(matches: &'a ArgMatches<'a>) -> Result<ExecuteOption, String> 
         ))
     } else {
         Err(String::from("Not specified file or cmd"))
+    }
+}
+
+fn output_bytecodes(path: &Path, bcc: BytecodeContainer) {
+    let bytes = bcc.to_bytes();
+
+    if let Err(err) = fs::write(path, bytes) {
+        eprintln!("Unable to write to file `{}`: {}", path.display(), err);
     }
 }
 
@@ -88,6 +97,13 @@ fn main() {
                 .long("opt")
                 .help("Enables optimization"),
         )
+        .arg(
+            Arg::with_name("output")
+                .long("output")
+                .short("o")
+                .takes_value(true)
+                .help("Output bytecodes"),
+        )
         .get_matches();
 
     let mode = if matches.is_present("dump-token") {
@@ -122,14 +138,22 @@ fn main() {
         }
     };
 
-    option
+    let option = option
         .enable_trace(matches.is_present("enable-trace"))
         .enable_measure(matches.is_present("enable-measure"))
         .mode(mode)
-        .optimize_option(optimize_option)
-        .execute();
+        .optimize_option(optimize_option);
+
+    if let Some(output) = matches.value_of("output") {
+        let path = Path::new(output);
+        if let Some(bcc) = option.generate_bytecodes() {
+            output_bytecodes(path, bcc);
+        }
+    } else {
+        option.execute();
+    }
 
     if ErrorList::has_error() {
-        exit(1);
+        exit(3);
     }
 }

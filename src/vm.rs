@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::bc_container::BytecodeContainer;
 use crate::bytecode;
 use crate::bytecode::{opcode, opcode_name, Bytecode, Function};
 use crate::gc::Gc;
@@ -387,7 +388,7 @@ impl VM {
     #[allow(clippy::cognitive_complexity)]
     pub fn run(
         &mut self,
-        module_bodies: Vec<(String, ModuleBody)>,
+        bytecode_container: BytecodeContainer,
         enable_trace: bool,
         enable_measure: bool,
     ) {
@@ -396,6 +397,8 @@ impl VM {
             let loc = loc as isize;
             (ip as isize - 2 + loc * 2) as usize
         }
+
+        let module_bodies = bytecode_container.modules;
 
         // global id -> module
         let mut all_modules = Vec::new();

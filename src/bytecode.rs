@@ -188,6 +188,10 @@ impl Bytecode {
         Self { bytes: Vec::new() }
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     pub fn push_header(&mut self) {
         if self.len() > 0 {
             panic!("pushed the header already");

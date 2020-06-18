@@ -118,10 +118,11 @@ impl<'a> Lexer<'a> {
         let mut n = initial;
         while self.peek().is_digit(10) {
             // n = n * 10 + digit
-            n = n * 10 + u64::from(self.peek().to_digit(10).unwrap());
+            n = n * 10 + self.peek().to_digit(10).unwrap() as u64;
             self.read_char();
         }
 
+        /*
         if self.peek() == '.' {
             self.read_char();
 
@@ -138,6 +139,7 @@ impl<'a> Lexer<'a> {
 
             return Token::Float(n);
         }
+        */
 
         if self.peek() == 'u' {
             self.read_char();

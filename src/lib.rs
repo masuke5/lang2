@@ -14,6 +14,7 @@ mod ty;
 #[macro_use]
 mod vm;
 mod ast;
+mod bc_container;
 mod bytecode;
 mod codegen;
 mod escape;
@@ -32,6 +33,7 @@ mod token;
 mod translate;
 mod value;
 
+pub use bc_container::BytecodeContainer;
 pub use opt::OptimizeOption;
 
 use std::env;
@@ -117,7 +119,7 @@ impl ExecuteOption {
         self
     }
 
-    pub fn execute(self) {
+    pub fn generate_bytecodes(&self) -> Option<BytecodeContainer> {
         if !cfg!(debug_assertions) && (self.enable_measure || self.enable_trace) {
             eprintln!("warning: \"--trace\" and \"--measure\" are enabled only when the interpreter is built on debug mode");
         }
@@ -128,6 +130,7 @@ impl ExecuteOption {
         let pwd = env::current_dir().expect("Unable to get current directory");
         let file_path = self
             .file_path
+            .clone()
             .unwrap_or_else(|| PathBuf::from(&pwd).join("cmd"));
         let tmp = pwd.join(&file_path);
         let root_path = tmp.parent().unwrap();
@@ -137,7 +140,7 @@ impl ExecuteOption {
         let tokens = lexer.lex();
         if self.mode == ExecuteMode::DumpToken {
             dump_token(tokens);
-            return;
+            return None;
         }
 
         // Parse
@@ -161,7 +164,7 @@ impl ExecuteOption {
                 dump_ast(&program);
             }
 
-            return;
+            return None;
         }
 
         // Do semantics analysis and translate to IR
@@ -185,11 +188,11 @@ impl ExecuteOption {
         let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container);
         if self.mode == ExecuteMode::DumpIR {
             dump_ir(module_bodies);
-            return;
+            return None;
         }
 
         if ErrorList::has_error() {
-            return;
+            return None;
         }
 
         // Optimization
@@ -202,7 +205,7 @@ impl ExecuteOption {
 
         if self.mode == ExecuteMode::DumpOptimizedIR {
             dump_ir(module_bodies);
-            return;
+            return None;
         }
 
         // Generate bytecode
@@ -228,8 +231,19 @@ impl ExecuteOption {
             }
         }
 
+        Some(BytecodeContainer {
+            modules: vm_module_bodies,
+        })
+    }
+
+    pub fn execute(self) {
+        let vm_module_bodies = match self.generate_bytecodes() {
+            Some(vmb) => vmb,
+            None => return,
+        };
+
         if self.mode == ExecuteMode::DumpInstruction {
-            for (id, (name, body)) in vm_module_bodies.into_iter().enumerate() {
+            for (id, (name, body)) in vm_module_bodies.modules.into_iter().enumerate() {
                 if let VMModuleBody::Normal(bytecode) = body {
                     println!("--- {} ({})", name, id);
                     bytecode.dump();
