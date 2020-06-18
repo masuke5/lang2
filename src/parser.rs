@@ -1411,6 +1411,9 @@ impl<'a> Parser<'a> {
                 self.next_and(Some(spanned(AstType::UInt, first_span)))
             }
             Token::Keyword(Keyword::Int) => self.next_and(Some(spanned(AstType::Int, first_span))),
+            Token::Keyword(Keyword::Float) => {
+                self.next_and(Some(spanned(AstType::Float, first_span)))
+            }
             Token::Keyword(Keyword::Char) => {
                 self.next_and(Some(spanned(AstType::Char, first_span)))
             }

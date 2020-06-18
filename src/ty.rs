@@ -115,6 +115,7 @@ pub enum Type {
     Int,
     Bool,
     Char,
+    Float,
     String,
     Unit,
     Null,
@@ -144,6 +145,7 @@ impl fmt::Display for Type {
         match self {
             Self::Int => write!(f, "int"),
             Self::UInt => write!(f, "uint"),
+            Self::Float => write!(f, "float"),
             Self::Bool => write!(f, "bool"),
             Self::Char => write!(f, "char"),
             Self::String => write!(f, "string"),
@@ -274,7 +276,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
     type TC = TypeCon;
 
     match ty {
-        T::Int | T::UInt | T::Char | T::Bool | T::String | T::Unit | T::Null => ty,
+        T::Int | T::UInt | T::Float | T::Char | T::Bool | T::String | T::Unit | T::Null => ty,
         T::Var(var) => match map.iter().find(|(v, _)| var == **v) {
             Some((_, ty)) => ty.clone(),
             None => T::Var(var),
@@ -422,7 +424,7 @@ pub fn type_size(ty: &Type) -> Option<usize> {
         Type::Poly(_, _) | Type::Var(_) => None,
         Type::String => None,
         Type::Unit => Some(0),
-        Type::Int | Type::UInt | Type::Char | Type::Null | Type::Bool => Some(1),
+        Type::Int | Type::UInt | Type::Float | Type::Char | Type::Null | Type::Bool => Some(1),
     }
 }
 

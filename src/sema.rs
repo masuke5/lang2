@@ -1856,6 +1856,7 @@ impl Analyzer {
         match ty.kind {
             AstType::Int => Some(Type::Int),
             AstType::UInt => Some(Type::UInt),
+            AstType::Float => Some(Type::Float),
             AstType::Bool => Some(Type::Bool),
             AstType::Char => Some(Type::Char),
             AstType::Unit => Some(Type::Unit),

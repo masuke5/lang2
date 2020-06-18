@@ -387,6 +387,7 @@ pub struct Program {
 pub enum AstType {
     Int,
     UInt,
+    Float,
     String,
     Char,
     Bool,
@@ -406,6 +407,7 @@ impl fmt::Display for AstType {
         match self {
             AstType::Int => write!(f, "int"),
             AstType::UInt => write!(f, "uint"),
+            AstType::Float => write!(f, "float"),
             AstType::String => write!(f, "string"),
             AstType::Char => write!(f, "char"),
             AstType::Bool => write!(f, "bool"),
