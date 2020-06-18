@@ -69,6 +69,7 @@ pub mod opcode {
     pub const OFFSET_SLICE: u8 = 0x34;
     pub const NOT: u8 = 0x35;
     pub const EXTEND_ARG: u8 = 0x36;
+    pub const FLOAT: u8 = 0x37;
 
     pub const END: u8 = 0x50;
 }
@@ -80,6 +81,7 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::EXTEND_ARG => "EXTEND_ARG",
         opcode::INT => "INT",
         opcode::TINY_INT => "TINY_INT",
+        opcode::FLOAT => "FLOAT",
         opcode::STRING => "STRING",
         opcode::TRUE => "TRUE",
         opcode::FALSE => "FALSE",
@@ -209,6 +211,7 @@ impl Bytecode {
     bfn_read!(i64, read_i64);
     bfn_read!(u128, read_u128);
     bfn_read!(i128, read_i128);
+    bfn_read!(f64, read_f64);
 
     pub fn read_bytes(&self, pos: usize, bytes: &mut [u8]) {
         unsafe {
@@ -232,6 +235,7 @@ impl Bytecode {
     bfn_write!(i64, push_i64, write_i64);
     bfn_write!(u128, push_u128, write_u128);
     bfn_write!(i128, push_i128, write_i128);
+    bfn_write!(f64, push_f64, write_f64);
 
     pub fn push_bytes(&mut self, bytes: &[u8]) {
         self.bytes.reserve(self.bytes.len() + bytes.len());
@@ -301,6 +305,10 @@ impl Bytecode {
             opcode::INT => {
                 let value = self.read_i64(ref_start + arg as usize * 8);
                 println!("{} ({:x})", arg, value);
+            }
+            opcode::FLOAT => {
+                let value = self.read_f64(ref_start + arg as usize * 8);
+                println!("{} ({})", arg, value);
             }
             opcode::TINY_INT => {
                 println!("{}", arg);
@@ -677,6 +685,11 @@ impl BytecodeBuilder {
 
     pub fn new_ref_i64(&mut self, value: i64) -> usize {
         self.refs.push(unsafe { mem::transmute(value) });
+        self.refs.len() - 1
+    }
+
+    pub fn new_ref_f64(&mut self, value: f64) -> usize {
+        self.refs.push(u64::from_le_bytes(value.to_le_bytes()));
         self.refs.len() - 1
     }
 

@@ -78,8 +78,8 @@ pub fn literal_unsigned_int(n: u64) -> Expr {
     Expr::Int(i64::from_le_bytes(n.to_le_bytes()))
 }
 
-pub fn literal_float(_n: f64) -> Expr {
-    Expr::Int(0)
+pub fn literal_float(n: f64) -> Expr {
+    Expr::Float(n)
 }
 
 pub fn literal_char(ch: char) -> Expr {

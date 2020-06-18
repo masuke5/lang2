@@ -82,8 +82,12 @@ impl Generator {
                     insts.pushi(opcode::TINY_INT, n as i32);
                 } else {
                     let index = self.builder.new_ref_i64(*n);
-                    insts.pushi(opcode::INT, index as i32);
+                    insts.push(opcode::INT, index as u32);
                 }
+            }
+            Expr::Float(n) => {
+                let index = self.builder.new_ref_f64(*n);
+                insts.push(opcode::FLOAT, index as u32);
             }
             Expr::String(s) => {
                 let id = self.strings.get_id(&s);

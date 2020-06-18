@@ -109,9 +109,10 @@ impl fmt::Display for VariableLoc {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Int(i64),
+    Float(f64),
     String(String),
     True,
     False,
@@ -144,7 +145,12 @@ pub enum Expr {
 impl Expr {
     pub fn size(&self) -> usize {
         match self {
-            Expr::Int(..) | Expr::String(..) | Expr::True | Expr::False | Expr::Null => 1,
+            Expr::Int(..)
+            | Expr::Float(..)
+            | Expr::String(..)
+            | Expr::True
+            | Expr::False
+            | Expr::Null => 1,
             Expr::Unit => 0,
             Expr::Pointer(..) | Expr::Dereference(..) => 1,
             Expr::Copy(_, size) => *size,
@@ -173,6 +179,7 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Int(n) => write!(f, "{}", n),
+            Expr::Float(n) => write!(f, "{}", n),
             Expr::String(s) => write!(f, "\"{}\"", escape_string(s)),
             Expr::True => write!(f, "true"),
             Expr::False => write!(f, "false"),
@@ -211,7 +218,7 @@ impl fmt::Display for Expr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Discard(Expr),
     Store(VariableLoc, Expr),
@@ -252,7 +259,7 @@ impl fmt::Display for Stmt {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CodeBuf {
     stmts: LinkedList<Stmt>,
 }
@@ -281,7 +288,7 @@ impl CodeBuf {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub stack_size: usize,
     pub stack_in_heap_size: usize,
@@ -300,7 +307,7 @@ impl Function {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub functions: Vec<(Id, Function)>,
     pub imported_modules: Vec<String>,
