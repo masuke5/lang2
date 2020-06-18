@@ -89,6 +89,7 @@ impl Keyword {
 pub enum Token {
     Number(i64),
     UnsignedNumber(u64),
+    Float(f64),
     String(String),
     Char(char),
     Identifier(Id),
@@ -139,6 +140,7 @@ impl fmt::Display for Token {
         match self {
             Token::Number(_) => write!(f, "number"),
             Token::UnsignedNumber(_) => write!(f, "unsigned number"),
+            Token::Float(_) => write!(f, "floating number"),
             Token::String(_) => write!(f, "string"),
             Token::Char(_) => write!(f, "char"),
             Token::Identifier(_) => write!(f, "identifier"),
@@ -220,6 +222,7 @@ impl Token {
         match self {
             Token::Number(n) => format!("{}", n),
             Token::UnsignedNumber(n) => format!("{}u", n),
+            Token::Float(n) => format!("{}", n),
             Token::Identifier(id) => format!("`{}`", IdMap::name(*id)),
             Token::String(s) => format!("\"{}\"", s),
             Token::Char(ch) => format!("'{}'", ch),

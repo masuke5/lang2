@@ -450,6 +450,10 @@ impl<'a> Parser<'a> {
                     token.span,
                 ))
             }
+            Token::Float(n) => {
+                self.next();
+                Some(spanned(Expr::Literal(Literal::Float(n)), token.span))
+            }
             Token::String(s) => {
                 self.next();
                 Some(spanned(Expr::Literal(Literal::String(s)), token.span))

@@ -790,6 +790,7 @@ impl Analyzer {
             Expr::Literal(Literal::UnsignedNumber(n)) => {
                 (translate::literal_unsigned_int(n), Type::UInt)
             }
+            Expr::Literal(Literal::Float(n)) => (translate::literal_float(n), Type::Float),
             Expr::Literal(Literal::String(s)) => {
                 let ty = Type::App(TypeCon::Pointer(false), vec![Type::String]);
                 (translate::literal_str(s), ty)

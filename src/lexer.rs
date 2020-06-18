@@ -114,6 +114,39 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn lex_decimal(&mut self, initial: u64) -> Token {
+        let mut n = initial;
+        while self.peek().is_digit(10) {
+            // n = n * 10 + digit
+            n = n * 10 + u64::from(self.peek().to_digit(10).unwrap());
+            self.read_char();
+        }
+
+        if self.peek() == '.' {
+            self.read_char();
+
+            let mut n = n as f64;
+            let mut digit_count = 0;
+            while self.peek().is_digit(10) {
+                // n += digit / 10^digit_count
+                digit_count += 1;
+                n += u64::from(self.peek().to_digit(10).unwrap()) as f64
+                    / 10f64.powf(digit_count as f64);
+
+                self.read_char();
+            }
+
+            return Token::Float(n);
+        }
+
+        if self.peek() == 'u' {
+            self.read_char();
+            Token::UnsignedNumber(n)
+        } else {
+            Token::Number(n as i64)
+        }
+    }
+
     fn lex_number(&mut self, start_char: char) -> Token {
         match start_char {
             '0' if self.next_is('x') => {
@@ -125,7 +158,7 @@ impl<'a> Lexer<'a> {
                 self.lex_number_with_radix(0, 2)
             }
             '0' => self.lex_number_with_radix(0, 8),
-            ch => self.lex_number_with_radix(ch.to_digit(10).unwrap() as i64, 10),
+            ch => self.lex_decimal(ch.to_digit(10).unwrap() as u64),
         }
     }
 
