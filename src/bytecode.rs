@@ -70,6 +70,10 @@ pub mod opcode {
     pub const NOT: u8 = 0x35;
     pub const EXTEND_ARG: u8 = 0x36;
     pub const FLOAT: u8 = 0x37;
+    pub const BINOP_FLOAT_ADD: u8 = 0x38;
+    pub const BINOP_FLOAT_SUB: u8 = 0x39;
+    pub const BINOP_FLOAT_MUL: u8 = 0x4a;
+    pub const BINOP_FLOAT_DIV: u8 = 0x4b;
 
     pub const END: u8 = 0x50;
 }
@@ -119,6 +123,10 @@ pub fn opcode_name(opcode: u8) -> &'static str {
         opcode::BINOP_BITAND => "BINOP_BITAND",
         opcode::BINOP_BITOR => "BINOP_BITOR",
         opcode::BINOP_BITXOR => "BINOP_BITXOR",
+        opcode::BINOP_FLOAT_ADD => "BINOP_FLOAT_ADD",
+        opcode::BINOP_FLOAT_SUB => "BINOP_FLOAT_SUB",
+        opcode::BINOP_FLOAT_MUL => "BINOP_FLOAT_MUL",
+        opcode::BINOP_FLOAT_DIV => "BINOP_FLOAT_DIV",
         opcode::POP => "POP",
         opcode::ALLOC => "ALLOC",
         opcode::CALL => "CALL",
@@ -372,6 +380,10 @@ impl Bytecode {
             opcode::BINOP_BITAND => println!(),
             opcode::BINOP_BITOR => println!(),
             opcode::BINOP_BITXOR => println!(),
+            opcode::BINOP_FLOAT_ADD => println!(),
+            opcode::BINOP_FLOAT_SUB => println!(),
+            opcode::BINOP_FLOAT_MUL => println!(),
+            opcode::BINOP_FLOAT_DIV => println!(),
             opcode::POP => println!(),
             opcode::ALLOC => println!("size={}", arg),
             opcode::CALL => println!("{}", arg),

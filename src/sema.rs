@@ -584,17 +584,19 @@ impl Analyzer {
         }
     }
 
+    // TODO: Refactoring
     fn cast_for_binop(binop: &BinOp, lhs: &Type, rhs: &Type) -> Option<Type> {
         type B = BinOp;
 
-        const NUMERIC_TYPES: [Type; 2] = [Type::Int, Type::UInt];
+        const NUMERIC_TYPES: &[Type] = &[Type::Int, Type::UInt, Type::Float];
 
-        let (cast, allow_pointer) = match binop {
-            B::Add | B::Sub | B::Mul | B::Div | B::Mod => (true, false),
-            B::LShift | B::RShift | B::BitAnd | B::BitOr | B::BitXor => (false, false),
-            B::Equal | B::NotEqual => (true, true),
+        let (cast, allow_pointer, allow_float) = match binop {
+            B::Add | B::Sub | B::Mul | B::Div => (true, false, true),
+            B::Mod => (true, false, false),
+            B::LShift | B::RShift | B::BitAnd | B::BitOr | B::BitXor => (false, false, false),
+            B::Equal | B::NotEqual => (true, true, true),
             B::LessThan | B::LessThanOrEqual | B::GreaterThan | B::GreaterThanOrEqual => {
-                (true, false)
+                (true, false, true)
             }
             B::And | B::Or => panic!(),
         };
@@ -622,7 +624,17 @@ impl Analyzer {
             return Some(lhs.clone());
         }
 
+        if !allow_float && (*lhs == Type::Float || *rhs == Type::Float) && lhs == rhs {
+            return None;
+        }
+
         let mut ty = lhs.clone();
+
+        if allow_float && ty == Type::Float {
+            if *rhs != Type::Float {
+                return None;
+            }
+        }
 
         if *rhs == Type::Int {
             ty = Type::Int;
@@ -2416,5 +2428,8 @@ mod tests {
         assert_eq!(None, cast(&B::BitXor, &T::Int, &T::UInt));
         assert_eq!(Some(T::UInt), cast(&B::BitXor, &T::UInt, &T::UInt));
         assert_eq!(Some(T::UInt), cast(&B::Sub, &T::UInt, &T::UInt));
+        assert_eq!(Some(T::Float), cast(&B::Sub, &T::Float, &T::Float));
+        assert_eq!(None, cast(&B::Sub, &T::Float, &T::Int));
+        assert_eq!(None, cast(&B::Mod, &T::Float, &T::Float));
     }
 }

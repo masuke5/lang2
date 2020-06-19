@@ -272,6 +272,10 @@ pub fn binop_or(lhs: ExprInfo, rhs: ExprInfo) -> Expr {
 
 pub fn binop(binop: BinOp, lhs: ExprInfo, rhs: ExprInfo) -> Expr {
     let binop = match binop {
+        BinOp::Add if lhs.ty == Type::Float => IRBinOp::FloatAdd,
+        BinOp::Sub if lhs.ty == Type::Float => IRBinOp::FloatSub,
+        BinOp::Mul if lhs.ty == Type::Float => IRBinOp::FloatMul,
+        BinOp::Div if lhs.ty == Type::Float => IRBinOp::FloatDiv,
         BinOp::Add => IRBinOp::Add,
         BinOp::Sub => IRBinOp::Sub,
         BinOp::Mul => IRBinOp::Mul,

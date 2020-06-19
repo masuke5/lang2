@@ -179,6 +179,10 @@ impl Generator {
                 let rhs = self.gen_expr(&rhs);
 
                 let opcode = match binop {
+                    BinOp::FloatAdd => opcode::BINOP_FLOAT_ADD,
+                    BinOp::FloatSub => opcode::BINOP_FLOAT_SUB,
+                    BinOp::FloatMul => opcode::BINOP_FLOAT_MUL,
+                    BinOp::FloatDiv => opcode::BINOP_FLOAT_DIV,
                     BinOp::Add => opcode::BINOP_ADD,
                     BinOp::Sub => opcode::BINOP_SUB,
                     BinOp::Mul => opcode::BINOP_MUL,

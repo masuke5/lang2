@@ -49,6 +49,10 @@ impl SeqId {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
+    FloatAdd,
+    FloatSub,
+    FloatMul,
+    FloatDiv,
     Add,
     Sub,
     Mul,
@@ -72,6 +76,10 @@ pub enum BinOp {
 impl BinOp {
     pub fn to_symbol(&self) -> &'static str {
         match self {
+            BinOp::FloatAdd => "+.",
+            BinOp::FloatSub => "-.",
+            BinOp::FloatMul => "*.",
+            BinOp::FloatDiv => "/.",
             BinOp::Add => "+",
             BinOp::Sub => "-",
             BinOp::Mul => "*",
