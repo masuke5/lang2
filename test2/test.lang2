@@ -19,6 +19,7 @@ fn test(mess: *string, b: bool) = {
 
 test_eq "zero" 0 0;
 test_eq "one" 1 1;
+# test_eqf "floating number" 10.3 10.3;
 test_eq "binary number" 5 0b101;
 test_eq "octal number" 27 033;
 test_eq "hex number" 127 0x7f;
@@ -39,6 +40,11 @@ test_eq "div 3" (-16) (50 / -3);
 test_eq "mod 1" 64 (264 % 100);
 test_eq "mod 2" 29 (64 % 55 + 20);
 test_eq "priority" 18 (3 + 7 * 4 - 13);
+
+# test_eqf "float add" 3.5 (1.2 + 2.3);
+# test_eqf "float sub" 3.2 (5.1 - 1.9);
+# test_eqf "float mul" 3.5 (7.0 * 0.5);
+# test_eqf "float div" 1.5 (3.0 / 2.0);
 
 test_eq "left shift 1" 0b1000000000 (0b10000 << 5);
 test_eq "left shift 2" (-0b101000) (-0b101 << 3);
@@ -212,11 +218,11 @@ let mut tuple = (4314, (901, 149),);
 tuple.0 := 344;
 tuple.1 := (63, 13490);
 test_eq "assign by tuple indexing 1" 344 tuple.0;
-test_eq "assign by tuple indexing 2" 13490 tuple.1.1;
+test_eq "assign by tuple indexing 2" 13490 (tuple.1).1;
 
-test_eq "nested tuple indexing" 132 ((52, 93012, 341), (5, 132), 63).1.1;
+test_eq "nested tuple indexing" 132 (((52, 93012, 341), (5, 132), 63).1).1;
 let tuple = ((52, 93012, 341), (5, 132, 9), 63);
-test_eq "variable tuple indexing" 9 tuple.1.2;
+test_eq "variable tuple indexing" 9 (tuple.1).2;
 
 test "pass a tuple to function" (check_tuple (5, 3, 8));
 test_eq "return tuple" 12 (double (3, 6)).1;

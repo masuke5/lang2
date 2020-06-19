@@ -2,8 +2,6 @@ use crate::error::{Error, ErrorList};
 use crate::id::{Id, IdMap};
 use crate::span::{Span, Spanned};
 use crate::token::*;
-use std::iter::Peekable;
-use std::str::Chars;
 
 fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
@@ -12,12 +10,13 @@ fn is_identifier_char(c: char) -> bool {
 pub struct Lexer<'a> {
     file: Id,
     raw: &'a str,
-    input: Peekable<Chars<'a>>,
+    input: Vec<char>,
     start_line: u32,
     start_col: u32,
     line: u32,
     col: u32,
     pos: usize,
+    pos_utf8: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -25,12 +24,13 @@ impl<'a> Lexer<'a> {
         Self {
             file,
             raw: s,
-            input: s.chars().peekable(),
+            input: s.chars().collect(),
             start_line: 0,
             start_col: 0,
             line: 0,
             col: 0,
             pos: 0,
+            pos_utf8: 0,
         }
     }
 
@@ -45,7 +45,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_char(&mut self) -> char {
-        let c = match self.input.next() {
+        let c = match self.input.get(self.pos) {
             Some('\n') => {
                 self.line += 1;
                 self.col = 0;
@@ -53,26 +53,34 @@ impl<'a> Lexer<'a> {
             }
             Some(ch) => {
                 self.col += 1;
-                ch
+                *ch
             }
             None => '\0',
         };
 
-        self.pos += c.len_utf8();
+        self.pos += 1;
+        self.pos_utf8 += c.len_utf8();
         c
     }
 
     fn peek(&mut self) -> char {
-        match self.input.peek() {
+        match self.input.get(self.pos) {
+            Some(ch) => *ch,
+            None => '\0',
+        }
+    }
+
+    fn next(&mut self) -> char {
+        match self.input.get(self.pos + 1) {
             Some(ch) => *ch,
             None => '\0',
         }
     }
 
     fn next_is(&mut self, ch: char) -> bool {
-        match self.input.peek() {
-            Some(c) => ch == *c,
-            None => false,
+        match self.peek() {
+            '\0' => false,
+            c => ch == c,
         }
     }
 
@@ -122,8 +130,7 @@ impl<'a> Lexer<'a> {
             self.read_char();
         }
 
-        /*
-        if self.peek() == '.' {
+        if self.peek() == '.' && self.next().is_digit(10) {
             self.read_char();
 
             let mut n = n as f64;
@@ -139,7 +146,6 @@ impl<'a> Lexer<'a> {
 
             return Token::Float(n);
         }
-        */
 
         if self.peek() == 'u' {
             self.read_char();
@@ -165,7 +171,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_identifier(&mut self, c: char) -> Token {
-        let start_pos = self.pos - c.len_utf8();
+        let start_pos = self.pos_utf8 - c.len_utf8();
 
         loop {
             if is_identifier_char(self.peek()) {
@@ -175,7 +181,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        let s = &self.raw[start_pos..self.pos];
+        let s = &self.raw[start_pos..self.pos_utf8];
         Keyword::from_str(s).map_or_else(
             || {
                 let id = IdMap::new_id(s);
