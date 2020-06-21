@@ -146,13 +146,93 @@ pub fn opcode_name(opcode: u8) -> &'static str {
 }
 
 pub const HEADER: [u8; 4] = *b"L2BC";
-pub const POS_FUNC_COUNT: usize = 4;
-pub const POS_STRING_COUNT: usize = 5;
-pub const POS_FUNC_MAP_START: usize = 6;
-pub const POS_STRING_MAP_START: usize = 8;
-pub const POS_MODULE_MAP_START: usize = 10;
-pub const POS_MODULE_COUNT: usize = 13;
-pub const POS_REF_START: usize = 14;
+
+macro_rules! int_from_bytes {
+    ($ty:ty, $bytes:expr, $pos:expr) => {{
+        let size = mem::size_of::<$ty>();
+        <$ty>::from_le_bytes($bytes[$pos..$pos + size].try_into().unwrap())
+    }};
+}
+
+macro_rules! write_to_bytes {
+    ($bytes:expr, $pos:expr, $value:expr) => {{
+        let value_bytes = $value.to_le_bytes();
+        for i in 0..value_bytes.len() {
+            $bytes[$pos + i] = value_bytes[i];
+        }
+    }};
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeHeader {
+    pub header: [u8; 4],
+    pub func_count: u8,
+    pub string_count: u8,
+    pub func_map_start: u16,
+    pub string_map_start: u16,
+    pub module_map_start: u32,
+    pub module_count: u32,
+    pub ref_start: u16,
+    pub len: u32,
+}
+
+impl BytecodeHeader {
+    const POS_FUNC_COUNT: usize = 4;
+    const POS_STRING_COUNT: usize = 5;
+    const POS_FUNC_MAP_START: usize = 6;
+    const POS_STRING_MAP_START: usize = 8;
+    const POS_MODULE_MAP_START: usize = 10;
+    const POS_MODULE_COUNT: usize = 14;
+    const POS_REF_START: usize = 18;
+    const POS_LEN: usize = 20;
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<BytecodeHeader> {
+        let size = mem::size_of::<Self>();
+        if bytes.len() < size {
+            return None;
+        }
+
+        Some(Self {
+            header: bytes[0..=3].try_into().unwrap(),
+            func_count: bytes[Self::POS_FUNC_COUNT],
+            string_count: bytes[Self::POS_STRING_COUNT],
+            func_map_start: int_from_bytes!(u16, bytes, Self::POS_FUNC_MAP_START),
+            string_map_start: int_from_bytes!(u16, bytes, Self::POS_STRING_MAP_START),
+            module_map_start: int_from_bytes!(u32, bytes, Self::POS_MODULE_MAP_START),
+            module_count: int_from_bytes!(u32, bytes, Self::POS_MODULE_COUNT),
+            ref_start: int_from_bytes!(u16, bytes, Self::POS_REF_START),
+            len: int_from_bytes!(u32, bytes, Self::POS_LEN),
+        })
+    }
+
+    pub fn to_bytes(&self) -> [u8; mem::size_of::<Self>()] {
+        let mut bytes = [0; mem::size_of::<Self>()];
+
+        bytes[0] = self.header[0];
+        bytes[1] = self.header[1];
+        bytes[2] = self.header[2];
+        bytes[3] = self.header[3];
+
+        write_to_bytes!(&mut bytes, Self::POS_FUNC_COUNT, self.func_count);
+        write_to_bytes!(&mut bytes, Self::POS_STRING_COUNT, self.string_count);
+        write_to_bytes!(&mut bytes, Self::POS_FUNC_MAP_START, self.func_map_start);
+        write_to_bytes!(
+            &mut bytes,
+            Self::POS_STRING_MAP_START,
+            self.string_map_start
+        );
+        write_to_bytes!(
+            &mut bytes,
+            Self::POS_MODULE_MAP_START,
+            self.module_map_start
+        );
+        write_to_bytes!(&mut bytes, Self::POS_MODULE_COUNT, self.module_count);
+        write_to_bytes!(&mut bytes, Self::POS_REF_START, self.ref_start);
+        write_to_bytes!(&mut bytes, Self::POS_LEN, self.len);
+
+        bytes
+    }
+}
 
 macro_rules! bfn_read {
     ($ty:ty, $name:ident) => {
@@ -206,7 +286,18 @@ impl Bytecode {
         }
 
         self.push_bytes(&HEADER);
-        self.reserve(16);
+        self.reserve(mem::size_of::<BytecodeHeader>() - 4);
+    }
+
+    pub fn write_header(&mut self, header: &BytecodeHeader) {
+        let header_bytes = header.to_bytes();
+        for i in 0..header_bytes.len() {
+            self.bytes[i] = header_bytes[i];
+        }
+    }
+
+    pub fn read_header(&self) -> BytecodeHeader {
+        BytecodeHeader::from_bytes(&self.bytes).unwrap()
     }
 
     pub fn len(&self) -> usize {
@@ -419,10 +510,18 @@ impl Bytecode {
 
         let index_len = format!("{}", self.bytes.len()).len();
 
-        // String map
-        let string_map_start = self.read_u16(POS_STRING_MAP_START) as usize;
-        let string_count = self.read_u8(POS_STRING_COUNT) as usize;
+        let header = match BytecodeHeader::from_bytes(&self.bytes) {
+            Some(bh) => bh,
+            None => {
+                println!("Invalid header");
+                return;
+            }
+        };
 
+        let string_count = header.string_count as usize;
+        let string_map_start = header.string_map_start as usize;
+
+        // String map
         let count_len = format!("{}", string_count).len();
         for i in 0..string_count {
             let loc = self.read_u16(string_map_start + i * 2) as usize;
@@ -440,8 +539,8 @@ impl Bytecode {
         }
 
         // Module map
-        let module_map_start = self.read_u16(POS_MODULE_MAP_START) as usize;
-        let module_count = self.read_u8(POS_MODULE_COUNT) as usize;
+        let module_map_start = header.module_map_start as usize;
+        let module_count = header.module_count as usize;
 
         for i in 0..module_count {
             let loc = self.read_u16(module_map_start + i * 2) as usize;
@@ -459,8 +558,8 @@ impl Bytecode {
         }
 
         // Function map
-        let func_map_start = self.read_u16(POS_FUNC_MAP_START) as usize;
-        let func_count = self.read_u8(POS_FUNC_COUNT) as usize;
+        let func_map_start = header.func_map_start as usize;
+        let func_count = header.func_count as usize;
 
         let mut functions: Vec<Function> = Vec::new();
 
@@ -483,7 +582,7 @@ impl Bytecode {
             functions.push(func);
         }
 
-        let ref_start = self.read_u16(POS_REF_START) as usize;
+        let ref_start = header.ref_start as usize;
 
         for Function { code_id, pos, .. } in functions {
             println!("FUNC {}:", code_id);
@@ -674,6 +773,7 @@ impl InstList {
 pub struct BytecodeBuilder {
     pub code: Bytecode,
 
+    header: BytecodeHeader,
     functions: HashMap<Id, Function>,
     func_count: usize,
     modules: Vec<String>,
@@ -686,6 +786,7 @@ impl BytecodeBuilder {
         code.push_header();
 
         BytecodeBuilder {
+            header: BytecodeHeader::from_bytes(&code.bytes).unwrap(),
             code,
             functions: HashMap::new(),
             func_count: 0,
@@ -714,13 +815,12 @@ impl BytecodeBuilder {
             panic!("too many strings");
         }
 
-        self.code.write_u8(POS_STRING_COUNT, strings.len() as u8);
+        self.header.string_count = strings.len() as u8;
 
         self.code.align(8);
 
         let string_map_start = self.code.len();
-        self.code
-            .write_u16(POS_STRING_MAP_START, string_map_start as u16);
+        self.header.string_map_start = string_map_start as u16;
 
         type StringId = u16;
 
@@ -744,14 +844,12 @@ impl BytecodeBuilder {
     }
 
     fn write_modules(&mut self) {
-        self.code
-            .write_u8(POS_MODULE_COUNT, self.modules.len() as u8);
+        self.header.module_count = self.modules.len() as u32;
 
         self.code.align(8);
 
         let module_map_start = self.code.len();
-        self.code
-            .write_u16(POS_MODULE_MAP_START, module_map_start as u16);
+        self.header.module_map_start = self.code.len() as u32;
 
         type ModuleId = u16;
 
@@ -774,10 +872,9 @@ impl BytecodeBuilder {
         self.code.align(8);
 
         // Write function map start
-        self.code
-            .write_u16(POS_FUNC_MAP_START, self.code.len() as u16);
+        self.header.func_map_start = self.code.len() as u16;
         // Write the number of functions
-        self.code.write_u8(POS_FUNC_COUNT, self.func_count as u8);
+        self.header.func_count = self.func_count as u8;
 
         let mut functions: Vec<Function> = self.functions.values().cloned().collect();
         functions.sort_by_key(|f| f.code_id);
@@ -795,7 +892,7 @@ impl BytecodeBuilder {
     fn write_refs(&mut self) {
         self.code.align(8);
 
-        self.code.write_u16(POS_REF_START, self.code.len() as u16);
+        self.header.ref_start = self.code.len() as u16;
 
         for value in &self.refs {
             self.code.push_u64(*value);
@@ -845,6 +942,9 @@ impl BytecodeBuilder {
         self.write_modules();
         self.write_funcs();
         self.write_refs();
+
+        self.header.len = self.code.len() as u32;
+        self.code.write_header(&self.header);
 
         self.code
     }

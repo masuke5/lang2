@@ -6,7 +6,6 @@ use std::time::Instant;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bc_container::BytecodeContainer;
-use crate::bytecode;
 use crate::bytecode::{opcode, opcode_name, Bytecode, Function};
 use crate::gc::Gc;
 use crate::module::Module;
@@ -272,8 +271,9 @@ impl VM {
     fn read_functions(&mut self, bytecode: &Bytecode, module_id: usize) {
         assert!(module_id < self.functions.len());
 
-        let func_map_start = bytecode.read_u16(bytecode::POS_FUNC_MAP_START) as usize;
-        let func_count = bytecode.read_u8(bytecode::POS_FUNC_COUNT) as usize;
+        let header = bytecode.read_header();
+        let func_map_start = header.func_map_start as usize;
+        let func_count = header.func_count as usize;
 
         for i in 0..func_count {
             let base = func_map_start + i * 8;
@@ -292,8 +292,9 @@ impl VM {
         bytecode: &Bytecode,
         all_global_ids: &FxHashMap<String, usize>,
     ) -> Vec<usize> {
-        let module_map_start = bytecode.read_u16(bytecode::POS_MODULE_MAP_START) as usize;
-        let module_count = bytecode.read_u8(bytecode::POS_MODULE_COUNT) as usize;
+        let header = bytecode.read_header();
+        let module_map_start = header.module_map_start as usize;
+        let module_count = header.module_count as usize;
 
         let mut modules = Vec::with_capacity(module_count);
 
@@ -400,6 +401,14 @@ impl VM {
 
         let module_bodies = bytecode_container.modules;
 
+        for (_, body) in &module_bodies {
+            if let ModuleBody::Normal(bytecode) = body {
+                if bytecode.as_bytes().len() != bytecode.read_header().len as usize {
+                    panic!("error");
+                }
+            }
+        }
+
         // global id -> module
         let mut all_modules = Vec::new();
         for (_, body) in &module_bodies {
@@ -432,8 +441,8 @@ impl VM {
         let mut string_map_start = Vec::with_capacity(all_modules.len());
         for bytecode in &bytecodes {
             if let Some(bytecode) = bytecode {
-                let sms = bytecode.read_u16(bytecode::POS_STRING_MAP_START) as usize;
-                string_map_start.push(sms);
+                let header = bytecode.read_header();
+                string_map_start.push(header.string_map_start as usize);
             } else {
                 string_map_start.push(0);
             }
@@ -443,8 +452,8 @@ impl VM {
         let mut ref_start = Vec::with_capacity(all_modules.len());
         for bytecode in &bytecodes {
             if let Some(bytecode) = bytecode {
-                let rs = bytecode.read_u16(bytecode::POS_REF_START) as usize;
-                ref_start.push(rs);
+                let header = bytecode.read_header();
+                ref_start.push(header.ref_start as usize);
             } else {
                 ref_start.push(0);
             }
