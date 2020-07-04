@@ -6,69 +6,97 @@ use std::str;
 
 use crate::ty::{Type, TypeCon};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Value(u64);
+#[derive(Debug, Clone, PartialEq)]
+#[repr(C)]
+pub enum Value {
+    Int(u64),
+    Float(f64),
+    PointerToHeap(*mut Value),
+    Pointer(*mut Value),
+}
 
 impl Value {
     #[inline(always)]
-    pub fn is_heap_ptr(self) -> bool {
-        (self.0 & 1) != 0
+    pub fn is_heap_ptr(&self) -> bool {
+        match self {
+            Self::PointerToHeap(..) => true,
+            _ => false,
+        }
     }
 
     #[inline(always)]
-    pub fn is_true(self) -> bool {
-        self.0 != 0
+    pub fn is_true(&self) -> bool {
+        !self.is_false()
     }
 
     #[inline(always)]
-    pub fn is_false(self) -> bool {
-        self.0 == 0
+    pub fn is_false(&self) -> bool {
+        match self {
+            Self::Int(n) if *n == 0 => true,
+            _ => false,
+        }
     }
 
     #[inline(always)]
-    pub fn as_u64(self) -> u64 {
-        self.0 >> 1
+    pub fn as_u64(&self) -> u64 {
+        match self {
+            Self::Int(n) => *n,
+            _ => panic!("non-integer value"),
+        }
     }
 
     #[inline(always)]
-    pub fn as_i64(self) -> i64 {
-        let value: i64 = unsafe { mem::transmute(self.0) };
-        value >> 1
+    pub fn as_i64(&self) -> i64 {
+        match self {
+            Self::Int(n) => unsafe { mem::transmute(*n) },
+            _ => panic!("non-integer value"),
+        }
     }
 
     #[inline(always)]
-    pub fn as_ptr<T>(self) -> *mut T {
-        let ptr = self.0;
-        let ptr = ptr & !1;
-        ptr as _
+    pub fn as_f64(&self) -> f64 {
+        match self {
+            Self::Float(n) => *n,
+            _ => panic!("non-floating point value"),
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_ptr<T>(&self) -> *mut T {
+        match self {
+            Self::Pointer(ptr) | Self::PointerToHeap(ptr) => *ptr as *mut _,
+            _ => panic!("non-pointer value"),
+        }
     }
 
     #[allow(dead_code)]
     pub const fn zero() -> Self {
-        Self(0)
+        Self::Int(0)
     }
 
     #[inline(always)]
     pub fn new_u64(value: u64) -> Self {
-        Self(value << 1)
+        Self::Int(value)
     }
 
     #[inline(always)]
     pub fn new_i64(value: i64) -> Self {
-        let value = value << 1;
-        unsafe { mem::transmute(value) }
+        Self::Int(unsafe { mem::transmute(value) })
+    }
+
+    #[inline(always)]
+    pub fn new_f64(value: f64) -> Self {
+        Self::Float(value)
     }
 
     #[inline(always)]
     pub fn new_ptr<T>(ptr: *const T) -> Self {
-        unsafe { Self::from_raw(ptr as u64) }
+        Self::Pointer(ptr as *mut _)
     }
 
     #[inline(always)]
     pub fn new_ptr_to_heap<T>(ptr: *const T) -> Self {
-        let value = ptr as u64;
-        let value = value | 1;
-        unsafe { Self::from_raw(value) }
+        Self::PointerToHeap(ptr as *mut _)
     }
 
     #[inline(always)]
@@ -82,33 +110,12 @@ impl Value {
 
     #[inline(always)]
     pub fn new_true() -> Self {
-        Self(0b10)
+        Self::Int(1)
     }
 
     #[inline(always)]
     pub fn new_false() -> Self {
-        Self(0)
-    }
-
-    #[inline(always)]
-    pub unsafe fn from_raw(value: u64) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
-    pub unsafe fn from_raw_i64(value: i64) -> Self {
-        Self(mem::transmute(value))
-    }
-
-    #[inline(always)]
-    #[allow(dead_code)]
-    pub unsafe fn raw(self) -> u64 {
-        self.0
-    }
-
-    #[inline(always)]
-    pub unsafe fn raw_i64(self) -> i64 {
-        mem::transmute(self.0)
+        Self::Int(0)
     }
 }
 

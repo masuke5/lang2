@@ -1,3 +1,4 @@
+import assert;
 import assert::{test as assert_test, test_eq as assert_test_eq};
 import module::{module1::*, module2::Dir};
 
@@ -5,6 +6,12 @@ let mut failed = false;
 
 fn test_eq(mess: *string, expected: int, actual: int) = {
     if not (assert_test_eq mess expected actual) {
+        failed := true;
+    }
+}
+
+fn test_eqf(mess: *string, expected: float, actual: float) = {
+    if not (assert::test_eqf mess expected actual) {
         failed := true;
     }
 }
@@ -19,9 +26,9 @@ fn test(mess: *string, b: bool) = {
 
 test_eq "zero" 0 0;
 test_eq "one" 1 1;
-# test_eqf "floating number" 10.3 10.3;
+test_eqf "floating number" 10.3 10.3;
 test_eq "binary number" 5 0b101;
-test_eq "octal number" 27 033;
+test_eq "octal number" 27 0o33;
 test_eq "hex number" 127 0x7f;
 test_eq "unsigned number" 15 15u;
 test_eq "unsigned hex number" 10 0xau;
@@ -41,10 +48,10 @@ test_eq "mod 1" 64 (264 % 100);
 test_eq "mod 2" 29 (64 % 55 + 20);
 test_eq "priority" 18 (3 + 7 * 4 - 13);
 
-# test_eqf "float add" 3.5 (1.2 + 2.3);
-# test_eqf "float sub" 3.2 (5.1 - 1.9);
-# test_eqf "float mul" 3.5 (7.0 * 0.5);
-# test_eqf "float div" 1.5 (3.0 / 2.0);
+test_eqf "float add" 3.5 (1.2 + 2.3);
+test_eqf "float sub" 3.2 (5.1 - 1.9);
+test_eqf "float mul" 3.5 (7.0 * 0.5);
+test_eqf "float div" 1.5 (3.0 / 2.0);
 
 test_eq "left shift 1" 0b1000000000 (0b10000 << 5);
 test_eq "left shift 2" (-0b101000) (-0b101 << 3);

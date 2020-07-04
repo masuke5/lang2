@@ -165,7 +165,10 @@ impl<'a> Lexer<'a> {
                 self.read_char();
                 self.lex_number_with_radix(0, 2)
             }
-            '0' => self.lex_number_with_radix(0, 8),
+            '0' if self.next_is('o') => {
+                self.read_char();
+                self.lex_number_with_radix(0, 8)
+            }
             ch => self.lex_decimal(ch.to_digit(10).unwrap() as u64),
         }
     }

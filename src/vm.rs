@@ -19,7 +19,7 @@ const STACK_SIZE: usize = 10000;
 macro_rules! pop {
     ($self:ident) => {{
         #[allow(unused_unsafe)]
-        let v = unsafe { *$self.stack.get_unchecked($self.sp) };
+        let v = unsafe { $self.stack.get_unchecked($self.sp) }.clone();
 
         #[cfg(feature = "vmdebug")]
         {
@@ -151,12 +151,14 @@ impl VM {
         }
     }
 
-    fn dump_value(value: Value, depth: usize) {
-        print!("{}{:x}", "  ".repeat(depth), value.as_u64());
-        if value.is_heap_ptr() {
-            println!(" (HEAP {:p})", value.as_ptr::<Value>());
-        } else {
-            println!();
+    fn dump_value(value: &Value, depth: usize) {
+        print!("{}", "  ".repeat(depth));
+
+        match value {
+            Value::Int(n) => println!("{}", *n),
+            Value::Float(n) => println!("{}", *n),
+            Value::Pointer(ptr) => println!("{:p}", ptr),
+            Value::PointerToHeap(ptr) => println!("{:p} (HEAP)", ptr),
         }
     }
 
@@ -223,7 +225,7 @@ impl VM {
                 break;
             }
 
-            Self::dump_value(*value, 0);
+            Self::dump_value(value, 0);
         }
         println!("-------- END DUMP ----------");
     }
@@ -257,7 +259,7 @@ impl VM {
                     }
 
                     let value = &*ep.add(i);
-                    Self::dump_value(*value, 0);
+                    Self::dump_value(value, 0);
                 }
 
                 ep = (*ep).as_ptr();
@@ -384,6 +386,11 @@ impl VM {
     #[inline(always)]
     fn get_ref_value_u64(&mut self, bytecode: &Bytecode, ref_id: u32, ref_start: usize) -> u64 {
         bytecode.read_u64(ref_start + ref_id as usize * 8)
+    }
+
+    #[inline(always)]
+    fn get_ref_value_f64(&mut self, bytecode: &Bytecode, ref_id: u32, ref_start: usize) -> f64 {
+        bytecode.read_f64(ref_start + ref_id as usize * 8)
     }
 
     #[allow(clippy::cognitive_complexity)]
@@ -563,6 +570,11 @@ impl VM {
                     let n = i8::from_le_bytes([arg as u8]);
                     push!(self, Value::new_i64(n as i64));
                 }
+                opcode::FLOAT => {
+                    let ref_start = unsafe { *ref_start.get_unchecked(self.current_module) };
+                    let value = self.get_ref_value_f64(current_bytecode, arg, ref_start);
+                    push!(self, Value::new_f64(value));
+                }
                 opcode::STRING => {
                     let string_map_start =
                         unsafe { string_map_start.get_unchecked(self.current_module) };
@@ -649,12 +661,14 @@ impl VM {
                     self.stack[self.sp] = Value::new_ptr(new_ptr);
                 }
                 opcode::OFFSET_SLICE => {
+                    self.dump_stack(self.sp);
                     let offset = pop!(self).as_i64() as usize;
                     let slice_ptr: *const Slice = pop!(self).as_ptr();
                     let elem_size = arg as usize;
 
                     // (slice_ptr + (slice_ptr[1] * elem_size)) + offset * elem_size
                     let ptr = unsafe {
+                        println!("{:?}", (*slice_ptr));
                         let start = (*slice_ptr).start.as_i64() as usize;
                         let start_ptr = (*slice_ptr).values.add(start * elem_size);
                         start_ptr.add(offset * elem_size)
@@ -744,6 +758,7 @@ impl VM {
                     }
 
                     self.sp -= size;
+                    self.dump_stack(self.sp);
                 }
                 opcode::WRAP => {
                     let size = arg as usize;
@@ -776,57 +791,88 @@ impl VM {
                     }
                 }
                 opcode::BINOP_L_LSHIFT..=opcode::BINOP_L_RSHIFT => {
-                    let rhs = pop!(self);
-                    let lhs = pop!(self);
-                    assert!(!rhs.is_heap_ptr());
-                    assert!(!lhs.is_heap_ptr());
+                    let rhs = pop!(self).as_u64();
+                    let lhs = pop!(self).as_u64();
 
-                    let lhs = unsafe { lhs.raw() };
-                    let rhs = unsafe { rhs.raw() };
-
-                    let value = unsafe {
-                        match opcode {
-                            opcode::BINOP_L_LSHIFT => Value::from_raw(lhs << rhs),
-                            opcode::BINOP_L_RSHIFT => Value::from_raw((lhs >> rhs) & !0b1),
-                            _ => panic!("bug"),
-                        }
+                    let value = match opcode {
+                        opcode::BINOP_L_LSHIFT => Value::new_u64(lhs << rhs),
+                        opcode::BINOP_L_RSHIFT => Value::new_u64(lhs >> rhs),
+                        _ => panic!("bug"),
                     };
 
                     push!(self, value);
                 }
                 opcode::BINOP_ADD..=opcode::BINOP_BITXOR => {
-                    let result = unsafe {
-                        let rhs = pop!(self).raw_i64();
-                        let lhs = pop!(self).raw_i64();
+                    let rhs = pop!(self);
 
-                        match opcode {
-                            opcode::BINOP_ADD => Value::from_raw_i64(lhs + rhs),
-                            opcode::BINOP_SUB => Value::from_raw_i64(lhs - rhs),
-                            opcode::BINOP_MUL => {
-                                let lhs = lhs >> 1;
-                                let rhs = rhs >> 1;
-                                Value::from_raw_i64((lhs * rhs) << 1)
+                    let result = match rhs {
+                        Value::Int(_) => {
+                            let rhs = rhs.as_i64();
+                            let lhs = pop!(self).as_i64();
+                            match opcode {
+                                opcode::BINOP_ADD => Value::new_i64(lhs + rhs),
+                                opcode::BINOP_SUB => Value::new_i64(lhs - rhs),
+                                opcode::BINOP_MUL => Value::new_i64(lhs * rhs),
+                                opcode::BINOP_DIV => Value::new_i64(lhs / rhs),
+                                opcode::BINOP_MOD => Value::new_i64(lhs % rhs),
+                                opcode::BINOP_A_LSHIFT => Value::new_i64(lhs << rhs),
+                                opcode::BINOP_A_RSHIFT => Value::new_i64(lhs >> rhs),
+                                opcode::BINOP_BITAND => Value::new_i64(lhs & rhs),
+                                opcode::BINOP_BITOR => Value::new_i64(lhs | rhs),
+                                opcode::BINOP_BITXOR => Value::new_i64(lhs ^ rhs),
+                                opcode::BINOP_LT => Value::new_bool(lhs < rhs),
+                                opcode::BINOP_LE => Value::new_bool(lhs <= rhs),
+                                opcode::BINOP_GT => Value::new_bool(lhs > rhs),
+                                opcode::BINOP_GE => Value::new_bool(lhs >= rhs),
+                                opcode::BINOP_EQ => Value::new_bool(lhs == rhs),
+                                opcode::BINOP_NEQ => Value::new_bool(lhs != rhs),
+                                _ => panic!("binop bug"),
                             }
-                            opcode::BINOP_DIV => Value::new_i64(lhs / rhs),
-                            opcode::BINOP_MOD => Value::from_raw_i64(lhs % rhs),
-                            opcode::BINOP_A_LSHIFT => Value::from_raw_i64(lhs << (rhs >> 1)),
-                            opcode::BINOP_A_RSHIFT => {
-                                Value::from_raw_i64((lhs >> (rhs >> 1)) & !0b1)
+                        }
+                        Value::Float(_) => {
+                            let rhs = rhs.as_f64();
+                            let lhs = pop!(self).as_f64();
+                            match opcode {
+                                opcode::BINOP_ADD => Value::new_f64(lhs + rhs),
+                                opcode::BINOP_SUB => Value::new_f64(lhs - rhs),
+                                opcode::BINOP_MUL => Value::new_f64(lhs * rhs),
+                                opcode::BINOP_DIV => Value::new_f64(lhs / rhs),
+                                opcode::BINOP_LT => Value::new_bool(lhs < rhs),
+                                opcode::BINOP_LE => Value::new_bool(lhs <= rhs),
+                                opcode::BINOP_GT => Value::new_bool(lhs > rhs),
+                                opcode::BINOP_GE => Value::new_bool(lhs >= rhs),
+                                opcode::BINOP_EQ => Value::new_bool(lhs == rhs),
+                                opcode::BINOP_NEQ => Value::new_bool(lhs != rhs),
+                                _ => panic!("binop bug"),
                             }
-                            opcode::BINOP_BITAND => Value::from_raw_i64(lhs & rhs),
-                            opcode::BINOP_BITOR => Value::from_raw_i64(lhs | rhs),
-                            opcode::BINOP_BITXOR => Value::from_raw_i64(lhs ^ rhs),
-                            opcode::BINOP_LT => Value::new_bool(lhs < rhs),
-                            opcode::BINOP_LE => Value::new_bool(lhs <= rhs),
-                            opcode::BINOP_GT => Value::new_bool(lhs > rhs),
-                            opcode::BINOP_GE => Value::new_bool(lhs >= rhs),
-                            opcode::BINOP_EQ => Value::new_bool(lhs == rhs),
-                            opcode::BINOP_NEQ => Value::new_bool(lhs != rhs),
-                            _ => panic!("binop bug"),
+                        }
+                        Value::Pointer(_) | Value::PointerToHeap(_) => {
+                            let rhs = rhs.as_ptr::<Value>();
+                            let lhs = pop!(self).as_ptr();
+
+                            match opcode {
+                                opcode::BINOP_EQ => Value::new_bool(lhs == rhs),
+                                opcode::BINOP_NEQ => Value::new_bool(lhs != rhs),
+                                _ => panic!("binop bug"),
+                            }
                         }
                     };
 
                     push!(self, result);
+                }
+                opcode::BINOP_FLOAT_ADD..=opcode::BINOP_FLOAT_DIV => {
+                    let rhs = pop!(self).as_f64();
+                    let lhs = pop!(self).as_f64();
+
+                    let result = match opcode {
+                        opcode::BINOP_FLOAT_ADD => lhs + rhs,
+                        opcode::BINOP_FLOAT_SUB => lhs - rhs,
+                        opcode::BINOP_FLOAT_MUL => lhs * rhs,
+                        opcode::BINOP_FLOAT_DIV => lhs / rhs,
+                        _ => panic!(),
+                    };
+
+                    push!(self, Value::new_f64(result));
                 }
                 opcode::POP => {
                     self.sp -= 1;
@@ -845,6 +891,7 @@ impl VM {
                     }
 
                     self.sp -= size;
+                    // unsafe { println!("{:?}", *(*allocated.as_ptr()).as_ptr::<Value>()) }
 
                     push!(self, Value::new_ptr_to_heap::<Value>(allocated.as_ptr()));
                 }
@@ -1001,13 +1048,13 @@ impl VM {
     }
 
     pub fn get_value(&self, loc: usize) -> Value {
-        self.stack[loc]
+        self.stack[loc].clone()
     }
 
     pub fn return_values(&mut self, values: &[Value], args_size: usize) {
         let loc = self.fp - args_size - values.len();
         for (i, value) in values.iter().enumerate() {
-            self.stack[loc + i] = *value;
+            self.stack[loc + i] = value.clone();
         }
     }
 

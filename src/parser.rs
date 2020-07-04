@@ -595,6 +595,7 @@ impl<'a> Parser<'a> {
             | Token::Char(_)
             | Token::String(_)
             | Token::Identifier(_)
+            | Token::Float(_)
             | Token::Keyword(Keyword::True)
             | Token::Keyword(Keyword::False)
             | Token::Keyword(Keyword::Null)

@@ -375,6 +375,7 @@ pub fn unify_inner(span: &Span, a: &Type, b: &Type) -> Option<()> {
         (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Some(()),
         (Type::Int, Type::Int) => Some(()),
         (Type::UInt, Type::UInt) => Some(()),
+        (Type::Float, Type::Float) => Some(()),
         (Type::Bool, Type::Bool) => Some(()),
         (Type::String, Type::String) => Some(()),
         (Type::Char, Type::Char) => Some(()),
