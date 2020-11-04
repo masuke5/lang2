@@ -11,51 +11,31 @@ mod utils;
 pub mod error;
 #[macro_use]
 mod ty;
-#[macro_use]
-mod vm;
 mod ast;
-mod bc_container;
-mod bytecode;
-mod codegen;
 mod escape;
 mod gc;
 mod heapvar;
 pub mod id;
-mod ir;
 mod lexer;
 mod module;
-mod opt;
 mod parser;
-mod sema;
 pub mod span;
-mod stdlib;
 mod token;
-mod translate;
 mod value;
-
-pub use bc_container::BytecodeContainer;
-pub use opt::OptimizeOption;
 
 use std::env;
 use std::path::{Path, PathBuf};
 
 use ast::*;
-use codegen::codegen;
-use error::ErrorList;
-use id::{reserved_id, Id, IdMap};
+use id::Id;
 use lexer::Lexer;
-use module::ModuleContainer;
 use parser::Parser;
-use sema::ModuleBody;
 use token::dump_token;
-use vm::{ModuleBody as VMModuleBody, VM};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExecuteMode {
     DumpToken,
     DumpAST,
-    DumpIR,
-    DumpOptimizedIR,
     DumpInstruction,
     Normal,
 }
@@ -75,7 +55,6 @@ pub struct ExecuteOption {
     mode: ExecuteMode,
     enable_trace: bool,
     enable_measure: bool,
-    optimize_option: OptimizeOption,
 }
 
 impl ExecuteOption {
@@ -88,9 +67,6 @@ impl ExecuteOption {
             mode: ExecuteMode::Normal,
             enable_trace: false,
             enable_measure: false,
-            optimize_option: OptimizeOption {
-                constant_folding: false,
-            },
         }
     }
 
@@ -114,18 +90,10 @@ impl ExecuteOption {
         self
     }
 
-    pub fn optimize_option(mut self, optimize_option: OptimizeOption) -> Self {
-        self.optimize_option = optimize_option;
-        self
-    }
-
-    pub fn generate_bytecodes(&self) -> Option<BytecodeContainer> {
+    pub fn generate_bytecodes(&self) -> Option<()> {
         if !cfg!(debug_assertions) && (self.enable_measure || self.enable_trace) {
             eprintln!("warning: \"--trace\" and \"--measure\" are enabled only when the interpreter is built on debug mode");
         }
-
-        let mut container = ModuleContainer::new();
-        container.add(*reserved_id::STD_MODULE, stdlib::module());
 
         let pwd = env::current_dir().expect("Unable to get current directory");
         let file_path = self
@@ -144,12 +112,7 @@ impl ExecuteOption {
         }
 
         // Parse
-        let parser = Parser::new(
-            &root_path,
-            tokens,
-            rustc_hash::FxHashSet::default(),
-            &container,
-        );
+        let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default());
         let main_module_path = SymbolPath::from_path(&root_path, &file_path);
         let mut module_buffers = parser.parse(&main_module_path);
 
@@ -167,73 +130,7 @@ impl ExecuteOption {
             return None;
         }
 
-        // Do semantics analysis and translate to IR
-
-        fn dump_ir(module_bodies: rustc_hash::FxHashMap<String, ModuleBody>) {
-            for (name, body) in module_bodies {
-                if let ModuleBody::Normal(module) = body {
-                    println!("--- {}", name);
-                    for module in module.imported_modules {
-                        println!("MODULE {}", module);
-                    }
-
-                    for (id, (name, func)) in module.functions.into_iter().enumerate() {
-                        println!("FUNC {} ({}):", IdMap::name(name), id);
-                        ir::dump_expr(&func.body);
-                    }
-                }
-            }
-        }
-
-        let mut module_bodies = sema::do_semantics_analysis(module_buffers, &container);
-        if self.mode == ExecuteMode::DumpIR {
-            dump_ir(module_bodies);
-            return None;
-        }
-
-        if ErrorList::has_error() {
-            return None;
-        }
-
-        // Optimization
-        for body in module_bodies.values_mut() {
-            match body {
-                ModuleBody::Normal(module) => opt::optimize(module, &self.optimize_option),
-                ModuleBody::Native(..) => {}
-            }
-        }
-
-        if self.mode == ExecuteMode::DumpOptimizedIR {
-            dump_ir(module_bodies);
-            return None;
-        }
-
-        // Generate bytecode
-
-        let mut vm_module_bodies = vec![(
-            String::new(),
-            VMModuleBody::Normal(bytecode::Bytecode::new()),
-        )];
-
-        for (name, body) in module_bodies {
-            let body = match body {
-                ModuleBody::Normal(module) => {
-                    let bytecode = codegen(module);
-                    VMModuleBody::Normal(bytecode)
-                }
-                ModuleBody::Native(module) => VMModuleBody::Native(module),
-            };
-
-            if name == format!("{}", main_module_path) {
-                vm_module_bodies[0] = (name, body);
-            } else {
-                vm_module_bodies.push((name, body));
-            }
-        }
-
-        Some(BytecodeContainer {
-            modules: vm_module_bodies,
-        })
+        Some(())
     }
 
     pub fn execute(self) {
@@ -241,21 +138,5 @@ impl ExecuteOption {
             Some(vmb) => vmb,
             None => return,
         };
-
-        if self.mode == ExecuteMode::DumpInstruction {
-            for (id, (name, body)) in vm_module_bodies.modules.into_iter().enumerate() {
-                if let VMModuleBody::Normal(bytecode) = body {
-                    println!("--- {} ({})", name, id);
-                    bytecode.dump();
-                }
-            }
-
-            return;
-        }
-
-        // Execute the bytecode
-
-        let mut vm = VM::new();
-        vm.run(vm_module_bodies, self.enable_trace, self.enable_measure);
     }
 }

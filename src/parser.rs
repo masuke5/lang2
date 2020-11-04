@@ -9,7 +9,6 @@ use crate::ast::*;
 use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
 use crate::module;
-use crate::module::ModuleContainer;
 use crate::span::{Span, Spanned};
 use crate::token::*;
 
@@ -33,7 +32,6 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     module_file: P2,
     module_path: &SymbolPath,
     imported_modules: FxHashSet<SymbolPath>,
-    native_modules: &'a ModuleContainer,
 ) -> Result<FxHashMap<SymbolPath, Program>, io::Error> {
     use crate::lexer::Lexer;
 
@@ -44,7 +42,7 @@ fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
     let lexer = Lexer::new(&raw, module_file_id);
     let tokens = lexer.lex();
 
-    let parser = Parser::new(root_path.as_ref(), tokens, imported_modules, native_modules);
+    let parser = Parser::new(root_path.as_ref(), tokens, imported_modules);
     let program = parser.parse(module_path);
 
     Ok(program)
@@ -95,7 +93,7 @@ impl BlockBuilder {
     }
 }
 
-pub struct Parser<'a> {
+pub struct Parser {
     root_path: PathBuf,
     tokens: Vec<Spanned<Token>>,
     pos: usize,
@@ -104,19 +102,17 @@ pub struct Parser<'a> {
     module_buffers: FxHashMap<SymbolPath, Program>,
     imported_modules: FxHashSet<SymbolPath>,
     loaded_modules: FxHashSet<SymbolPath>,
-    native_modules: &'a ModuleContainer,
     impls: Vec<Impl>,
 
     blocks_builder: BlockBuilder,
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
     pub fn new(
         root_path: &Path,
         tokens: Vec<Spanned<Token>>,
         loaded_modules: FxHashSet<SymbolPath>,
-        native_modules: &'a ModuleContainer,
-    ) -> Parser<'a> {
+    ) -> Self {
         Self {
             root_path: root_path.to_path_buf(),
             tokens,
@@ -125,7 +121,6 @@ impl<'a> Parser<'a> {
             module_buffers: FxHashMap::default(),
             imported_modules: FxHashSet::default(),
             loaded_modules,
-            native_modules,
             impls: Vec::new(),
             blocks_builder: BlockBuilder::new(),
         }
@@ -1098,7 +1093,6 @@ impl<'a> Parser<'a> {
                     &module_file,
                     &module_path,
                     self.loaded_modules.clone(),
-                    &self.native_modules,
                 ) {
                     Ok(module_buffers) => {
                         // Merge module buffers
@@ -1120,9 +1114,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-        } else if self.native_modules.contains(module_path) {
-            self.imported_modules.insert(module_path.clone());
-            return true;
         } else {
             match module_path.parent() {
                 Some(path) if load_parent => {

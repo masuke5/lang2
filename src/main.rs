@@ -2,13 +2,12 @@
 #![deny(trivial_casts, trivial_numeric_casts, elided_lifetimes_in_paths)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::exit;
 
 use lang2::error::ErrorList;
 use lang2::id::{reserved_id, IdMap};
-use lang2::BytecodeContainer;
-use lang2::{ExecuteMode, ExecuteOption, OptimizeOption};
+use lang2::{ExecuteMode, ExecuteOption};
 
 use clap::{App, Arg, ArgMatches};
 
@@ -31,14 +30,6 @@ fn get_option<'a>(matches: &'a ArgMatches<'a>) -> Result<ExecuteOption, String> 
         ))
     } else {
         Err(String::from("Not specified file or cmd"))
-    }
-}
-
-fn output_bytecodes(path: &Path, bcc: BytecodeContainer) {
-    let bytes = bcc.to_bytes();
-
-    if let Err(err) = fs::write(path, bytes) {
-        eprintln!("Unable to write to file `{}`: {}", path.display(), err);
     }
 }
 
@@ -112,10 +103,6 @@ fn main() {
         ExecuteMode::DumpAST
     } else if matches.is_present("dump-insts") {
         ExecuteMode::DumpInstruction
-    } else if matches.is_present("dump-ir") {
-        ExecuteMode::DumpIR
-    } else if matches.is_present("dump-ir2") {
-        ExecuteMode::DumpOptimizedIR
     } else {
         ExecuteMode::Normal
     };
@@ -128,30 +115,12 @@ fn main() {
         }
     };
 
-    let optimize_option = if matches.is_present("enable-optimization") {
-        OptimizeOption {
-            constant_folding: true,
-        }
-    } else {
-        OptimizeOption {
-            constant_folding: false,
-        }
-    };
-
     let option = option
         .enable_trace(matches.is_present("enable-trace"))
         .enable_measure(matches.is_present("enable-measure"))
-        .mode(mode)
-        .optimize_option(optimize_option);
+        .mode(mode);
 
-    if let Some(output) = matches.value_of("output") {
-        let path = Path::new(output);
-        if let Some(bcc) = option.generate_bytecodes() {
-            output_bytecodes(path, bcc);
-        }
-    } else {
-        option.execute();
-    }
+    option.execute();
 
     if ErrorList::has_error() {
         exit(3);
