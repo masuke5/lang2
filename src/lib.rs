@@ -12,6 +12,7 @@ pub mod error;
 #[macro_use]
 mod ty;
 mod ast;
+mod bytecode;
 mod escape;
 mod gc;
 mod heapvar;
