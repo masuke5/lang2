@@ -66,6 +66,7 @@ checksum = "524cbf6897b527295dff137cec09ecf3a05f4fddffd7dfcd1585403449e74198"
 name = "lang2"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "clap",
  "lazy_static",
  "libc",
