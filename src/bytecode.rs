@@ -1,5 +1,6 @@
 use crate::ast::SymbolPath;
 use crate::id::{Id, IdMap};
+use crate::utils;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use opcode::Opcode;
 use rustc_hash::FxHashMap;
@@ -11,7 +12,7 @@ use thiserror::Error;
 
 #[allow(dead_code)]
 pub mod opcode {
-    #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+    #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord)]
     pub struct Opcode(pub u8);
 
     impl Opcode {
@@ -94,6 +95,82 @@ pub mod opcode {
     pub const JUMP: Opcode = Opcode(0x41);
     pub const JUMP_IF_TRUE: Opcode = Opcode(0x42);
     pub const JUMP_IF_FALSE: Opcode = Opcode(0x43);
+    pub const END: Opcode = Opcode(0x44);
+
+    impl Opcode {
+        pub fn name(self) -> &'static str {
+            match self {
+                NOP => "NOP",
+                INT => "INT",
+                TINY_INT => "TINY_INT",
+                FLOAT => "FLOAT",
+                STRING => "STRING",
+                TRUE => "TRUE",
+                FALSE => "FALSE",
+                NULL => "NULL",
+                DUP => "DUP",
+                POP => "POP",
+                ALLOC => "ALLOC",
+                LOAD_LV => "LOAD_LV",
+                LOAD_EV => "LOAD_EV",
+                LOAD_EV_OUTER => "LOAD_EV_OUTER",
+                LOAD_REF_LV => "LOAD_REF_LV",
+                LOAD_REF_EV => "LOAD_REF_EV",
+                LOAD_REF_EV_OUTER => "LOAD_REF_EV_OUTER",
+                STORE_LV => "STORE_LV",
+                STORE_EV => "STORE_EV",
+                STORE_EV_OUTER => "STORE_EV_OUTER",
+                STORE_REF => "STORE_REF",
+                DEREF => "DEREF",
+                OFFSET => "OFFSET",
+                OFFSET_CONST => "OFFSET_CONST",
+                INEG => "INEG",
+                FNEG => "FNEG",
+                NOT => "NOT",
+                BINOP_IADD => "BINOP_IADD",
+                BINOP_ISUB => "BINOP_ISUB",
+                BINOP_IMUL => "BINOP_IMUL",
+                BINOP_IDIV => "BINOP_IDIV",
+                BINOP_IMOD => "BINOP_IMOD",
+                BINOP_FADD => "BINOP_FADD",
+                BINOP_FSUB => "BINOP_FSUB",
+                BINOP_FMUL => "BINOP_FMUL",
+                BINOP_FDIV => "BINOP_FDIV",
+                BINOP_ILT => "BINOP_ILT",
+                BINOP_ILE => "BINOP_ILE",
+                BINOP_IGT => "BINOP_IGT",
+                BINOP_IGE => "BINOP_IGE",
+                BINOP_IEQ => "BINOP_IEQ",
+                BINOP_INE => "BINOP_INE",
+                BINOP_FLT => "BINOP_FLT",
+                BINOP_FLE => "BINOP_FLE",
+                BINOP_FGT => "BINOP_FGT",
+                BINOP_FGE => "BINOP_FGE",
+                BINOP_FEQ => "BINOP_FEQ",
+                BINOP_FNE => "BINOP_FNE",
+                BINOP_REF_EQ => "BINOP_REF_EQ",
+                BINOP_REF_NE => "BINOP_REF_NE",
+                BINOP_LSHL => "BINOP_LSHL",
+                BINOP_LSHR => "BINOP_LSHR",
+                BINOP_ASHL => "BINOP_ASHL",
+                BINOP_ASHR => "BINOP_ASHR",
+                BINOP_AND => "BINOP_AND",
+                BINOP_OR => "BINOP_OR",
+                BINOP_XOR => "BINOP_XOR",
+                MODULE => "MODULE",
+                FUNC => "FUNC",
+                SELF_FUNC => "SELF_FUNC",
+                CALL_REF => "CALL_REF",
+                CALL_NATIVE => "CALL_NATIVE",
+                RETURN => "RETURN",
+                JUMP => "JUMP",
+                JUMP_IF_TRUE => "JUMP_IF_TRUE",
+                JUMP_IF_FALSE => "JUMP_IF_FALSE",
+                END => "END",
+                _ => "UNKNOWN",
+            }
+        }
+    }
 }
 
 const MAX_ARG: u32 = 0b1111_1111_1111_1111_1111_1111;
@@ -362,11 +439,23 @@ impl BytecodeBuilder {
             for (i, inst) in function.insts.into_iter().enumerate() {
                 match inst {
                     Inst::Function(module_path, name) => {
-                        push_u32(&mut insts, opcode::MODULE, modules[&module_path]);
-                        push_u32(&mut insts, opcode::FUNC, function_ids[&module_path][&name])
+                        if module_path != self.module_path {
+                            push_u32(&mut insts, opcode::MODULE, modules[&module_path]);
+                            push_u32(&mut insts, opcode::FUNC, function_ids[&module_path][&name])
+                        } else {
+                            push_u32(
+                                &mut insts,
+                                opcode::SELF_FUNC,
+                                function_ids[&module_path][&name],
+                            )
+                        }
                     }
                     Inst::Jump(op, label) => {
-                        push_i32(&mut insts, op, i as i32 - function.labels[&label] as i32);
+                        push_i32(
+                            &mut insts,
+                            op,
+                            (i as i32 - function.labels[&label] as i32) / 2,
+                        );
                     }
                     Inst::Normal(op, arg) => {
                         push_u32(&mut insts, op, arg);
@@ -612,5 +701,97 @@ impl BytecodeModule {
         }
 
         bc.into_inner()
+    }
+
+    pub fn dump_inst(&self, bytes: &[u8], pos: usize) {
+        use opcode::*;
+
+        let op = opcode::Opcode(bytes[pos]);
+        let arg: u32 = if op.is_extended() {
+            let arg = ((bytes[pos + 1] as u32) << 16)
+                | ((bytes[pos + 2] as u32) << 8)
+                | bytes[pos + 3] as u32;
+            print!("{:<5} {:02x}{:06x}  {}* ", pos, op.0, arg, op.name());
+            arg
+        } else {
+            let arg = bytes[pos + 1];
+            print!("{:<5} {:02x}{:02x}  {}  ", pos, op.0, arg, op.name());
+            arg as u32
+        };
+
+        match op {
+            NOP | TRUE | FALSE | NULL | ALLOC | DEREF | OFFSET | INEG | FNEG | NOT | RETURN
+            | CALL_REF | CALL_NATIVE => println!(),
+            op if (BINOP_IADD..=BINOP_XOR).contains(&op) => println!(),
+            INT => println!("{} ({})", arg, self.integers[arg as usize]),
+            FLOAT => println!("{} ({})", arg, self.floats[arg as usize]),
+            STRING => println!("{} ({})", arg, self.strings[arg as usize]),
+            MODULE => println!("{} ({})", arg, self.modules[arg as usize].0),
+            SELF_FUNC => println!("{} ({})", arg, self.functions[arg as usize].name),
+            JUMP | JUMP_IF_TRUE | JUMP_IF_FALSE => {
+                let arg = if op.is_extended() {
+                    i32::from_le_bytes(arg.to_le_bytes())
+                } else {
+                    i8::from_le_bytes([arg as u8]) as i32
+                };
+                println!("{} ({})", arg, pos as i64 + arg as i64 * 2);
+            }
+            _ => println!("{}", arg),
+        }
+    }
+
+    pub fn dump_metadata(&self) {
+        println!("Module {}", self.path);
+
+        println!("Imported modules:");
+        for (name, id) in &self.modules {
+            println!("  {:<3} {}", id, name);
+        }
+
+        println!("Functions:");
+        for func in &self.functions {
+            println!("  {:<3} {}", func.id, func.name);
+            println!("    stack_size: {}", func.stack_size);
+            println!("    escaped_stack_size: {}", func.escaped_stack_size);
+            println!("    param_count: {}", func.param_count);
+            println!("    pos: {}", func.pos);
+        }
+    }
+
+    pub fn dump_values(&self) {
+        println!("Intergers:");
+        for (i, n) in self.integers.iter().enumerate() {
+            println!("  {:<4} {}", i, n);
+        }
+
+        println!("Floats:");
+        for (i, n) in self.floats.iter().enumerate() {
+            println!("  {:<4} {}", i, n);
+        }
+
+        println!("Strings:");
+        for (i, s) in self.strings.iter().enumerate() {
+            println!("  {:<4} \"{}\"", i, utils::escape_string(s));
+        }
+    }
+
+    pub fn dump_instructions(&self, bytes: &[u8]) {
+        use opcode::*;
+
+        for func in &self.functions {
+            println!("Function {} ({})", func.name, func.id);
+
+            let mut pos = func.pos;
+            while bytes[pos] != END.0 {
+                self.dump_inst(bytes, pos);
+
+                let op = Opcode(bytes[pos]);
+                if op.is_extended() {
+                    pos += 4;
+                } else {
+                    pos += 2;
+                }
+            }
+        }
     }
 }
