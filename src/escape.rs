@@ -69,6 +69,14 @@ impl<'a> Finder<'a> {
                 self.find_expr(&mut array_expr.kind);
                 self.find_expr(&mut index_expr.kind);
             }
+            Expr::Range(start, end) => {
+                if let Some(start) = start {
+                    self.find_expr(&mut start.kind);
+                }
+                if let Some(end) = end {
+                    self.find_expr(&mut end.kind);
+                }
+            }
             Expr::BinOp(_, lhs, rhs) => {
                 self.find_expr(&mut lhs.kind);
                 self.find_expr(&mut rhs.kind);
@@ -86,9 +94,11 @@ impl<'a> Finder<'a> {
                 self.find_expr(&mut func_expr.kind);
                 self.find_expr(&mut arg_expr.kind);
             }
-            Expr::Dereference(expr) | Expr::Negative(expr) | Expr::App(expr, _) => {
-                self.find_expr(&mut expr.kind)
-            }
+            Expr::Dereference(expr)
+            | Expr::Address(expr, _)
+            | Expr::Negative(expr)
+            | Expr::App(expr, _)
+            | Expr::Not(expr) => self.find_expr(&mut expr.kind),
             Expr::Block(block) => {
                 self.find_block(block);
             }
