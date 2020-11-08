@@ -18,6 +18,7 @@ mod gc;
 mod heapvar;
 pub mod id;
 mod lexer;
+mod load_module;
 mod module;
 mod parser;
 pub mod span;
@@ -115,13 +116,22 @@ impl ExecuteOption {
         // Parse
         let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default());
         let main_module_path = SymbolPath::from_path(&root_path, &file_path);
-        let mut program = parser.parse(&main_module_path);
+        let program = parser.parse(&main_module_path);
 
-        escape::find(&mut program);
-        heapvar::find(&mut program);
+        // Load dependent modules
+        let mut modules = load_module::load_dependent_modules(root_path, &program);
+        modules.insert(main_module_path.clone(), program);
+
+        for program in modules.values_mut() {
+            escape::find(program);
+            heapvar::find(program);
+        }
 
         if self.mode == ExecuteMode::DumpAST {
-            dump_ast(&program);
+            for (path, program) in &modules {
+                println!("Module {}", path);
+                dump_ast(program);
+            }
             return None;
         }
 
