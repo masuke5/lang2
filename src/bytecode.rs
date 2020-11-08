@@ -720,8 +720,8 @@ impl BytecodeModule {
         };
 
         match op {
-            NOP | TRUE | FALSE | NULL | ALLOC | DEREF | OFFSET | INEG | FNEG | NOT | RETURN
-            | CALL_REF | CALL_NATIVE => println!(),
+            NOP | TRUE | FALSE | NULL | DEREF | OFFSET | INEG | FNEG | NOT | RETURN | CALL_REF
+            | CALL_NATIVE => println!(),
             op if (BINOP_IADD..=BINOP_XOR).contains(&op) => println!(),
             INT => println!("{} ({})", arg, self.integers[arg as usize]),
             FLOAT => println!("{} ({})", arg, self.floats[arg as usize]),

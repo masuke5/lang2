@@ -1,14 +1,11 @@
 use std::convert::TryFrom;
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use crate::ast::*;
 use crate::error::{Error, ErrorList};
-use crate::id::{reserved_id, Id, IdMap};
-use crate::module;
+use crate::id::{reserved_id, Id};
 use crate::span::{Span, Spanned};
 use crate::token::*;
 
@@ -27,31 +24,9 @@ fn expr_is_callable(expr: &Expr) -> bool {
     needs_semicolon(expr)
 }
 
-fn parse_module<'a, P1: AsRef<Path>, P2: AsRef<Path>>(
-    root_path: P1,
-    module_file: P2,
-    module_path: &SymbolPath,
-    imported_modules: FxHashSet<SymbolPath>,
-) -> Result<FxHashMap<SymbolPath, Program>, io::Error> {
-    use crate::lexer::Lexer;
-
-    let module_file_id = IdMap::new_id(&module_file.as_ref().to_string_lossy());
-
-    let raw = fs::read_to_string(&module_file)?;
-
-    let lexer = Lexer::new(&raw, module_file_id);
-    let tokens = lexer.lex();
-
-    let parser = Parser::new(root_path.as_ref(), tokens, imported_modules);
-    let program = parser.parse(module_path);
-
-    Ok(program)
-}
-
 struct DefinitionInBlock {
     functions: Vec<AstFunction>,
     types: Vec<AstTypeDef>,
-    imports: Vec<Spanned<ImportRange>>,
 }
 
 impl DefinitionInBlock {
@@ -59,7 +34,6 @@ impl DefinitionInBlock {
         Self {
             functions: Vec::new(),
             types: Vec::new(),
-            imports: Vec::new(),
         }
     }
 }
@@ -82,7 +56,6 @@ impl BlockBuilder {
         Block {
             functions: def.functions,
             types: def.types,
-            imports: def.imports,
             stmts,
             result_expr: Box::new(result_expr),
         }
@@ -99,9 +72,6 @@ pub struct Parser {
     pos: usize,
 
     main_stmts: Vec<Spanned<Stmt>>,
-    module_buffers: FxHashMap<SymbolPath, Program>,
-    imported_modules: FxHashSet<SymbolPath>,
-    loaded_modules: FxHashSet<SymbolPath>,
     impls: Vec<Impl>,
 
     blocks_builder: BlockBuilder,
@@ -118,9 +88,6 @@ impl Parser {
             tokens,
             pos: 0,
             main_stmts: Vec::new(),
-            module_buffers: FxHashMap::default(),
-            imported_modules: FxHashSet::default(),
-            loaded_modules,
             impls: Vec::new(),
             blocks_builder: BlockBuilder::new(),
         }
@@ -1083,77 +1050,14 @@ impl Parser {
         Some(spanned(range, span))
     }
 
-    fn load_module(&mut self, module_path: &SymbolPath, span: &Span, load_parent: bool) -> bool {
-        // Parse the module file if the module is not loaded already
-        if let Some(module_file) = module::find_module_file(&self.root_path, &module_path) {
-            if !self.loaded_modules.contains(&module_path) {
-                self.loaded_modules.insert(module_path.clone());
-                match parse_module(
-                    &self.root_path,
-                    &module_file,
-                    &module_path,
-                    self.loaded_modules.clone(),
-                ) {
-                    Ok(module_buffers) => {
-                        // Merge module buffers
-                        for (module_path, program) in module_buffers {
-                            self.module_buffers.insert(module_path.clone(), program);
-                            self.loaded_modules.insert(module_path.clone());
-                        }
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                        error!(&span.clone(), "Not found module `{}`", module_path);
-                        return false;
-                    }
-                    Err(err) => {
-                        error!(
-                            &span.clone(),
-                            "Unable to load module {}: {}", module_path, err
-                        );
-                        return false;
-                    }
-                }
-            }
-        } else {
-            match module_path.parent() {
-                Some(path) if load_parent => {
-                    return self.load_module(&path, span, false);
-                }
-                _ => {
-                    error!(&span.clone(), "Cannot find module `{}`", module_path);
-                    return false;
-                }
-            }
-        }
-
-        self.imported_modules.insert(module_path.clone());
-        true
-    }
-
     fn parse_import_stmt(&mut self) -> Option<Spanned<Stmt>> {
         self.next();
 
         let import_range = self.parse_skip(Self::parse_import_range, &[Token::Semicolon])?;
 
-        // Load modules
-        let mut failed = false;
-        let paths = import_range.kind.to_paths();
-        for path in &paths {
-            let path = path.as_path();
-            if !self.load_module(path, &import_range.span, true) {
-                failed = true;
-            }
-        }
-
-        if failed {
-            return None;
-        }
-
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
 
-        self.blocks_builder.def().imports.push(import_range);
-
-        None
+        Some(spanned(Stmt::Import(import_range.kind), import_range.span))
     }
 
     fn parse_stmt_without_expr(&mut self) -> (bool, Option<Spanned<Stmt>>) {
@@ -1618,10 +1522,7 @@ impl Parser {
         Some(impl_)
     }
 
-    pub fn parse(mut self, module_path: &SymbolPath) -> FxHashMap<SymbolPath, Program> {
-        self.imported_modules
-            .insert(SymbolPath::new().append_id(*reserved_id::STD_MODULE));
-
+    pub fn parse(mut self, module_path: &SymbolPath) -> Program {
         self.blocks_builder.push();
 
         while self.peek().kind != Token::EOF {
@@ -1646,15 +1547,10 @@ impl Parser {
             .blocks_builder
             .pop_and_build(self.main_stmts, dummy_result_expr);
 
-        self.module_buffers.insert(
-            module_path.clone(),
-            Program {
-                main: block,
-                imported_modules: self.imported_modules.into_iter().collect(),
-                impls: self.impls,
-            },
-        );
-
-        self.module_buffers
+        Program {
+            main: block,
+            imported_modules: Vec::new(),
+            impls: self.impls,
+        }
     }
 }

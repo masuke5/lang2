@@ -115,19 +115,13 @@ impl ExecuteOption {
         // Parse
         let parser = Parser::new(&root_path, tokens, rustc_hash::FxHashSet::default());
         let main_module_path = SymbolPath::from_path(&root_path, &file_path);
-        let mut module_buffers = parser.parse(&main_module_path);
+        let mut program = parser.parse(&main_module_path);
 
-        for program in module_buffers.values_mut() {
-            escape::find(program);
-            heapvar::find(program);
-        }
+        escape::find(&mut program);
+        heapvar::find(&mut program);
 
         if self.mode == ExecuteMode::DumpAST {
-            for (name, program) in module_buffers {
-                println!("--- {}", name);
-                dump_ast(&program);
-            }
-
+            dump_ast(&program);
             return None;
         }
 

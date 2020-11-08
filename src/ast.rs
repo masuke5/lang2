@@ -306,6 +306,7 @@ pub enum Stmt {
     Return(Option<Spanned<Expr>>),
     While(Spanned<Expr>, Box<Spanned<Stmt>>),
     Assign(Spanned<Expr>, Box<Spanned<Expr>>),
+    Import(ImportRange),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -332,7 +333,6 @@ pub struct Block {
     pub types: Vec<AstTypeDef>,
     pub functions: Vec<AstFunction>,
     pub stmts: Vec<Spanned<Stmt>>,
-    pub imports: Vec<Spanned<ImportRange>>,
     pub result_expr: Box<Spanned<Expr>>,
 }
 
@@ -481,10 +481,6 @@ pub fn dump_func(func: &AstFunction, depth: usize) {
 }
 
 pub fn dump_block(block: &Block, depth: usize) {
-    for range in &block.imports {
-        println!("import {} {}", range.kind, span_to_string(&range.span));
-    }
-
     for ty in &block.types {
         println!(
             "type {}<{}> {}",
@@ -666,6 +662,9 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, depth: usize) {
             println!("while {}", span_to_string(&stmt.span));
             dump_expr(&cond, depth + 1);
             dump_stmt(&body, depth + 1);
+        }
+        Stmt::Import(range) => {
+            println!("import {} {}", range, span_to_string(&stmt.span));
         }
     }
 }
