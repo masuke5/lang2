@@ -1,5 +1,4 @@
 use std::fmt;
-use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
 
@@ -9,9 +8,8 @@ use rustc_hash::FxHashMap;
 use crate::ast::SymbolPath;
 use crate::error::{Error, ErrorList};
 use crate::id::{Id, IdMap};
-use crate::module::ModuleHeader;
 use crate::span::Span;
-use crate::utils::{format_bool, HashMapWithScope};
+use crate::utils::format_bool;
 
 lazy_static! {
     pub static ref MODULE_STD_PATH: SymbolPath = SymbolPath::new().append_str("std");
@@ -124,22 +122,6 @@ pub enum Type {
     Poly(Vec<TypeVar>, Box<Type>),
 }
 
-impl Type {
-    pub fn is_wrapped(&self) -> bool {
-        match self {
-            Self::App(TypeCon::Wrapped, _) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_in_heap(&self) -> bool {
-        match self {
-            Self::App(TypeCon::InHeap, _) => true,
-            _ => false,
-        }
-    }
-}
-
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -184,10 +166,8 @@ impl fmt::Display for Type {
             Self::App(TypeCon::Unique(tycon, _), types) => {
                 write!(f, "{}", Type::App(*tycon.clone(), types.clone()))
             }
-            Self::App(TypeCon::Wrapped, types) => write!(f, "'{}", types[0]),
             #[cfg(not(debug_assertions))]
-            Self::App(TypeCon::Named(name, _), types)
-            | Self::App(TypeCon::UnsizedNamed(name), types) => {
+            Self::App(TypeCon::Named(name), types) => {
                 write!(f, "{}", IdMap::name(*name))?;
                 if !types.is_empty() {
                     write!(f, "<")?;
@@ -232,10 +212,7 @@ pub enum TypeCon {
     Slice(bool),
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, Unique),
-    Named(SymbolPath, usize),
-    UnsizedNamed(SymbolPath),
-    Wrapped,
-    InHeap,
+    Named(SymbolPath),
 }
 
 impl fmt::Display for TypeCon {
@@ -257,10 +234,7 @@ impl fmt::Display for TypeCon {
                 write!(f, ") = {}", body)
             }
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
-            Self::Named(name, size) => write!(f, "{}{{size={}}}", name, size),
-            Self::UnsizedNamed(name) => write!(f, "{}{{size=?}} ", name),
-            Self::Wrapped => write!(f, "wrapped"),
-            Self::InHeap => write!(f, "in_heap"),
+            Self::Named(name) => write!(f, "{}", name),
         }
     }
 }
@@ -318,17 +292,7 @@ pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
 
 pub fn unify_inner(span: &Span, a: &Type, b: &Type) -> Option<()> {
     if let (Type::App(a_tycon, a_tys), Type::App(b_tycon, b_tys)) = (a, b) {
-        let ok = match (a_tycon, b_tycon) {
-            (TypeCon::Named(a, _), TypeCon::UnsizedNamed(b))
-            | (TypeCon::UnsizedNamed(a), TypeCon::Named(b, _))
-                if a == b =>
-            {
-                true
-            }
-            (a, b) => a == b,
-        };
-
-        if ok {
+        if a == b {
             for (a_ty, b_ty) in a_tys.iter().zip(b_tys.iter()) {
                 unify_inner(span, a_ty, b_ty)?;
             }
@@ -386,54 +350,6 @@ pub fn unify_inner(span: &Span, a: &Type, b: &Type) -> Option<()> {
     }
 }
 
-// Returns size of a specified type. if a specified type size coludn't be calculated, returns None.
-#[inline]
-pub fn type_size(ty: &Type) -> Option<usize> {
-    match ty {
-        Type::App(TypeCon::Fun(params, body), tys) => {
-            let mut map = FxHashMap::default();
-            for (param, ty) in params.iter().zip(tys.iter()) {
-                map.insert(*param, ty.clone());
-            }
-
-            let body = subst(*body.clone(), &map);
-            type_size(&body)
-        }
-        Type::App(TypeCon::Pointer(_), _) => Some(1),
-        Type::App(TypeCon::Wrapped, _) => Some(1),
-        Type::App(TypeCon::Array(size), types) => {
-            let elem_size = type_size(&types[0])?;
-            Some(elem_size * size)
-        }
-        Type::App(TypeCon::Slice(..), _) => Some(1),
-        Type::App(TypeCon::Named(_, size), _) => Some(*size),
-        Type::App(TypeCon::UnsizedNamed(..), _) => None,
-        Type::App(TypeCon::Arrow, _) => Some(2),
-        ty @ Type::App(TypeCon::Unique(_, _), _) => {
-            let ty = expand_unique(ty.clone());
-            type_size(&ty)
-        }
-        Type::App(TypeCon::InHeap, _) => Some(1),
-        Type::App(_, types) => {
-            let mut size = 0;
-            for ty in types {
-                size += type_size(ty)?;
-            }
-
-            Some(size)
-        }
-        Type::Poly(_, _) | Type::Var(_) => None,
-        Type::String => None,
-        Type::Unit => Some(0),
-        Type::Int | Type::UInt | Type::Float | Type::Char | Type::Null | Type::Bool => Some(1),
-    }
-}
-
-#[inline]
-pub fn type_size_nocheck(ty: &Type) -> usize {
-    type_size(ty).unwrap_or(0)
-}
-
 pub fn expand_unique(ty: Type) -> Type {
     match ty {
         Type::App(TypeCon::Fun(params, body), args) => {
@@ -443,46 +359,6 @@ pub fn expand_unique(ty: Type) -> Type {
         }
         Type::App(TypeCon::Unique(tycon, _), tys) => expand_unique(Type::App(*tycon, tys)),
         ty => ty,
-    }
-}
-
-pub fn expand_wrap(ty: Type) -> Type {
-    match ty {
-        Type::App(TypeCon::Fun(params, body), args) => {
-            // { params_i -> args_i }
-            let map: FxHashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
-            expand_wrap(subst(*body, &map))
-        }
-        Type::App(TypeCon::Wrapped, types) => expand_wrap(types[0].clone()),
-        ty => ty,
-    }
-}
-
-pub fn expand_inheap(ty: Type) -> Type {
-    match ty {
-        Type::App(TypeCon::InHeap, mut types) => types.drain(..).next().unwrap(),
-        ty => ty,
-    }
-}
-
-pub fn wrap_typevar(ty: &mut Type) {
-    match ty {
-        Type::App(TypeCon::Fun(_, _), _) => panic!(),
-        Type::App(tycon, types) => {
-            match tycon {
-                TypeCon::Tuple | TypeCon::Array(_) | TypeCon::Struct(_) => {
-                    for ty in types {
-                        wrap_typevar(ty);
-                    }
-                }
-                _ => {}
-            };
-        }
-        vty @ Type::Var(_) => {
-            let tyvar = mem::replace(vty, Type::Int);
-            *vty = Type::App(TypeCon::Wrapped, vec![tyvar]);
-        }
-        _ => {}
     }
 }
 
@@ -508,208 +384,6 @@ pub fn generate_func_type(params: &[Type], return_ty: &Type, ty_params: &[(Id, T
     } else {
         let tyvars = ty_params.iter().map(|(_, var)| *var).collect();
         Type::Poly(tyvars, Box::new(result_ty))
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum TypeBody<'a> {
-    Resolved(&'a TypeCon),
-    Unresolved(&'a TypeCon),
-}
-
-impl TypeBody<'_> {
-    pub fn tycon(&self) -> &TypeCon {
-        match self {
-            Self::Resolved(tycon) | Self::Unresolved(tycon) => tycon,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct TypeDefinitions {
-    tycons: HashMapWithScope<Id, Option<TypeCon>>,
-    sizes: HashMapWithScope<Id, usize>,
-    is_resolved: bool,
-    module_path: SymbolPath,
-}
-
-impl TypeDefinitions {
-    pub fn new(module_path: &SymbolPath) -> Self {
-        Self {
-            tycons: HashMapWithScope::new(),
-            sizes: HashMapWithScope::new(),
-            is_resolved: false,
-            module_path: module_path.clone(),
-        }
-    }
-
-    pub fn push_scope(&mut self) {
-        self.tycons.push_scope();
-        self.sizes.push_scope();
-    }
-
-    pub fn pop_scope(&mut self) {
-        self.tycons.pop_scope();
-        self.sizes.pop_scope();
-    }
-
-    pub fn insert(&mut self, name: Id) {
-        self.tycons.insert(name, None);
-
-        self.is_resolved = false;
-    }
-
-    pub fn set_body(&mut self, name: Id, tycon_: TypeCon) {
-        let tycon = self.tycons.get_mut(&name).unwrap();
-        *tycon = Some(tycon_);
-
-        self.is_resolved = false;
-    }
-
-    pub fn get(&self, name: Id) -> Option<TypeBody<'_>> {
-        let tycon = self.tycons.get(&name)?.as_ref()?;
-        if self.sizes.contains_key(&name) {
-            Some(TypeBody::Resolved(tycon))
-        } else {
-            Some(TypeBody::Unresolved(tycon))
-        }
-    }
-
-    pub fn get_size(&self, name: Id) -> Option<usize> {
-        self.sizes.get(&name).copied()
-    }
-
-    pub fn contains(&self, name: Id) -> bool {
-        self.tycons.contains_key(&name)
-    }
-
-    // Replace UnsizedNamed with Named in Type
-    fn resolve_in_type(
-        &mut self,
-        ty: &mut Type,
-        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
-    ) -> Option<()> {
-        match ty {
-            Type::App(tycon, types) => {
-                match &tycon {
-                    TypeCon::Pointer(_) | TypeCon::Arrow | TypeCon::Wrapped => return Some(()),
-                    _ => {}
-                }
-
-                self.resolve_in_tycon(tycon, module_headers)?;
-                for ty in types {
-                    self.resolve_in_type(ty, module_headers)?;
-                }
-            }
-            Type::Poly(_, ty) => self.resolve_in_type(ty, module_headers)?,
-            _ => {}
-        };
-
-        Some(())
-    }
-
-    // Replace UnsizedNamed with Named in TypeCon
-    fn resolve_in_tycon(
-        &mut self,
-        tycon: &mut TypeCon,
-        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
-    ) -> Option<()> {
-        match tycon {
-            // self module
-            TypeCon::UnsizedNamed(path) if path.parent() == Some(self.module_path.clone()) => {
-                let type_name = path.tail().expect("Type with empty name is not allowed").id;
-
-                // Calculate the type size
-                let (tycon_to_calc, level) = self.tycons.get_with_level(&type_name).unwrap();
-                let mut tycon_to_calc = tycon_to_calc
-                    .as_ref()
-                    .expect("A type body should be set before resolve size")
-                    .clone();
-                self.resolve_in_tycon(&mut tycon_to_calc, module_headers)?;
-
-                // Cache the type size
-                let size = type_size(&Type::App(tycon_to_calc, vec![]))?;
-                self.sizes.insert_with_level(level, type_name, size);
-
-                // Replace with Named
-                *tycon = TypeCon::Named(path.clone(), size);
-            }
-            // external module
-            TypeCon::UnsizedNamed(path) => {
-                assert!(!path.is_empty());
-                assert!(path.parent().is_some());
-
-                let module_path = path.parent().unwrap();
-                let type_name = path.tail().unwrap().id;
-
-                // Find the type
-                let module_header = module_headers.get(&module_path)?;
-                let tycon_to_calc = module_header
-                    .types
-                    .get(&type_name)?
-                    .as_ref()
-                    .expect("All type body should be set before resolve size");
-
-                // Cache the type size
-                let size = type_size(&Type::App(tycon_to_calc.clone(), vec![]))?;
-
-                // Replace with Named
-                *tycon = TypeCon::Named(path.clone(), size);
-            }
-            TypeCon::Fun(_, ty) => self.resolve_in_type(ty, module_headers)?,
-            TypeCon::Unique(tycon, _) => self.resolve_in_tycon(tycon, module_headers)?,
-            _ => {}
-        };
-
-        Some(())
-    }
-
-    pub fn resolve(
-        &mut self,
-        module_headers: &FxHashMap<SymbolPath, ModuleHeader>,
-    ) -> Result<(), Vec<Id>> {
-        let mut names_not_calculated = Vec::new();
-
-        let mut tycons = Vec::new();
-        for (level, name, tycon) in &mut self.tycons {
-            let tycon = match tycon.as_ref() {
-                Some(tycon) => tycon,
-                None => {
-                    names_not_calculated.push(*name);
-                    continue;
-                }
-            };
-
-            tycons.push((level, *name, tycon.clone()));
-        }
-
-        for (level, name, tycon) in &mut tycons {
-            if self.resolve_in_tycon(tycon, module_headers).is_none() {
-                names_not_calculated.push(*name);
-                continue;
-            }
-
-            let size = match type_size(&Type::App(tycon.clone(), vec![])) {
-                Some(size) => size,
-                None => {
-                    names_not_calculated.push(*name);
-                    continue;
-                }
-            };
-
-            self.sizes.insert_with_level(*level, *name, size);
-        }
-
-        for (level, name, tycon) in tycons {
-            self.tycons.insert_with_level(level, name, Some(tycon));
-        }
-
-        if names_not_calculated.is_empty() {
-            self.is_resolved = true;
-            Ok(())
-        } else {
-            Err(names_not_calculated)
-        }
     }
 }
 
@@ -815,25 +489,6 @@ mod tests {
     }
 
     #[test]
-    fn test_unify_with_named() {
-        let span = Span::zero(*crate::id::reserved_id::TEST);
-        let path = SymbolPath::new().append_str("test");
-        assert!(unify(
-            &span,
-            &Type::App(TypeCon::Named(path.clone(), 0), vec![]),
-            &Type::App(TypeCon::Named(path.clone(), 0), vec![]),
-        )
-        .is_some());
-
-        assert!(unify(
-            &span,
-            &Type::App(TypeCon::Named(path.clone(), 0), vec![]),
-            &Type::App(TypeCon::UnsizedNamed(path.clone()), vec![]),
-        )
-        .is_some());
-    }
-
-    #[test]
     fn test_unify_with_pointer_and_null() {
         let span = Span::zero(*crate::id::reserved_id::TEST);
         assert!(unify(
@@ -883,7 +538,7 @@ mod tests {
         assert!(unify_inner(
             &span,
             &Type::App(TypeCon::Unique(Box::new(TypeCon::Tuple), u1), vec![]),
-            &Type::App(TypeCon::Unique(Box::new(TypeCon::Wrapped), u1), vec![]),
+            &Type::App(TypeCon::Unique(Box::new(TypeCon::Arrow), u1), vec![]),
         )
         .is_some());
 
@@ -922,145 +577,5 @@ mod tests {
             ),
         )
         .is_some());
-    }
-
-    #[test]
-    fn resolve_type() {
-        let id = IdMap::new_id;
-        fn path(s: &str) -> SymbolPath {
-            SymbolPath::new().append_str("test").append_str(s)
-        }
-
-        let mut types = TypeDefinitions::new(&SymbolPath::new().append_str("test"));
-        types.push_scope();
-
-        types.insert(id("def"));
-
-        // def = abc
-        types.set_body(
-            id("def"),
-            TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(TypeCon::UnsizedNamed(path("abc")), vec![])),
-            ),
-        );
-
-        types.push_scope();
-
-        types.insert(id("ghi"));
-        types.insert(id("abc"));
-
-        // ghi = (abc, def)
-        types.set_body(
-            id("ghi"),
-            TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(
-                    TypeCon::Tuple,
-                    vec![
-                        Type::App(TypeCon::UnsizedNamed(path("abc")), vec![]),
-                        Type::App(TypeCon::UnsizedNamed(path("def")), vec![]),
-                    ],
-                )),
-            ),
-        );
-
-        // abc = int
-        types.set_body(id("abc"), TypeCon::Fun(vec![], Box::new(Type::Int)));
-
-        types.resolve(&FxHashMap::default()).unwrap();
-
-        assert_eq!(
-            types.get(id("abc")).unwrap(),
-            TypeBody::Resolved(&TypeCon::Fun(vec![], Box::new(Type::Int)))
-        );
-        assert_eq!(
-            types.get(id("ghi")).unwrap(),
-            TypeBody::Resolved(&TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(
-                    TypeCon::Tuple,
-                    vec![
-                        Type::App(TypeCon::Named(path("abc"), 1), vec![]),
-                        Type::App(TypeCon::Named(path("def"), 1), vec![]),
-                    ],
-                )),
-            )),
-        );
-
-        types.pop_scope();
-
-        assert_eq!(
-            types.get(id("def")).unwrap(),
-            TypeBody::Resolved(&TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(TypeCon::Named(path("abc"), 1), vec![])),
-            )),
-        );
-
-        types.pop_scope();
-    }
-
-    #[test]
-    fn resolve_external_type() {
-        let external_module_path = SymbolPath::new().append_str("m1").append_str("m2");
-        let self_module_path = SymbolPath::new().append_str("m3").append_str("m4");
-
-        // Initialize module header
-        let mut module_header = ModuleHeader::new(&external_module_path);
-        module_header.types.insert(
-            IdMap::new_id("Type1"),
-            Some(TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(TypeCon::Tuple, vec![Type::Int, Type::Bool])),
-            )),
-        );
-
-        let mut module_headers = FxHashMap::default();
-        module_headers.insert(external_module_path.clone(), module_header);
-
-        // Initialize type definitions
-        let mut types = TypeDefinitions::new(&self_module_path);
-        types.push_scope();
-
-        // type Type2 = (int, m1::m2::Type1);
-        types.insert(IdMap::new_id("Type2"));
-        types.set_body(
-            IdMap::new_id("Type2"),
-            TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(
-                    TypeCon::Tuple,
-                    vec![
-                        Type::Int,
-                        Type::App(
-                            TypeCon::UnsizedNamed(external_module_path.clone().append_str("Type1")),
-                            vec![],
-                        ),
-                    ],
-                )),
-            ),
-        );
-
-        types.resolve(&module_headers).unwrap();
-
-        // Assert
-        let resolved_tycon = types.get(IdMap::new_id("Type2")).unwrap();
-        assert_eq!(
-            resolved_tycon,
-            TypeBody::Resolved(&TypeCon::Fun(
-                vec![],
-                Box::new(Type::App(
-                    TypeCon::Tuple,
-                    vec![
-                        Type::Int,
-                        Type::App(
-                            TypeCon::Named(external_module_path.clone().append_str("Type1"), 2),
-                            vec![],
-                        ),
-                    ],
-                )),
-            ))
-        );
     }
 }
