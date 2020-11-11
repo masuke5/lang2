@@ -3,14 +3,33 @@ use std::path::{Path, PathBuf};
 
 use rustc_hash::FxHashSet;
 
-use crate::ast::*;
+use crate::ast::{
+    AstFunction as AstFunction_, Block as Block_, Expr as Expr_, Impl as Impl_,
+    Program as Program_, Stmt as Stmt_, *,
+};
 use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id};
 use crate::span::{Span, Spanned};
 use crate::token::*;
 
+type Expr = Expr_<Empty>;
+type UntypedExpr = Typed<Expr, Empty>;
+type Stmt = Stmt_<Empty>;
+type Block = Block_<Empty>;
+type Impl = Impl_<Empty>;
+type AstFunction = AstFunction_<Empty>;
+type Program = Program_<Empty>;
+
 fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
     Spanned::<T>::new(kind, span)
+}
+
+fn new_expr(kind: Expr, span: Span) -> UntypedExpr {
+    UntypedExpr {
+        kind,
+        span,
+        ty: Empty,
+    }
 }
 
 fn needs_semicolon(expr: &Expr) -> bool {
@@ -51,7 +70,7 @@ impl BlockBuilder {
         self.defs.push(DefinitionInBlock::new());
     }
 
-    fn pop_and_build(&mut self, stmts: Vec<Spanned<Stmt>>, result_expr: Spanned<Expr>) -> Block {
+    fn pop_and_build(&mut self, stmts: Vec<Spanned<Stmt>>, result_expr: UntypedExpr) -> Block {
         let def = self.defs.pop().unwrap();
         Block {
             functions: def.functions,
@@ -244,9 +263,9 @@ impl Parser {
         allow_join: bool,
         mut func: F,
         rules: &[(&Token, &BinOp)],
-    ) -> Option<Spanned<Expr>>
+    ) -> Option<UntypedExpr>
     where
-        F: FnMut(&mut Self) -> Option<Spanned<Expr>>,
+        F: FnMut(&mut Self) -> Option<UntypedExpr>,
     {
         let mut expr = func(self)?;
 
@@ -257,7 +276,7 @@ impl Parser {
                         let rhs = func(self)?;
                         let span = Span::merge(&expr.span, &rhs.span);
 
-                        expr = spanned(
+                        expr = new_expr(
                             Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)),
                             span,
                         );
@@ -273,7 +292,7 @@ impl Parser {
                     let rhs = func(self)?;
                     let span = Span::merge(&expr.span, &rhs.span);
 
-                    expr = spanned(
+                    expr = new_expr(
                         Expr::BinOp((*binop).clone(), Box::new(expr), Box::new(rhs)),
                         span,
                     );
@@ -285,7 +304,7 @@ impl Parser {
         Some(expr)
     }
 
-    fn parse_field_init(&mut self) -> Option<(Spanned<Id>, Spanned<Expr>)> {
+    fn parse_field_init(&mut self) -> Option<(Spanned<Id>, UntypedExpr)> {
         let tokens_to_skip = &[Token::Comma, Token::Rbrace];
 
         let name = self.expect_identifier(tokens_to_skip)?;
@@ -298,14 +317,14 @@ impl Parser {
         Some((name, expr))
     }
 
-    fn parse_struct(&mut self, name: Id, name_span: Span) -> Option<Spanned<Expr>> {
+    fn parse_struct(&mut self, name: Id, name_span: Span) -> Option<UntypedExpr> {
         let ty = self.parse_type_app(spanned(name, name_span.clone()));
 
         self.expect(&Token::Lbrace, &[Token::Lbrace]);
 
         if self.consume(&Token::Rbrace) {
             let span = Span::merge(&name_span, &self.prev().span);
-            Some(spanned(Expr::Struct(ty, Vec::new()), span))
+            Some(new_expr(Expr::Struct(ty, Vec::new()), span))
         } else {
             let mut fields = Vec::new();
 
@@ -328,11 +347,11 @@ impl Parser {
             self.expect(&Token::Rbrace, &[Token::Rbrace])?;
 
             let span = Span::merge(&name_span, &self.prev().span);
-            Some(spanned(Expr::Struct(ty, fields), span))
+            Some(new_expr(Expr::Struct(ty, fields), span))
         }
     }
 
-    fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<Spanned<Expr>> {
+    fn parse_var_or_call(&mut self, ident: Id, ident_span: Span) -> Option<UntypedExpr> {
         self.next();
 
         match &self.peek().kind {
@@ -341,17 +360,17 @@ impl Parser {
                     Some(SymbolPathSegment::new(ident)),
                     ident_span,
                 )?;
-                Some(spanned(Expr::Path(path.kind), path.span))
+                Some(new_expr(Expr::Path(path.kind), path.span))
             }
             Token::Colon => {
                 self.next();
                 self.parse_struct(ident, ident_span)
             }
-            _ => Some(spanned(Expr::Variable(ident, false), ident_span)),
+            _ => Some(new_expr(Expr::Variable(ident, false), ident_span)),
         }
     }
 
-    fn parse_tuple(&mut self, lparen_span: &Span, first: Spanned<Expr>) -> Option<Spanned<Expr>> {
+    fn parse_tuple(&mut self, lparen_span: &Span, first: UntypedExpr) -> Option<UntypedExpr> {
         let mut inner = vec![first];
 
         while self.peek().kind != Token::Rparen && self.consume(&Token::Comma) {
@@ -368,10 +387,10 @@ impl Parser {
         let rparen_span = &self.prev().span;
         let span = Span::merge(&lparen_span, rparen_span);
 
-        Some(spanned(Expr::Tuple(inner), span))
+        Some(new_expr(Expr::Tuple(inner), span))
     }
 
-    fn parse_array(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_array(&mut self) -> Option<UntypedExpr> {
         let lbracket_span = self.peek().span.clone();
         self.next(); // eat "["
 
@@ -394,48 +413,48 @@ impl Parser {
         self.expect(&Token::Rbracket, &[Token::Rbracket]);
 
         let span = Span::merge(&lbracket_span, &self.prev().span);
-        Some(spanned(Expr::Array(Box::new(init_expr), size), span))
+        Some(new_expr(Expr::Array(Box::new(init_expr), size), span))
     }
 
-    fn parse_primary(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_primary(&mut self) -> Option<UntypedExpr> {
         let token = self.peek().clone();
 
         match token.kind {
             Token::Number(n) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::Number(n)), token.span))
+                Some(new_expr(Expr::Literal(Literal::Number(n)), token.span))
             }
             Token::UnsignedNumber(n) => {
                 self.next();
-                Some(spanned(
+                Some(new_expr(
                     Expr::Literal(Literal::UnsignedNumber(n)),
                     token.span,
                 ))
             }
             Token::Float(n) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::Float(n)), token.span))
+                Some(new_expr(Expr::Literal(Literal::Float(n)), token.span))
             }
             Token::String(s) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::String(s)), token.span))
+                Some(new_expr(Expr::Literal(Literal::String(s)), token.span))
             }
             Token::Char(ch) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::Char(ch)), token.span))
+                Some(new_expr(Expr::Literal(Literal::Char(ch)), token.span))
             }
             Token::Identifier(name) => self.parse_var_or_call(name, token.span),
             Token::Keyword(Keyword::True) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::True), token.span))
+                Some(new_expr(Expr::Literal(Literal::True), token.span))
             }
             Token::Keyword(Keyword::False) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::False), token.span))
+                Some(new_expr(Expr::Literal(Literal::False), token.span))
             }
             Token::Keyword(Keyword::Null) => {
                 self.next();
-                Some(spanned(Expr::Literal(Literal::Null), token.span))
+                Some(new_expr(Expr::Literal(Literal::Null), token.span))
             }
             Token::Lbracket => self.parse_array(),
             Token::Lparen => {
@@ -445,7 +464,7 @@ impl Parser {
                 if self.consume(&Token::Rparen) {
                     // Unit literal
                     let span = Span::merge(&lparen_span, &self.prev().span);
-                    Some(spanned(Expr::Literal(Literal::Unit), span))
+                    Some(new_expr(Expr::Literal(Literal::Unit), span))
                 } else {
                     let mut expr = self.parse_expr()?;
 
@@ -474,7 +493,7 @@ impl Parser {
         }
     }
 
-    fn parse_field(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_field(&mut self) -> Option<UntypedExpr> {
         let parse = Self::parse_primary;
         let mut expr = parse(self)?;
 
@@ -491,12 +510,12 @@ impl Parser {
 
                         let span = Span::merge(&expr.span, &self.prev().span);
                         expr =
-                            spanned(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
+                            new_expr(Expr::Field(Box::new(expr), Field::Number(n as usize)), span);
                     }
                     Token::Identifier(id) => {
                         self.next();
                         let span = Span::merge(&expr.span, &self.prev().span);
-                        expr = spanned(Expr::Field(Box::new(expr), Field::Id(id)), span);
+                        expr = new_expr(Expr::Field(Box::new(expr), Field::Id(id)), span);
                     }
                     _ => {
                         error!(
@@ -514,7 +533,7 @@ impl Parser {
         Some(expr)
     }
 
-    fn parse_expr_app(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_expr_app(&mut self) -> Option<UntypedExpr> {
         let parse = Self::parse_field;
 
         let mut expr = parse(self)?;
@@ -523,13 +542,13 @@ impl Parser {
             let tyargs = self.parse_type_args();
 
             let span = Span::merge(&expr.span, &self.prev().span);
-            expr = spanned(Expr::App(Box::new(expr), tyargs), span);
+            expr = new_expr(Expr::App(Box::new(expr), tyargs), span);
         }
 
         Some(expr)
     }
 
-    fn parse_subscript(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_subscript(&mut self) -> Option<UntypedExpr> {
         let parse = Self::parse_expr_app;
 
         let mut expr = parse(self)?;
@@ -541,7 +560,7 @@ impl Parser {
                 self.expect(&Token::Rbracket, &[Token::Rbracket])?;
 
                 let span = Span::merge(&expr.span, &self.prev().span);
-                expr = spanned(Expr::Subscript(Box::new(expr), Box::new(subscript)), span);
+                expr = new_expr(Expr::Subscript(Box::new(expr), Box::new(subscript)), span);
             } else {
                 break;
             }
@@ -566,7 +585,7 @@ impl Parser {
         }
     }
 
-    fn parse_call(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_call(&mut self) -> Option<UntypedExpr> {
         let parse = Self::parse_subscript;
 
         let mut expr = parse(self)?;
@@ -574,7 +593,7 @@ impl Parser {
         while expr_is_callable(&expr.kind) && self.next_is_arg() {
             let arg_expr = parse(self)?;
             let span = Span::merge(&expr.span, &arg_expr.span);
-            expr = spanned(Expr::Call(Box::new(expr), Box::new(arg_expr)), span);
+            expr = new_expr(Expr::Call(Box::new(expr), Box::new(arg_expr)), span);
         }
 
         Some(expr)
@@ -582,10 +601,10 @@ impl Parser {
 
     fn parse_range_end(
         &mut self,
-        parse: fn(&mut Self) -> Option<Spanned<Expr>>,
-        start: Option<Spanned<Expr>>,
+        parse: fn(&mut Self) -> Option<UntypedExpr>,
+        start: Option<UntypedExpr>,
         start_span: &Span,
-    ) -> Option<Spanned<Expr>> {
+    ) -> Option<UntypedExpr> {
         let (end, span) = if self.next_is_arg() {
             let end = parse(self)?;
             let span = Span::merge(start_span, &end.span);
@@ -594,13 +613,13 @@ impl Parser {
             (None, Span::merge(start_span, &self.prev().span))
         };
 
-        Some(spanned(
+        Some(new_expr(
             Expr::Range(start.map(Box::new), end.map(Box::new)),
             span,
         ))
     }
 
-    fn parse_range(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_range(&mut self) -> Option<UntypedExpr> {
         let parse = Self::parse_call;
 
         if self.consume(&Token::DoubleDot) {
@@ -618,20 +637,20 @@ impl Parser {
     }
 
     #[inline]
-    fn parse_unary_op<P, F>(&mut self, mut parse: P, f: F) -> Option<Spanned<Expr>>
+    fn parse_unary_op<P, F>(&mut self, mut parse: P, f: F) -> Option<UntypedExpr>
     where
-        P: FnMut(&mut Self) -> Option<Spanned<Expr>>,
-        F: Fn(Box<Spanned<Expr>>) -> Expr,
+        P: FnMut(&mut Self) -> Option<UntypedExpr>,
+        F: Fn(Box<UntypedExpr>) -> Expr,
     {
         let symbol_span = self.peek().span.clone();
         self.next();
 
         let expr = parse(self)?;
         let span = Span::merge(&symbol_span, &expr.span);
-        Some(spanned(f(Box::new(expr)), span))
+        Some(new_expr(f(Box::new(expr)), span))
     }
 
-    fn parse_unary(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_unary(&mut self) -> Option<UntypedExpr> {
         let parse = Self::parse_range;
 
         match self.peek().kind {
@@ -646,13 +665,13 @@ impl Parser {
                 let expr = parse(self)?;
 
                 let span = Span::merge(&symbol_span, &expr.span);
-                Some(spanned(Expr::Address(Box::new(expr), is_mutable), span))
+                Some(new_expr(Expr::Address(Box::new(expr), is_mutable), span))
             }
             _ => parse(self),
         }
     }
 
-    fn parse_mul(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_mul(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             true,
             Self::parse_unary,
@@ -664,7 +683,7 @@ impl Parser {
         )
     }
 
-    fn parse_add(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_add(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             true,
             Self::parse_mul,
@@ -672,7 +691,7 @@ impl Parser {
         )
     }
 
-    fn parse_shift(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_shift(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             true,
             Self::parse_add,
@@ -683,7 +702,7 @@ impl Parser {
         )
     }
 
-    fn parse_bit_and(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_bit_and(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             true,
             Self::parse_shift,
@@ -691,11 +710,11 @@ impl Parser {
         )
     }
 
-    fn parse_bit_xor(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_bit_xor(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(true, Self::parse_bit_and, &[(&Token::Xor, &BinOp::BitXor)])
     }
 
-    fn parse_bit_or(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_bit_or(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             true,
             Self::parse_bit_xor,
@@ -703,7 +722,7 @@ impl Parser {
         )
     }
 
-    fn parse_relational(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_relational(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             false,
             Self::parse_bit_or,
@@ -716,7 +735,7 @@ impl Parser {
         )
     }
 
-    fn parse_equality(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_equality(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(
             false,
             Self::parse_relational,
@@ -727,15 +746,15 @@ impl Parser {
         )
     }
 
-    fn parse_and(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_and(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(true, Self::parse_equality, &[(&Token::And, &BinOp::And)])
     }
 
-    fn parse_or(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_or(&mut self) -> Option<UntypedExpr> {
         self.parse_binop(true, Self::parse_and, &[(&Token::Or, &BinOp::Or)])
     }
 
-    fn parse_expr(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_expr(&mut self) -> Option<UntypedExpr> {
         self.parse_or()
     }
 
@@ -778,7 +797,7 @@ impl Parser {
         ))
     }
 
-    fn parse_block_expr(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_block_expr(&mut self) -> Option<UntypedExpr> {
         let lbrace_span = self.peek().span.clone();
         self.next();
 
@@ -827,14 +846,14 @@ impl Parser {
 
         // Push literal unit if there is no result expression
         let result_expr =
-            result_expr.unwrap_or_else(|| spanned(Expr::Literal(Literal::Unit), span.clone()));
+            result_expr.unwrap_or_else(|| new_expr(Expr::Literal(Literal::Unit), span.clone()));
 
         let block = self.blocks_builder.pop_and_build(stmts, result_expr);
 
-        Some(spanned(Expr::Block(block), span))
+        Some(new_expr(Expr::Block(block), span))
     }
 
-    fn expect_block_expr(&mut self) -> Option<Spanned<Expr>> {
+    fn expect_block_expr(&mut self) -> Option<UntypedExpr> {
         if self.peek().kind != Token::Lbrace {
             error!(&self.peek().span.clone(), "expected block");
             return None;
@@ -851,7 +870,7 @@ impl Parser {
         Some(block)
     }
 
-    fn parse_stmt_assign(&mut self, lhs: Spanned<Expr>) -> Option<Spanned<Stmt>> {
+    fn parse_stmt_assign(&mut self, lhs: UntypedExpr) -> Option<Spanned<Stmt>> {
         let rhs = self.parse_skip(Self::parse_expr, &[Token::Semicolon])?;
 
         self.expect(&Token::Semicolon, &[Token::Semicolon])?;
@@ -863,7 +882,7 @@ impl Parser {
     fn parse_compound_assignment(
         &mut self,
         binop: BinOp,
-        lhs: Spanned<Expr>,
+        lhs: UntypedExpr,
     ) -> Option<Spanned<Stmt>> {
         self.next();
 
@@ -874,7 +893,7 @@ impl Parser {
         Some(spanned(
             Stmt::Assign(
                 lhs.clone(),
-                Box::new(spanned(
+                Box::new(new_expr(
                     Expr::BinOp(binop, Box::new(lhs), Box::new(rhs)),
                     span.clone(),
                 )),
@@ -885,8 +904,8 @@ impl Parser {
 
     fn parse_assign_operators(
         &mut self,
-        lhs: Spanned<Expr>,
-    ) -> Result<Option<Spanned<Stmt>>, Spanned<Expr>> {
+        lhs: UntypedExpr,
+    ) -> Result<Option<Spanned<Stmt>>, UntypedExpr> {
         match &self.peek().kind {
             Token::Assign => {
                 self.next();
@@ -921,7 +940,7 @@ impl Parser {
         }
     }
 
-    fn parse_if_expr(&mut self) -> Option<Spanned<Expr>> {
+    fn parse_if_expr(&mut self) -> Option<UntypedExpr> {
         let if_token_span = self.peek().span.clone();
         self.next();
 
@@ -952,7 +971,7 @@ impl Parser {
                 .map(|e| &e.span)
                 .unwrap_or(&then_expr.span),
         );
-        Some(spanned(
+        Some(new_expr(
             Expr::If(Box::new(expr?), Box::new(then_expr), else_expr),
             span,
         ))
@@ -1542,12 +1561,13 @@ impl Parser {
             }
         }
 
-        let dummy_result_expr = spanned(Expr::Literal(Literal::Unit), self.peek().span.clone());
+        let dummy_result_expr = new_expr(Expr::Literal(Literal::Unit), self.peek().span.clone());
         let block = self
             .blocks_builder
             .pop_and_build(self.main_stmts, dummy_result_expr);
 
         Program {
+            module_path: module_path.clone(),
             main: block,
             imported_modules: Vec::new(),
             impls: self.impls,

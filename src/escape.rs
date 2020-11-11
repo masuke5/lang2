@@ -1,6 +1,16 @@
-use crate::ast::*;
+use crate::ast::{
+    AstFunction as AstFunction_, Block as Block_, Expr as Expr_, Program as Program_,
+    Stmt as Stmt_, *,
+};
 use crate::id::Id;
 use crate::utils::HashMapWithScope;
+
+type Expr = Expr_<Empty>;
+type UntypedExpr = Typed<Expr, Empty>;
+type Stmt = Stmt_<Empty>;
+type Block = Block_<Empty>;
+type Program = Program_<Empty>;
+type AstFunction = AstFunction_<Empty>;
 
 struct Finder<'a> {
     variables: HashMapWithScope<Id, &'a mut bool>,

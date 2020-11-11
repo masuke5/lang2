@@ -3,7 +3,7 @@ use std::fmt;
 use rustc_hash::FxHashMap;
 
 use crate::id::{Id, IdMap};
-use crate::span::Spanned;
+use crate::span::{Span, Spanned};
 use crate::utils::{escape_character, escape_string, format_bool, format_iter, span_to_string};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -266,46 +266,59 @@ impl ImportRange {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Expr {
-    Literal(Literal),
-    Tuple(Vec<Spanned<Expr>>),
-    Struct(Spanned<AstType>, Vec<(Spanned<Id>, Spanned<Expr>)>),
-    Array(Box<Spanned<Expr>>, usize),
-    Field(Box<Spanned<Expr>>, Field),
-    Subscript(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    Range(Option<Box<Spanned<Expr>>>, Option<Box<Spanned<Expr>>>),
-    BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    Variable(Id, bool),
-    Path(SymbolPath),
-    Call(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
-    Dereference(Box<Spanned<Expr>>),
-    Address(Box<Spanned<Expr>>, bool),
-    Negative(Box<Spanned<Expr>>),
-    Not(Box<Spanned<Expr>>),
-    Block(Block),
-    If(
-        Box<Spanned<Expr>>,
-        Box<Spanned<Expr>>,
-        Option<Box<Spanned<Expr>>>,
-    ),
-    App(Box<Spanned<Expr>>, Vec<Spanned<AstType>>),
+pub struct Empty;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Typed<K, T> {
+    pub kind: K,
+    pub span: Span,
+    pub ty: T,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Stmt {
+pub enum Expr<T> {
+    Literal(Literal),
+    Tuple(Vec<Typed<Expr<T>, T>>),
+    Struct(Spanned<AstType>, Vec<(Spanned<Id>, Typed<Expr<T>, T>)>),
+    Array(Box<Typed<Expr<T>, T>>, usize),
+    Field(Box<Typed<Expr<T>, T>>, Field),
+    Subscript(Box<Typed<Expr<T>, T>>, Box<Typed<Expr<T>, T>>),
+    Range(
+        Option<Box<Typed<Expr<T>, T>>>,
+        Option<Box<Typed<Expr<T>, T>>>,
+    ),
+    BinOp(BinOp, Box<Typed<Expr<T>, T>>, Box<Typed<Expr<T>, T>>),
+    Variable(Id, bool),
+    Path(SymbolPath),
+    Call(Box<Typed<Expr<T>, T>>, Box<Typed<Expr<T>, T>>),
+    Dereference(Box<Typed<Expr<T>, T>>),
+    Address(Box<Typed<Expr<T>, T>>, bool),
+    Negative(Box<Typed<Expr<T>, T>>),
+    Not(Box<Typed<Expr<T>, T>>),
+    Block(Block<T>),
+    If(
+        Box<Typed<Expr<T>, T>>,
+        Box<Typed<Expr<T>, T>>,
+        Option<Box<Typed<Expr<T>, T>>>,
+    ),
+    App(Box<Typed<Expr<T>, T>>, Vec<Spanned<AstType>>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Stmt<T> {
     // name, type, initial expression, is mutable, is escaped, should store in heap
     Bind(
         Id,
         Option<Spanned<AstType>>,
-        Box<Spanned<Expr>>,
+        Box<Typed<Expr<T>, T>>,
         bool,
         bool,
         bool,
     ),
-    Expr(Spanned<Expr>),
-    Return(Option<Spanned<Expr>>),
-    While(Spanned<Expr>, Box<Spanned<Stmt>>),
-    Assign(Spanned<Expr>, Box<Spanned<Expr>>),
+    Expr(Typed<Expr<T>, T>),
+    Return(Option<Typed<Expr<T>, T>>),
+    While(Typed<Expr<T>, T>, Box<Spanned<Stmt<T>>>),
+    Assign(Typed<Expr<T>, T>, Box<Typed<Expr<T>, T>>),
     Import(ImportRange),
 }
 
@@ -319,21 +332,21 @@ pub struct Param {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct AstFunction {
+pub struct AstFunction<T> {
     pub name: Spanned<Id>,
     pub params: Vec<Param>,
     pub return_ty: Spanned<AstType>,
-    pub body: Spanned<Expr>,
+    pub body: Typed<Expr<T>, T>,
     pub ty_params: Vec<Spanned<Id>>,
     pub has_escaped_variables: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Block {
+pub struct Block<T> {
     pub types: Vec<AstTypeDef>,
-    pub functions: Vec<AstFunction>,
-    pub stmts: Vec<Spanned<Stmt>>,
-    pub result_expr: Box<Spanned<Expr>>,
+    pub functions: Vec<AstFunction<T>>,
+    pub stmts: Vec<Spanned<Stmt<T>>>,
+    pub result_expr: Box<Typed<Expr<T>, T>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -344,13 +357,13 @@ pub struct AstTypeDef {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Impl {
+pub struct Impl<T> {
     pub target: Spanned<Id>,
-    pub functions: Vec<AstFunction>,
+    pub functions: Vec<AstFunction<T>>,
     pub original_names: FxHashMap<Id, Id>,
 }
 
-impl Impl {
+impl<T> Impl<T> {
     pub fn new(target: Spanned<Id>) -> Self {
         Self {
             target,
@@ -359,7 +372,7 @@ impl Impl {
         }
     }
 
-    pub fn add_function(&mut self, mut func: AstFunction) {
+    pub fn add_function(&mut self, mut func: AstFunction<T>) {
         let original_name = func.name.kind;
 
         // Concatenate the structure name and the function name
@@ -378,10 +391,11 @@ impl Impl {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Program {
-    pub main: Block,
+pub struct Program<T> {
+    pub module_path: SymbolPath,
+    pub main: Block<T>,
     pub imported_modules: Vec<SymbolPath>,
-    pub impls: Vec<Impl>,
+    pub impls: Vec<Impl<T>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -446,7 +460,7 @@ impl fmt::Display for AstType {
     }
 }
 
-pub fn dump_func(func: &AstFunction, depth: usize) {
+pub fn dump_func<T>(func: &AstFunction<T>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -480,7 +494,7 @@ pub fn dump_func(func: &AstFunction, depth: usize) {
     dump_expr(&func.body, depth + 1);
 }
 
-pub fn dump_block(block: &Block, depth: usize) {
+pub fn dump_block<T>(block: &Block<T>, depth: usize) {
     for ty in &block.types {
         println!(
             "type {}<{}> {}",
@@ -501,7 +515,7 @@ pub fn dump_block(block: &Block, depth: usize) {
     dump_expr(&block.result_expr, depth);
 }
 
-pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
+pub fn dump_expr<T>(expr: &Typed<Expr<T>, T>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -623,7 +637,7 @@ pub fn dump_expr(expr: &Spanned<Expr>, depth: usize) {
     }
 }
 
-pub fn dump_stmt(stmt: &Spanned<Stmt>, depth: usize) {
+pub fn dump_stmt<T>(stmt: &Spanned<Stmt<T>>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -669,7 +683,7 @@ pub fn dump_stmt(stmt: &Spanned<Stmt>, depth: usize) {
     }
 }
 
-pub fn dump_program(program: &Program, depth: usize) {
+pub fn dump_program<T>(program: &Program<T>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -687,7 +701,7 @@ pub fn dump_program(program: &Program, depth: usize) {
     dump_block(&program.main, 0);
 }
 
-pub fn dump_ast(program: &Program) {
+pub fn dump_ast<T>(program: &Program<T>) {
     dump_program(program, 0);
 }
 

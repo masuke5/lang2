@@ -21,6 +21,7 @@ mod lexer;
 mod load_module;
 mod module;
 mod parser;
+mod sema;
 pub mod span;
 mod token;
 mod value;

@@ -1,4 +1,7 @@
-use crate::ast::{Block, Expr, ImportRange, ImportRangePath, Program, Stmt, SymbolPath};
+use crate::ast::{
+    Block as Block_, Empty, Expr as Expr_, ImportRange, ImportRangePath, Program as Program_,
+    Stmt as Stmt_, SymbolPath, Typed,
+};
 use crate::error::{Error, ErrorList};
 use crate::id::IdMap;
 use crate::module::{MODULE_EXTENSION, ROOT_MODULE_FILE};
@@ -6,6 +9,12 @@ use crate::span::{Span, Spanned};
 use rustc_hash::FxHashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+type Expr = Expr_<Empty>;
+type UntypedExpr = Typed<Expr, Empty>;
+type Stmt = Stmt_<Empty>;
+type Block = Block_<Empty>;
+type Program = Program_<Empty>;
 
 struct Loader {
     loaded_modules: FxHashMap<SymbolPath, Program>,
@@ -95,7 +104,7 @@ impl Loader {
         }
     }
 
-    fn load_in_expr(&mut self, expr: &Spanned<Expr>) {
+    fn load_in_expr(&mut self, expr: &UntypedExpr) {
         match &expr.kind {
             Expr::Tuple(exprs) => {
                 for expr in exprs {
