@@ -74,20 +74,26 @@ pub enum Field {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SymbolPath {
+    pub is_absolute: bool,
     pub segments: Vec<SymbolPathSegment>,
 }
 
 impl fmt::Display for SymbolPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.segments.iter().fold(String::new(), |acc, seg| format!(
-                "{}::{}",
-                acc,
-                IdMap::name(seg.id)
-            ))
-        )
+        if self.is_absolute {
+            write!(f, "::")?;
+        }
+
+        let mut iter = self.segments.iter();
+        if let Some(segment) = iter.next() {
+            write!(f, "{}", IdMap::name(segment.id))?;
+        }
+
+        for segment in iter {
+            write!(f, "::{}", IdMap::name(segment.id))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -101,6 +107,14 @@ impl SymbolPath {
     pub fn new() -> Self {
         Self {
             segments: Vec::new(),
+            is_absolute: false,
+        }
+    }
+
+    pub fn new_absolute() -> Self {
+        Self {
+            segments: Vec::new(),
+            is_absolute: true,
         }
     }
 
@@ -118,9 +132,7 @@ impl SymbolPath {
         };
         let mut path = path.as_path();
 
-        let mut spath = Self {
-            segments: Vec::new(),
-        };
+        let mut spath = Self::new_absolute();
         if root == path {
             return spath;
         }
@@ -152,8 +164,23 @@ impl SymbolPath {
         Some(path)
     }
 
+    pub fn pop_head(&self) -> Option<SymbolPath> {
+        if self.is_empty() {
+            return None;
+        }
+
+        let mut path = self.clone();
+        path.segments.remove(0);
+        path.is_absolute = false;
+        Some(path)
+    }
+
     pub fn tail(&self) -> Option<&SymbolPathSegment> {
         self.segments.last()
+    }
+
+    pub fn head(&self) -> Option<&SymbolPathSegment> {
+        self.segments.first()
     }
 
     #[allow(dead_code)]
@@ -168,6 +195,15 @@ impl SymbolPath {
     pub fn append(mut self, segment: SymbolPathSegment) -> SymbolPath {
         self.segments.push(segment);
         self
+    }
+
+    pub fn join(mut self, other: &SymbolPath) -> SymbolPath {
+        if other.is_absolute {
+            other.clone()
+        } else {
+            self.segments.extend(other.segments.clone());
+            self
+        }
     }
 }
 
@@ -273,6 +309,24 @@ pub struct Typed<K, T> {
     pub kind: K,
     pub span: Span,
     pub ty: T,
+    pub is_mutable: bool, // when is_lvalue is true
+    pub is_lvalue: bool,
+    pub is_in_heap: bool,
+    pub convert_to: Option<T>,
+}
+
+impl<K, T> Typed<K, T> {
+    pub fn new(kind: K, span: Span, ty: T) -> Self {
+        Self {
+            kind,
+            span,
+            ty,
+            is_mutable: false,
+            is_lvalue: false,
+            is_in_heap: false,
+            convert_to: None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]

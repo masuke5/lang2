@@ -25,11 +25,7 @@ fn spanned<T>(kind: T, span: Span) -> Spanned<T> {
 }
 
 fn new_expr(kind: Expr, span: Span) -> UntypedExpr {
-    UntypedExpr {
-        kind,
-        span,
-        ty: Empty,
-    }
+    UntypedExpr::new(kind, span, Empty)
 }
 
 fn needs_semicolon(expr: &Expr) -> bool {
@@ -229,9 +225,7 @@ impl Parser {
         first: Option<SymbolPathSegment>,
         first_span: Span,
     ) -> Option<Spanned<SymbolPath>> {
-        let mut path = SymbolPath {
-            segments: Vec::new(),
-        };
+        let mut path = SymbolPath::new();
 
         if let Some(first) = first {
             path.segments.push(first);
