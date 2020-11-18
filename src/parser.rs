@@ -1536,6 +1536,7 @@ impl Parser {
     }
 
     pub fn parse(mut self, module_path: &SymbolPath) -> Program {
+        assert!(module_path.is_absolute);
         self.blocks_builder.push();
 
         while self.peek().kind != Token::EOF {
