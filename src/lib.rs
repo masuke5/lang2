@@ -39,6 +39,7 @@ use token::dump_token;
 pub enum ExecuteMode {
     DumpToken,
     DumpAST,
+    DumpTypedAST,
     DumpInstruction,
     Normal,
 }
@@ -134,6 +135,19 @@ impl ExecuteOption {
                 dump_ast(program);
             }
             return None;
+        }
+
+        // Semantic analysis
+        let typed_modules = match sema::do_semantic_analysis(modules) {
+            Some(tm) => tm,
+            None => return None,
+        };
+
+        if self.mode == ExecuteMode::DumpTypedAST {
+            for (path, program) in &typed_modules {
+                println!("Module {}", path);
+                sema::dump_typed_program(program, 0);
+            }
         }
 
         Some(())

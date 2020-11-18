@@ -1,7 +1,5 @@
 use std::fmt;
 
-use rustc_hash::FxHashMap;
-
 use crate::id::{Id, IdMap};
 use crate::span::{Span, Spanned};
 use crate::utils::{escape_character, escape_string, format_bool, format_iter, span_to_string};
@@ -304,6 +302,12 @@ impl ImportRange {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Empty;
 
+impl fmt::Display for Empty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "")
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Typed<K, T> {
     pub kind: K,
@@ -499,7 +503,7 @@ impl fmt::Display for AstType {
     }
 }
 
-pub fn dump_func<T>(func: &AstFunction<T>, depth: usize) {
+pub fn dump_func<T: fmt::Display>(func: &AstFunction<T>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -533,7 +537,7 @@ pub fn dump_func<T>(func: &AstFunction<T>, depth: usize) {
     dump_expr(&func.body, depth + 1);
 }
 
-pub fn dump_block<T>(block: &Block<T>, depth: usize) {
+pub fn dump_block<T: fmt::Display>(block: &Block<T>, depth: usize) {
     for ty in &block.types {
         println!(
             "type {}<{}> {}",
@@ -554,36 +558,43 @@ pub fn dump_block<T>(block: &Block<T>, depth: usize) {
     dump_expr(&block.result_expr, depth);
 }
 
-pub fn dump_expr<T>(expr: &Typed<Expr<T>, T>, depth: usize) {
+pub fn dump_expr<T: fmt::Display>(expr: &Typed<Expr<T>, T>, depth: usize) {
+    fn meta<T: fmt::Display>(expr: &Typed<Expr<T>, T>) -> String {
+        let mut result = String::new();
+
+        result += &span_to_string(&expr.span);
+
+        let ty = format!("{}", expr.ty);
+        if !ty.is_empty() {
+            result += &format!(" \x1b[35m[{}]\x1b[0m", ty);
+        }
+
+        result
+    }
+
     // Print indent
     print!("{}", "  ".repeat(depth));
 
     match &expr.kind {
-        Expr::Literal(Literal::Number(n)) => println!("{} {}", n, span_to_string(&expr.span)),
-        Expr::Literal(Literal::UnsignedNumber(n)) => {
-            println!("{}u {}", n, span_to_string(&expr.span))
+        Expr::Literal(Literal::Number(n)) => println!("{} {}", n, meta(expr)),
+        Expr::Literal(Literal::UnsignedNumber(n)) => println!("{}u {}", n, meta(expr)),
+        Expr::Literal(Literal::Float(n)) => println!("{} {}", n, meta(expr)),
+        Expr::Literal(Literal::String(s)) => println!("\"{}\" {}", escape_string(s), meta(expr)),
+        Expr::Literal(Literal::Char(ch)) => {
+            println!("\"{}\" {}", escape_character(*ch), meta(expr))
         }
-        Expr::Literal(Literal::Float(n)) => println!("{} {}", n, span_to_string(&expr.span)),
-        Expr::Literal(Literal::String(s)) => {
-            println!("\"{}\" {}", escape_string(s), span_to_string(&expr.span))
-        }
-        Expr::Literal(Literal::Char(ch)) => println!(
-            "\"{}\" {}",
-            escape_character(*ch),
-            span_to_string(&expr.span)
-        ),
-        Expr::Literal(Literal::Unit) => println!("() {}", span_to_string(&expr.span)),
-        Expr::Literal(Literal::True) => println!("true {}", span_to_string(&expr.span)),
-        Expr::Literal(Literal::False) => println!("false {}", span_to_string(&expr.span)),
-        Expr::Literal(Literal::Null) => println!("__null__ {}", span_to_string(&expr.span)),
+        Expr::Literal(Literal::Unit) => println!("() {}", meta(expr)),
+        Expr::Literal(Literal::True) => println!("true {}", meta(expr)),
+        Expr::Literal(Literal::False) => println!("false {}", meta(expr)),
+        Expr::Literal(Literal::Null) => println!("__null__ {}", meta(expr)),
         Expr::Tuple(exprs) => {
-            println!("tuple {}", span_to_string(&expr.span));
+            println!("tuple {}", meta(expr));
             for expr in exprs {
                 dump_expr(&expr, depth + 1);
             }
         }
         Expr::Struct(ty, fields) => {
-            println!("struct {} {}", ty.kind, span_to_string(&expr.span));
+            println!("struct {} {}", ty.kind, meta(expr));
             for (name, expr) in fields {
                 print!("{}", "  ".repeat(depth + 1));
                 println!("{}: {}", IdMap::name(name.kind), span_to_string(&name.span));
@@ -591,24 +602,24 @@ pub fn dump_expr<T>(expr: &Typed<Expr<T>, T>, depth: usize) {
             }
         }
         Expr::Array(init_expr, size) => {
-            println!("[{}] {}", size, span_to_string(&expr.span));
+            println!("[{}] {}", size, meta(expr));
             dump_expr(init_expr, depth + 1);
         }
         Expr::Field(expr, field) => {
             match field {
-                Field::Number(i) => println!(".{} {}", i, span_to_string(&expr.span)),
-                Field::Id(id) => println!(".{} {}", IdMap::name(*id), span_to_string(&expr.span)),
+                Field::Number(i) => println!(".{} {}", i, meta(expr)),
+                Field::Id(id) => println!(".{} {}", IdMap::name(*id), meta(expr)),
             };
 
             dump_expr(&expr, depth + 1);
         }
         Expr::Subscript(expr, subscript) => {
-            println!("subscript {}", span_to_string(&expr.span));
+            println!("subscript {}", meta(expr));
             dump_expr(&expr, depth + 1);
             dump_expr(&subscript, depth + 1);
         }
         Expr::Range(start, end) => {
-            println!("range {}", span_to_string(&expr.span));
+            println!("range {}", meta(expr));
             if let Some(start) = start {
                 dump_expr(&start, depth + 1);
             }
@@ -621,48 +632,44 @@ pub fn dump_expr<T>(expr: &Typed<Expr<T>, T>, depth: usize) {
                 "{}{} {}",
                 IdMap::name(*name),
                 format_bool(*is_escaped, " \x1b[32mescaped\x1b[0m"),
-                span_to_string(&expr.span)
+                meta(expr)
             );
         }
         Expr::BinOp(binop, lhs, rhs) => {
-            println!("{} {}", binop.to_symbol(), span_to_string(&expr.span));
+            println!("{} {}", binop.to_symbol(), meta(expr));
             dump_expr(&lhs, depth + 1);
             dump_expr(&rhs, depth + 1);
         }
         Expr::Call(func_expr, arg) => {
-            println!("call {}", span_to_string(&expr.span));
+            println!("call {}", meta(expr));
 
             dump_expr(func_expr, depth + 1);
             dump_expr(&arg, depth + 1);
         }
         Expr::Path(path) => {
-            println!("path {} {}", path, span_to_string(&expr.span));
+            println!("path {} {}", path, meta(expr));
         }
         Expr::Address(expr_, is_mutable) => {
-            println!(
-                "&{} {}",
-                format_bool(*is_mutable, "mut"),
-                span_to_string(&expr.span)
-            );
+            println!("&{} {}", format_bool(*is_mutable, "mut"), meta(expr));
             dump_expr(&expr_, depth + 1);
         }
         Expr::Dereference(expr_) => {
-            println!("* {}", span_to_string(&expr.span));
+            println!("* {}", meta(expr));
             dump_expr(&expr_, depth + 1);
         }
         Expr::Negative(expr_) => {
-            println!("neg {}", span_to_string(&expr.span));
+            println!("neg {}", meta(expr));
             dump_expr(&expr_, depth + 1);
         }
         Expr::Not(expr_) => {
-            println!("not {}", span_to_string(&expr.span));
+            println!("not {}", meta(expr));
             dump_expr(&expr_, depth + 1);
         }
         Expr::Block(block) => {
             dump_block(block, depth);
         }
         Expr::If(cond, body, else_expr) => {
-            println!("if {}", span_to_string(&expr.span));
+            println!("if {}", meta(expr));
             dump_expr(&cond, depth + 1);
             dump_expr(&body, depth + 1);
             if let Some(else_stmt) = else_expr {
@@ -676,7 +683,7 @@ pub fn dump_expr<T>(expr: &Typed<Expr<T>, T>, depth: usize) {
     }
 }
 
-pub fn dump_stmt<T>(stmt: &Spanned<Stmt<T>>, depth: usize) {
+pub fn dump_stmt<T: fmt::Display>(stmt: &Spanned<Stmt<T>>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -722,7 +729,7 @@ pub fn dump_stmt<T>(stmt: &Spanned<Stmt<T>>, depth: usize) {
     }
 }
 
-pub fn dump_program<T>(program: &Program<T>, depth: usize) {
+pub fn dump_program<T: fmt::Display>(program: &Program<T>, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
@@ -740,7 +747,7 @@ pub fn dump_program<T>(program: &Program<T>, depth: usize) {
     dump_block(&program.main, 0);
 }
 
-pub fn dump_ast<T>(program: &Program<T>) {
+pub fn dump_ast<T: fmt::Display>(program: &Program<T>) {
     dump_program(program, 0);
 }
 

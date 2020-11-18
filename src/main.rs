@@ -62,11 +62,10 @@ fn main() {
                 .long("dump-ast")
                 .help("Dumps AST"),
         )
-        .arg(Arg::with_name("dump-ir").long("dump-ir").help("Dumps IR"))
         .arg(
-            Arg::with_name("dump-ir2")
-                .long("dump-ir2")
-                .help("Dumps optimized IR"),
+            Arg::with_name("dump-ast2")
+                .long("dump-ast2")
+                .help("Dumps typed AST"),
         )
         .arg(
             Arg::with_name("dump-insts")
@@ -101,6 +100,8 @@ fn main() {
         ExecuteMode::DumpToken
     } else if matches.is_present("dump-ast") {
         ExecuteMode::DumpAST
+    } else if matches.is_present("dump-ast2") {
+        ExecuteMode::DumpTypedAST
     } else if matches.is_present("dump-insts") {
         ExecuteMode::DumpInstruction
     } else {

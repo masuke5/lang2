@@ -6,6 +6,7 @@ use crate::error::{Error, ErrorList};
 use crate::id::{reserved_id, Id, IdMap};
 use crate::span::{Span, Spanned};
 use crate::ty::*;
+use crate::utils::{format_bool, format_iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 type UExpr = Expr_<Empty>;
@@ -47,6 +48,49 @@ pub struct TypedProgram {
     pub module_path: SymbolPath,
     // The function that a key is reserved_id::MAIN_FUNC is main function
     pub functions: FxHashMap<Id, TypedFunction>,
+}
+
+pub fn dump_typed_func(func: &TypedFunction, depth: usize) {
+    // Print indent
+    print!("{}", "  ".repeat(depth));
+
+    print!("fn {}", IdMap::name(func.name));
+
+    if func.has_escaped_variables {
+        print!(" \x1b[32mhas escaped vars\x1b[0m");
+    }
+
+    if !func.ty_params.is_empty() {
+        print!("<");
+        print!(
+            "{}",
+            format_iter(func.ty_params.iter().map(|var| format!("{:?}", var)))
+        );
+        print!(">");
+    }
+
+    println!(
+        "({}): {}",
+        format_iter(func.params.iter().map(|p| format!(
+            "{}{}{}: {}",
+            format_bool(p.is_mutable, "mut "),
+            IdMap::name(p.name),
+            format_bool(p.is_escaped, " \x1b[32mescaped\x1b[0m"),
+            p.ty
+        ))),
+        func.return_ty,
+    );
+
+    dump_expr(&func.body, depth + 1);
+}
+
+pub fn dump_typed_program(program: &TypedProgram, depth: usize) {
+    // Print indent
+    print!("{}", "  ".repeat(depth));
+
+    for func in program.functions.values() {
+        dump_typed_func(func, depth + 1);
+    }
 }
 
 macro_rules! try_some {
