@@ -242,7 +242,6 @@ impl Parser {
         Some(spanned(path, span))
     }
 
-    #[allow(dead_code)]
     fn parse_path(&mut self) -> Option<Spanned<SymbolPath>> {
         let first = self
             .expect_identifier(&[Token::Scope])
@@ -475,6 +474,12 @@ impl Parser {
                 }
             }
             Token::Lbrace => self.parse_block_expr(),
+            Token::Scope => {
+                self.next();
+                let mut path = self.parse_path()?;
+                path.kind.is_absolute = true;
+                Some(new_expr(Expr::Path(path.kind), path.span))
+            }
             Token::Keyword(Keyword::If) => self.parse_if_expr(),
             _ => {
                 error!(
@@ -988,6 +993,8 @@ impl Parser {
         let mut stack = Vec::new();
         let mut top = None;
 
+        let is_absolute = self.consume(&Token::Scope);
+
         let first = self.expect_identifier(&[Token::Scope])?;
         let first_span = self.prev().span.clone();
 
@@ -1057,6 +1064,10 @@ impl Parser {
         let mut range = top.unwrap_or_else(|| ImportRange::Symbol(stack.pop().unwrap()));
         while let Some(id) = stack.pop() {
             range = ImportRange::Scope(id, Box::new(range));
+        }
+
+        if is_absolute {
+            range = ImportRange::Root(Box::new(range));
         }
 
         let span = Span::merge(&first_span, &end_span);

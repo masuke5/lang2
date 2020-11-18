@@ -6,7 +6,7 @@ use crate::error::{Error, ErrorList};
 use crate::id::IdMap;
 use crate::module::{MODULE_EXTENSION, ROOT_MODULE_FILE};
 use crate::span::{Span, Spanned};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,6 +19,7 @@ type AstFunction = AstFunction_<Empty>;
 
 struct Loader {
     loaded_modules: FxHashMap<SymbolPath, Program>,
+    parsed_modules: FxHashSet<SymbolPath>,
     root_path: PathBuf,
 }
 
@@ -26,6 +27,7 @@ impl Loader {
     fn new(root_path: &Path) -> Self {
         Self {
             loaded_modules: FxHashMap::default(),
+            parsed_modules: FxHashSet::default(),
             root_path: root_path.to_path_buf(),
         }
     }
@@ -74,8 +76,8 @@ impl Loader {
     fn load_module(&mut self, path: &SymbolPath, span: &Span, may_not_be_module: bool) {
         assert!(path.is_absolute);
 
-        // Don't load if the module is already loaded
-        if self.loaded_modules.contains_key(path) {
+        // Don't load if the module is already parsed
+        if self.parsed_modules.contains(path) {
             return;
         }
 
@@ -88,6 +90,7 @@ impl Loader {
                 if let Some(program) =
                     self.parse_module(&absolute_symbol_path, module_filepath, span)
                 {
+                    self.parsed_modules.insert(absolute_symbol_path.clone());
                     self.load_in_program(&program);
                     self.loaded_modules.insert(absolute_symbol_path, program);
                 }
@@ -222,6 +225,7 @@ pub fn load_dependent_modules(
     program: &Program,
 ) -> FxHashMap<SymbolPath, Program> {
     let mut loader = Loader::new(root_path);
+    loader.parsed_modules.insert(program.module_path.clone());
     loader.load_in_program(program);
     loader.loaded_modules
 }

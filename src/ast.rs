@@ -223,6 +223,7 @@ pub enum ImportRange {
     All,
     Multiple(Vec<ImportRange>),
     Scope(Id, Box<ImportRange>),
+    Root(Box<ImportRange>),
 }
 
 impl fmt::Display for ImportRange {
@@ -239,6 +240,7 @@ impl fmt::Display for ImportRange {
                 write!(f, "}}")
             }
             Self::Scope(module, rest) => write!(f, "{}::{}", IdMap::name(*module), rest),
+            Self::Root(inner) => write!(f, "::{}", inner),
         }
     }
 }
@@ -290,6 +292,10 @@ impl ImportRange {
                 ImportRange::Scope(id, rest) => {
                     path_stack.push(path.append_id(*id));
                     range_stack.push(rest);
+                }
+                ImportRange::Root(inner) => {
+                    path_stack.push(SymbolPath::new_absolute());
+                    range_stack.push(inner);
                 }
             }
         }
@@ -773,7 +779,7 @@ mod tests {
         type IR = ImportRange;
         let id = IdMap::new_id;
 
-        // m1::m2::{m3, m4 as m5, m6::m7, m8::*};
+        // m1::m2::{m3, m4 as m5, m6::m7, m8::*, ::m9::m10};
         let range = IR::Scope(
             id("m1"),
             Box::new(IR::Scope(
@@ -783,6 +789,10 @@ mod tests {
                     IR::Renamed(id("m4"), id("m5")),
                     IR::Scope(id("m6"), Box::new(IR::Symbol(id("m7")))),
                     IR::Scope(id("m8"), Box::new(IR::All)),
+                    IR::Root(Box::new(IR::Scope(
+                        id("m9"),
+                        Box::new(IR::Symbol(id("m10"))),
+                    ))),
                 ])),
             )),
         );
@@ -799,6 +809,12 @@ mod tests {
             ImportRangePath::Path(base_path.clone().append_str("m6").append_str("m7")),
             // m1::m2::m8::*
             ImportRangePath::All(base_path.clone().append_str("m8")),
+            // ::m9::m10
+            ImportRangePath::Path(
+                SymbolPath::new_absolute()
+                    .append_str("m9")
+                    .append_str("m10"),
+            ),
         ];
 
         assert_eq!(expected, paths);

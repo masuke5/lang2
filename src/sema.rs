@@ -263,6 +263,7 @@ impl Environment {
     }
 
     fn import_module(&mut self, name: Id, path: SymbolPath) {
+        assert!(path.is_absolute);
         let last_scope = self.last_scope();
         last_scope.modules.insert(name, path);
     }
@@ -434,6 +435,8 @@ impl<'a> Analyzer<'a> {
     }
 
     fn get_type_to_path(&self, span: &Span, path: &SymbolPath) -> Option<Type> {
+        assert!(path.is_absolute);
+
         // First consider path is a module
         if self.module_envs.contains_key(&path) {
             error!(&span, "path `{}` is a module", path);
@@ -479,6 +482,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
         } else {
+            error!(&span, "undefined symbol `{}`", path);
             None
         }
     }
@@ -746,13 +750,18 @@ impl<'a> Analyzer<'a> {
                 let head = path.head().unwrap();
                 let rest = path.pop_head().unwrap();
 
-                let ty = if let Some(module_path) = self.env.find_module(head.id) {
-                    let absolute_path = module_path.clone().join(&rest);
-                    self.get_type_to_path(&expr.span, &absolute_path)?
-                } else {
-                    // Consider the path is absolute
-                    self.get_type_to_path(&expr.span, &path)?
-                };
+                let ty = match self.env.find_module(head.id) {
+                    Some(module_path) if !path.is_absolute => {
+                        let absolute_path = module_path.clone().join(&rest);
+                        self.get_type_to_path(&expr.span, &absolute_path)
+                    }
+                    _ => {
+                        // Consider the path is absolute
+                        let mut path = path.clone();
+                        path.is_absolute = true;
+                        self.get_type_to_path(&expr.span, &path)
+                    }
+                }?;
 
                 (TExpr::Path(path), ty)
             }
@@ -1078,6 +1087,9 @@ impl<'a> Analyzer<'a> {
                 for range in ranges {
                     self.import_by_range(span, path, range);
                 }
+            }
+            ImportRange::Root(inner) => {
+                self.import_by_range(span, &SymbolPath::new_absolute(), inner);
             }
         }
     }
