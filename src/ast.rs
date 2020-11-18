@@ -666,6 +666,7 @@ pub fn dump_expr<T: fmt::Display>(expr: &Typed<Expr<T>, T>, depth: usize) {
             dump_expr(&expr_, depth + 1);
         }
         Expr::Block(block) => {
+            print!("\r");
             dump_block(block, depth);
         }
         Expr::If(cond, body, else_expr) => {
