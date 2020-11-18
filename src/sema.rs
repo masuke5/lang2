@@ -131,6 +131,7 @@ struct Scope {
     entries: FxHashMap<Id, Entry>,
     types: FxHashMap<Id, ScopeType>,
     modules: FxHashMap<Id, SymbolPath>,
+    impl_funcs: FxHashMap<Id, FxHashMap<Id, Function>>,
 }
 
 impl Scope {
@@ -139,6 +140,7 @@ impl Scope {
             entries: FxHashMap::default(),
             types: FxHashMap::default(),
             modules: FxHashMap::default(),
+            impl_funcs: FxHashMap::default(),
         }
     }
 }
@@ -236,6 +238,25 @@ impl Environment {
         None
     }
 
+    fn define_impl_func(&mut self, target: Id, func: Function) {
+        assert!(self.find_type(target).is_some());
+        let last_scope = self.last_scope();
+        last_scope
+            .impl_funcs
+            .entry(target)
+            .or_insert(FxHashMap::default())
+            .insert(func.name, func);
+    }
+
+    fn find_impl_func(&self, target: Id, name: Id) -> Option<&Function> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(funcs) = scope.impl_funcs.get(&name) {
+                return funcs.get(&name);
+            }
+        }
+        None
+    }
+
     unsafe fn push_scope(&mut self) {
         self.scopes.push(Scope::new());
     }
@@ -279,6 +300,11 @@ impl<'a> Analyzer<'a> {
         let name = IdMap::name(name);
         let name = format!("--inner-{}-{}", name, self.uniq);
         self.uniq += 1;
+        IdMap::new_id(&name)
+    }
+
+    fn generate_impl_function_name(target: Id, name: Id) -> Id {
+        let name = format!("{}.{}", IdMap::name(target), IdMap::name(name));
         IdMap::new_id(&name)
     }
 
@@ -373,6 +399,17 @@ impl<'a> Analyzer<'a> {
         if self.module_envs.contains_key(&path) {
             error!(&span, "path `{}` is a module", path);
             return None;
+        }
+
+        // Consider path is a function in impl
+        if let Some(module_path) = path.parent().unwrap().parent() {
+            let type_name = path.parent().unwrap().tail().unwrap().id;
+            let func_name = path.tail().unwrap().id;
+            if let Some(module_env) = self.module_envs.get(&module_path) {
+                if let Some(func) = module_env.find_impl_func(type_name, func_name) {
+                    return Some(func.generate_arrow_type());
+                }
+            }
         }
 
         // Consider path is a function or type named item_name in a module
@@ -824,6 +861,7 @@ impl<'a> Analyzer<'a> {
                 };
 
                 if let Some(body) = self.analyze_expr(func, block_func.body) {
+                    let func_name = self.generate_inner_function_name(func.name);
                     let params = block_func
                         .params
                         .iter()
@@ -836,18 +874,16 @@ impl<'a> Analyzer<'a> {
                             is_in_heap: param.is_in_heap,
                         })
                         .collect();
-                    let func_name = self.generate_inner_function_name(func.name);
-                    self.functions.insert(
-                        func_name,
-                        TypedFunction {
-                            name: func_name,
-                            params,
-                            body,
-                            return_ty: header.return_ty,
-                            ty_params: header.ty_params.iter().map(|(_, var)| *var).collect(),
-                            has_escaped_variables: block_func.has_escaped_variables,
-                        },
-                    );
+
+                    let func = TypedFunction {
+                        name: func_name,
+                        params,
+                        body,
+                        return_ty: header.return_ty,
+                        ty_params: header.ty_params.iter().map(|(_, var)| *var).collect(),
+                        has_escaped_variables: block_func.has_escaped_variables,
+                    };
+                    self.functions.insert(func_name, func);
                 }
             }
 
@@ -1031,6 +1067,40 @@ impl<'a> Analyzer<'a> {
     }
 
     fn analyze(mut self, program: UntypedProgram) -> Option<TypedProgram> {
+        // Analyze implement function bodies
+        for imp in program.impls {
+            for func in imp.functions {
+                let env = &self.module_envs[&program.module_path];
+                let func_header = env.find_impl_func(imp.target.kind, func.name.kind).unwrap();
+                if let Some(body) = self.analyze_expr(func_header, func.body) {
+                    let func_name =
+                        Self::generate_impl_function_name(imp.target.kind, func.name.kind);
+                    let params = func
+                        .params
+                        .iter()
+                        .zip(func_header.params.clone())
+                        .map(|(param, ty)| TypedParam {
+                            name: param.name,
+                            ty,
+                            is_mutable: param.is_mutable,
+                            is_escaped: param.is_escaped,
+                            is_in_heap: param.is_in_heap,
+                        })
+                        .collect();
+
+                    let func = TypedFunction {
+                        name: func_name,
+                        params,
+                        body,
+                        return_ty: func_header.return_ty.clone(),
+                        ty_params: func_header.ty_params.iter().map(|(_, var)| *var).collect(),
+                        has_escaped_variables: func.has_escaped_variables,
+                    };
+                    self.functions.insert(func_name, func);
+                }
+            }
+        }
+
         // Create a function as the main block
         let main_func = Function {
             name: *reserved_id::MAIN_FUNC,
@@ -1229,6 +1299,25 @@ fn generate_function_headers(
     }
 }
 
+fn generate_impl_headers(impls: &[UntypedImpl], module_path: &SymbolPath, env: &mut Environment) {
+    for imp in impls {
+        // Check target existence
+        if env.find_type(imp.target.kind).is_none() {
+            error!(
+                &imp.target.span,
+                "type `{}` is undefined",
+                IdMap::name(imp.target.kind)
+            );
+        }
+
+        for func in &imp.functions {
+            if let Some(Entry::Function(func)) = analyze_func_type(env, module_path, func) {
+                env.define_impl_func(imp.target.kind, func);
+            }
+        }
+    }
+}
+
 pub fn do_semantic_analysis(
     modules: FxHashMap<SymbolPath, UntypedProgram>,
 ) -> Option<FxHashMap<SymbolPath, TypedProgram>> {
@@ -1254,6 +1343,12 @@ pub fn do_semantic_analysis(
     for (path, program) in &modules {
         let env = envs.get_mut(path).unwrap();
         generate_function_headers(&program.main, &program.module_path, env);
+    }
+
+    // Generate implement headers in all modules
+    for (path, program) in &modules {
+        let env = envs.get_mut(path).unwrap();
+        generate_impl_headers(&program.impls, &program.module_path, env);
     }
 
     let mut programs = FxHashMap::default();

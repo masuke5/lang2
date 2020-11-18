@@ -414,7 +414,6 @@ pub struct AstTypeDef {
 pub struct Impl<T> {
     pub target: Spanned<Id>,
     pub functions: Vec<AstFunction<T>>,
-    pub original_names: FxHashMap<Id, Id>,
 }
 
 impl<T> Impl<T> {
@@ -422,25 +421,11 @@ impl<T> Impl<T> {
         Self {
             target,
             functions: Vec::new(),
-            original_names: FxHashMap::default(),
         }
     }
 
-    pub fn add_function(&mut self, mut func: AstFunction<T>) {
-        let original_name = func.name.kind;
-
-        // Concatenate the structure name and the function name
-        // because conflict with function names outside impl
-        let func_name = format!(
-            "{}.{}",
-            IdMap::name(self.target.kind),
-            IdMap::name(func.name.kind)
-        );
-        let func_name = IdMap::new_id(&func_name);
-        func.name.kind = func_name;
-
+    pub fn add_function(&mut self, func: AstFunction<T>) {
         self.functions.push(func);
-        self.original_names.insert(func_name, original_name);
     }
 }
 
