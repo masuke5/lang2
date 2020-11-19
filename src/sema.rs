@@ -559,20 +559,27 @@ impl<'a> Analyzer<'a> {
             UExpr::Struct(ast_ty, fields) => {
                 // The parser only accept a named type for `ty` like App(Named(NAME), [TYARGS])
 
+                fn get_field_types(struct_ty: &Type) -> Option<FxHashMap<Id, Type>> {
+                    match struct_ty {
+                        Type::App(TypeCon::Struct(names), types) => {
+                            Some(names.iter().copied().zip(types.clone()).collect())
+                        }
+                        _ => None,
+                    }
+                }
+
                 let ty = analyze_type(&self.env, &ast_ty)?;
-                let named_ty = ty.clone();
+                let result_ty = ty.clone();
 
                 let ty = self.expand_name(ty);
                 let ty = expand_unique(ty);
-                let ty = subst(ty, &FxHashMap::default());
+                let mut ty = subst(ty, &FxHashMap::default());
 
                 // Get the struct field types
-                let field_types: FxHashMap<Id, Type> = match ty {
-                    Type::App(TypeCon::Struct(names), types) => {
-                        names.into_iter().zip(types).collect()
-                    }
+                let mut field_types = match get_field_types(&ty) {
+                    Some(ft) => ft,
                     _ => {
-                        error!(&ast_ty.span, "type `{}` is not structure", named_ty);
+                        error!(&ast_ty.span, "type `{}` is not structure", result_ty);
                         return None;
                     }
                 };
@@ -580,6 +587,8 @@ impl<'a> Analyzer<'a> {
                 // Analyze the fields
                 let mut new_fields = Vec::with_capacity(fields.len());
                 let mut analyzed_fields = FxHashSet::default();
+                let mut var_map = FxHashMap::default();
+
                 for (name, expr) in fields {
                     if analyzed_fields.contains(&name.kind) {
                         error!(&name.span, "duplicated field");
@@ -589,7 +598,14 @@ impl<'a> Analyzer<'a> {
                         Some(field_ty) => {
                             analyzed_fields.insert(name.kind);
                             if let Some(expr) = self.analyze_expr_with_conv(func, expr, field_ty) {
-                                unify(&expr.span, &expr.ty, field_ty);
+                                if let Type::Var(var) = field_ty {
+                                    var_map.insert(*var, expr.ty.clone());
+                                    ty = subst(ty, &var_map);
+                                    field_types = get_field_types(&ty).unwrap();
+                                } else {
+                                    unify(&expr.span, &expr.ty, field_ty);
+                                }
+
                                 new_fields.push((name, expr));
                             }
                         }
@@ -597,7 +613,7 @@ impl<'a> Analyzer<'a> {
                             error!(
                                 &name.span,
                                 "type `{}` has no field named `{}`",
-                                named_ty,
+                                result_ty,
                                 IdMap::name(name.kind)
                             );
                             continue;
@@ -605,7 +621,32 @@ impl<'a> Analyzer<'a> {
                     }
                 }
 
-                (TExpr::Struct(ast_ty, new_fields), named_ty)
+                let ty_func = self.expand_name(result_ty.clone());
+                let mut args = Vec::new();
+                match ty_func {
+                    Type::App(TypeCon::Fun(params, ..), ..) => {
+                        args.reserve(params.len());
+                        for param in params {
+                            let arg_ty = var_map
+                                .get(&param)
+                                .cloned()
+                                .unwrap_or_else(|| Type::Var(param));
+                            args.push(arg_ty);
+                        }
+                    }
+                    _ => panic!(),
+                }
+
+                let result_ty = if args.is_empty() {
+                    result_ty
+                } else {
+                    match result_ty {
+                        Type::App(tycon, ..) => Type::App(tycon, args),
+                        _ => panic!(),
+                    }
+                };
+
+                (TExpr::Struct(ast_ty, new_fields), result_ty)
             }
             UExpr::Array(elem_expr, size) => {
                 let elem_expr = self.analyze_expr(func, *elem_expr)?;
@@ -756,6 +797,8 @@ impl<'a> Analyzer<'a> {
                 let lhs = self.convert_analyzed_expr(lhs, &ty);
                 let rhs = self.convert_analyzed_expr(rhs, &ty);
                 try_some!(lhs, rhs);
+                unify(&lhs.span, &lhs.ty, &ty);
+                unify(&rhs.span, &rhs.ty, &ty);
 
                 (TExpr::BinOp(binop, box lhs, box rhs), ty)
             }
@@ -801,6 +844,16 @@ impl<'a> Analyzer<'a> {
                 let func_ty = subst(func_ty, &FxHashMap::default());
 
                 let return_ty = match func_ty {
+                    Type::Poly(params, box Type::App(TypeCon::Arrow, types)) => {
+                        if let Type::Var(var) = &types[0] {
+                            let mut map = FxHashMap::default();
+                            map.insert(*var, arg_expr.ty.clone());
+                            subst(types[1].clone(), &map)
+                        } else {
+                            unify(&arg_expr.span, &arg_expr.ty, &types[0]);
+                            Type::Poly(params, box types[1].clone())
+                        }
+                    }
                     Type::App(TypeCon::Arrow, types) => {
                         unify(&arg_expr.span, &arg_expr.ty, &types[0]);
                         types[1].clone()
@@ -934,10 +987,7 @@ impl<'a> Analyzer<'a> {
             // Pointer and null
             | (Type::App(TypeCon::Pointer(..), ..), Type::Null)
             | (Type::Null, Type::App(TypeCon::Pointer(..), ..)) => {}
-            _ => {
-                error!(&expr.span, "cannot cast `{}` to `{}", expr.ty, ty);
-                return None;
-            }
+            _ =>  return Some(expr),
         }
 
         expr.convert_to = Some(ty.clone());
