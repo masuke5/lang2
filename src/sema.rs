@@ -296,6 +296,10 @@ impl Environment {
         None
     }
 
+    fn push_env(&mut self, mut other: Environment) {
+        self.scopes.append(&mut other.scopes);
+    }
+
     unsafe fn push_scope(&mut self) {
         self.scopes.push(Scope::new());
     }
@@ -1232,6 +1236,61 @@ impl<'a> Analyzer<'a> {
     }
 }
 
+fn import_only_type_by_range(
+    env: &mut Environment,
+    module_envs: &FxHashMap<SymbolPath, Environment>,
+    span: &Span,
+    path: &SymbolPath,
+    range: &ImportRange,
+) {
+    match range {
+        ImportRange::Symbol(..) | ImportRange::Renamed(..) => {
+            let (name, renamed) = match range {
+                ImportRange::Symbol(name) => (*name, *name),
+                ImportRange::Renamed(name, renamed) => (*name, *renamed),
+                _ => unreachable!(),
+            };
+
+            let joined_path = path.clone().append_id(name);
+            if module_envs.contains_key(&joined_path) {
+                env.import_module(renamed, joined_path);
+                return;
+            }
+
+            // Consider the module named `path` includes the function or type named `name`
+            if let Some(module_env) = module_envs.get(path) {
+                if module_env.find_type(name).is_some() {
+                    env.define_type(
+                        renamed,
+                        ScopeType::Def(TypeDef::new_header(name, path.clone())),
+                    );
+                }
+            }
+        }
+        ImportRange::All => {
+            let module_env = match module_envs.get(path) {
+                Some(module_env) => module_env,
+                None => return,
+            };
+
+            for (name, tydef) in module_env.types() {
+                env.define_type(name, ScopeType::Def(tydef));
+            }
+        }
+        ImportRange::Scope(name, rest) => {
+            import_only_type_by_range(env, module_envs, span, &path.clone().append_id(*name), rest);
+        }
+        ImportRange::Multiple(ranges) => {
+            for range in ranges {
+                import_only_type_by_range(env, module_envs, span, path, range);
+            }
+        }
+        ImportRange::Root(inner) => {
+            import_only_type_by_range(env, module_envs, span, &SymbolPath::new_absolute(), inner);
+        }
+    }
+}
+
 fn generate_type_headers(block: &UntypedBlock, module_path: &SymbolPath, env: &mut Environment) {
     // Get type on top level
     for tydef in &block.types {
@@ -1429,7 +1488,22 @@ pub fn do_semantic_analysis(
 
     // Analyze type definitions in all modules
     for (path, program) in &modules {
+        // Import only types
+        let mut import_env = Environment::new();
+        for stmt in &program.main.stmts {
+            if let UntypedStmt::Import(range) = &stmt.kind {
+                import_only_type_by_range(
+                    &mut import_env,
+                    &envs,
+                    &stmt.span,
+                    &program.module_path.parent().unwrap(),
+                    range,
+                );
+            }
+        }
+
         let env = envs.get_mut(path).unwrap();
+        env.push_env(import_env);
         analyze_typedef(&program.main, env);
     }
 

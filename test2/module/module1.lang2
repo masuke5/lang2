@@ -1,4 +1,4 @@
-import module::module2::{pow_inner, Dir};
+import ::module::module2::{pow_inner, Dir};
 
 type File struct {
     name: *string,

@@ -1,4 +1,4 @@
-import module::module1::{File, pow};
+import ::module::module1::{File, pow};
 
 type Dir struct {
     first_file: *File,
