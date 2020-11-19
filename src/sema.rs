@@ -491,6 +491,43 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn get_path_type(&self, span: &Span, path: &SymbolPath) -> Option<Type> {
+        // This is safe because the path has 2 segments at least
+        let head = path.head().unwrap();
+        let rest = path.pop_head().unwrap();
+
+        // Consider that the path is an implementation function in a module
+        if rest.segments.len() == 1 {
+            let tail = rest.tail().unwrap();
+
+            // In self module
+            if let Some(func) = self.env.find_impl_func(head.id, tail.id) {
+                return Some(func.generate_arrow_type());
+            }
+
+            // In external module
+            if let Some(ScopeType::Def(tydef)) = self.env.find_type(head.id) {
+                if let Some(func) = self.module_envs[&tydef.module].find_impl_func(head.id, tail.id)
+                {
+                    return Some(func.generate_arrow_type());
+                }
+            }
+        }
+
+        match self.env.find_module(head.id) {
+            Some(module_path) if !path.is_absolute => {
+                let absolute_path = module_path.clone().join(&rest);
+                self.get_type_to_path(&span, &absolute_path)
+            }
+            _ => {
+                // Consider the path is absolute
+                let mut path = path.clone();
+                path.is_absolute = true;
+                self.get_type_to_path(&span, &path)
+            }
+        }
+    }
+
     fn analyze_expr(&mut self, func: &Function, expr: UntypedExpr) -> Option<TypedExpr> {
         let (kind, ty) = match expr.kind {
             UExpr::Literal(Literal::Number(n)) => (TExpr::Literal(Literal::Number(n)), Type::Int),
@@ -737,7 +774,7 @@ impl<'a> Analyzer<'a> {
                             kind: TExpr::Variable(name, is_mutable),
                             span: expr.span,
                             ty: var.ty.clone(),
-                            is_mutable,
+                            is_mutable: var.is_mutable,
                             is_lvalue: true,
                             is_in_heap: var.is_in_heap,
                             convert_to: None,
@@ -750,23 +787,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             UExpr::Path(path) => {
-                // This is safe because the path has 2 segments at least
-                let head = path.head().unwrap();
-                let rest = path.pop_head().unwrap();
-
-                let ty = match self.env.find_module(head.id) {
-                    Some(module_path) if !path.is_absolute => {
-                        let absolute_path = module_path.clone().join(&rest);
-                        self.get_type_to_path(&expr.span, &absolute_path)
-                    }
-                    _ => {
-                        // Consider the path is absolute
-                        let mut path = path.clone();
-                        path.is_absolute = true;
-                        self.get_type_to_path(&expr.span, &path)
-                    }
-                }?;
-
+                let ty = self.get_path_type(&expr.span, &path)?;
                 (TExpr::Path(path), ty)
             }
             UExpr::Call(func_expr, arg_expr) => {
@@ -798,8 +819,10 @@ impl<'a> Analyzer<'a> {
                 let ty = self.expand_name(ptr_expr.ty.clone());
                 let ty = expand_unique(ty);
                 let ty = subst(ty, &FxHashMap::default());
-                let is_mutable = match &ty {
-                    Type::App(TypeCon::Pointer(is_mutable), _) => *is_mutable,
+                let (ty, is_mutable) = match &ty {
+                    Type::App(TypeCon::Pointer(is_mutable), types) => {
+                        (types[0].clone(), *is_mutable)
+                    }
                     _ => {
                         error!(&ptr_expr.span, "type `{}` is not pointer", ty);
                         return None;
