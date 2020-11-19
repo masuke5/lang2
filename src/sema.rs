@@ -62,7 +62,7 @@ pub fn dump_typed_func(func: &TypedFunction, depth: usize) {
         print!("<");
         print!(
             "{}",
-            format_iter(func.ty_params.iter().map(|var| format!("{:?}", var)))
+            format_iter(func.ty_params.iter().map(|var| format!("{}", var)))
         );
         print!(">");
     }
@@ -725,7 +725,7 @@ impl<'a> Analyzer<'a> {
                     kind: TExpr::Field(box comp_expr, field),
                     span: expr.span,
                     ty: result_ty,
-                    convert_to: None,
+                    converted_from: None,
                 });
             }
             UExpr::Subscript(array_expr, subscript_expr) => {
@@ -746,8 +746,9 @@ impl<'a> Analyzer<'a> {
 
                 // Check and get the element type
                 let element_ty = match array_ty {
-                    Type::App(TypeCon::Array(..), types) | Type::App(TypeCon::Slice(..), types) => {
-                        types[0].clone()
+                    Type::App(TypeCon::Array(..), types) => types[0].clone(),
+                    Type::App(TypeCon::Slice(is_mutable), types) => {
+                        Type::App(TypeCon::Pointer(is_mutable), types)
                     }
                     _ => {
                         error!(
@@ -771,7 +772,7 @@ impl<'a> Analyzer<'a> {
                     is_mutable,
                     is_lvalue,
                     is_in_heap: false,
-                    convert_to: None,
+                    converted_from: None,
                 });
             }
             UExpr::Range(..) => {
@@ -800,13 +801,27 @@ impl<'a> Analyzer<'a> {
                 unify(&lhs.span, &lhs.ty, &ty);
                 unify(&rhs.span, &rhs.ty, &ty);
 
-                (TExpr::BinOp(binop, box lhs, box rhs), ty)
+                let result_ty = match &binop {
+                    BinOp::Equal
+                    | BinOp::NotEqual
+                    | BinOp::LessThan
+                    | BinOp::LessThanOrEqual
+                    | BinOp::GreaterThan
+                    | BinOp::GreaterThanOrEqual => Type::Bool,
+                    _ => ty,
+                };
+
+                (TExpr::BinOp(binop, box lhs, box rhs), result_ty)
             }
             UExpr::Variable(name, is_mutable) => {
                 let entry = match self.env.find_entry(name) {
                     Some(entry) => entry,
                     None => {
-                        error!(&expr.span, "variable `{}` is undefined", IdMap::name(name));
+                        error!(
+                            &expr.span,
+                            "variable or function `{}` is undefined",
+                            IdMap::name(name)
+                        );
                         return None;
                     }
                 };
@@ -820,7 +835,7 @@ impl<'a> Analyzer<'a> {
                             is_mutable: var.is_mutable,
                             is_lvalue: true,
                             is_in_heap: var.is_in_heap,
-                            convert_to: None,
+                            converted_from: None,
                         });
                     }
                     Entry::Function(func) => {
@@ -889,14 +904,93 @@ impl<'a> Analyzer<'a> {
                     is_lvalue: true,
                     is_mutable,
                     is_in_heap: false,
-                    convert_to: None,
+                    converted_from: None,
                 });
             }
-            UExpr::Address(inner_expr, is_mutable) => {
-                let inner_expr = self.analyze_expr(func, *inner_expr)?;
-                let ty = Type::App(TypeCon::Pointer(is_mutable), vec![inner_expr.ty.clone()]);
-                (TExpr::Address(box inner_expr, is_mutable), ty)
-            }
+            UExpr::Address(inner_expr, is_mutable) => match inner_expr.kind {
+                UExpr::Subscript(
+                    list_expr,
+                    box UntypedExpr {
+                        kind: UExpr::Range(start_expr, end_expr),
+                        span: subscript_span @ _,
+                        ..
+                    },
+                ) => {
+                    let list_expr = self.analyze_expr(func, *list_expr);
+                    let start_expr = if let Some(start_expr) = start_expr {
+                        self.analyze_expr_with_conv(func, *start_expr, &Type::Int)
+                            .map(|expr| Some(expr))
+                    } else {
+                        Some(None)
+                    };
+                    let end_expr = if let Some(end_expr) = end_expr {
+                        self.analyze_expr_with_conv(func, *end_expr, &Type::Int)
+                            .map(|expr| Some(expr))
+                    } else {
+                        Some(None)
+                    };
+                    try_some!(list_expr, start_expr, end_expr);
+
+                    if let Some(start_expr) = &start_expr {
+                        unify(&start_expr.span, &start_expr.ty, &Type::Int);
+                    }
+                    if let Some(end_expr) = &end_expr {
+                        unify(&end_expr.span, &end_expr.ty, &Type::Int);
+                    }
+
+                    if list_expr.is_lvalue && is_mutable && !list_expr.is_mutable {
+                        error!(&list_expr.span, "this expression is immutable");
+                    }
+
+                    let list_ty = self.expand_name(list_expr.ty.clone());
+                    let list_ty = expand_unique(list_ty);
+                    let list_ty = subst(list_ty, &FxHashMap::default());
+                    let element_ty = match list_ty {
+                        Type::App(TypeCon::Array(..), types)
+                        | Type::App(TypeCon::Slice(..), types) => types[0].clone(),
+                        _ => {
+                            error!(
+                                &list_expr.span,
+                                "type `{}` is not array or slice", list_expr.ty
+                            );
+                            return None;
+                        }
+                    };
+
+                    let result_ty = Type::App(TypeCon::Slice(is_mutable), vec![element_ty]);
+                    (
+                        TExpr::Address(
+                            box TypedExpr::new(
+                                TExpr::Subscript(
+                                    box list_expr,
+                                    box TypedExpr::new(
+                                        TExpr::Range(
+                                            start_expr.map(Box::new),
+                                            end_expr.map(Box::new),
+                                        ),
+                                        subscript_span,
+                                        Type::Null,
+                                    ),
+                                ),
+                                inner_expr.span,
+                                Type::Null,
+                            ),
+                            is_mutable,
+                        ),
+                        result_ty,
+                    )
+                }
+                _ => {
+                    let inner_expr = self.analyze_expr(func, *inner_expr)?;
+                    if inner_expr.is_lvalue && is_mutable && !inner_expr.is_mutable {
+                        error!(&inner_expr.span, "this expression is immutable");
+                    }
+
+                    let result_ty =
+                        Type::App(TypeCon::Pointer(is_mutable), vec![inner_expr.ty.clone()]);
+                    (TExpr::Address(box inner_expr, is_mutable), result_ty)
+                }
+            },
             UExpr::Negative(inner_expr) => {
                 let inner_expr = self.analyze_expr(func, *inner_expr)?;
                 unify(&inner_expr.span, &inner_expr.ty, &Type::Int);
@@ -908,7 +1002,7 @@ impl<'a> Analyzer<'a> {
                 (TExpr::Not(box inner_expr), Type::Bool)
             }
             UExpr::Block(block) => {
-                let block = self.analyze_block(func, block, false)?;
+                let block = pushed_scope!(self.env, { self.analyze_block(func, block, false) })?;
                 let ty = block.result_expr.ty.clone();
                 (TExpr::Block(block), ty)
             }
@@ -977,20 +1071,42 @@ impl<'a> Analyzer<'a> {
     }
 
     fn convert_analyzed_expr(&self, mut expr: TypedExpr, ty: &Type) -> Option<TypedExpr> {
+        if let TExpr::Tuple(exprs) = &mut expr.kind {
+            if let Type::App(TypeCon::Tuple, types) = ty {
+                let mut converted_types = Vec::with_capacity(types.len());
+                for (expr, formal_ty) in exprs.iter_mut().zip(types) {
+                    if let Some(converted_expr) =
+                        self.convert_analyzed_expr(expr.clone(), formal_ty)
+                    {
+                        converted_types.push(converted_expr.ty.clone());
+                        *expr = converted_expr;
+                    }
+                }
+
+                expr.ty = Type::App(TypeCon::Tuple, converted_types);
+                return Some(expr);
+            }
+        }
+
         match (&expr.ty, ty) {
             (l, r) if l == r => {}
             (Type::Int, Type::UInt)
             | (Type::UInt, Type::Int)
-            // Pointer weakening
-            | (Type::App(TypeCon::Pointer(true), ..), Type::App(TypeCon::Pointer(false), ..))
-            | (Type::App(TypeCon::Slice(true), ..), Type::App(TypeCon::Slice(false), ..))
             // Pointer and null
             | (Type::App(TypeCon::Pointer(..), ..), Type::Null)
             | (Type::Null, Type::App(TypeCon::Pointer(..), ..)) => {}
+            // Pointer weakening
+            (Type::App(TypeCon::Pointer(true), ltypes), Type::App(TypeCon::Pointer(false), rtypes))
+            | (Type::App(TypeCon::Slice(true), ltypes), Type::App(TypeCon::Slice(false), rtypes))
+                if ltypes[0] == rtypes[0] => {},
             _ =>  return Some(expr),
         }
 
-        expr.convert_to = Some(ty.clone());
+        if expr.ty != *ty {
+            expr.converted_from = Some(expr.ty);
+            expr.ty = ty.clone();
+        }
+
         Some(expr)
     }
 
@@ -1053,45 +1169,45 @@ impl<'a> Analyzer<'a> {
         block: UntypedBlock,
         is_top_level: bool,
     ) -> Option<TypedBlock> {
-        pushed_scope!(self.env, {
-            if !is_top_level {
-                generate_type_headers(&block, &self.module_path, &mut self.env);
-                analyze_typedef(&block, &mut self.env);
-                generate_function_headers(&block, &self.module_path, &mut self.env);
+        if !is_top_level {
+            generate_type_headers(&block, &self.module_path, &mut self.env);
+            analyze_typedef(&block, &mut self.env);
+            generate_function_headers(&block, &self.module_path, &mut self.env);
+        }
+
+        let mut stmts = Vec::with_capacity(block.stmts.len());
+        for stmt in block.stmts {
+            if let Some(stmt) = self.analyze_stmt(func, stmt) {
+                stmts.push(stmt);
             }
+        }
 
-            for block_func in block.functions {
-                let header = match self.env.find_entry(block_func.name.kind) {
-                    Some(Entry::Function(func)) => func.clone(),
-                    _ => return None,
-                };
+        let result_expr = self.analyze_expr(func, *block.result_expr)?;
 
-                // Generate the function name
-                let func_name = if is_top_level {
-                    block_func.name.kind
-                } else {
-                    self.generate_inner_function_name(block_func.name.kind)
-                };
+        // Analyze functions
+        for block_func in block.functions {
+            let header = match self.env.find_entry(block_func.name.kind) {
+                Some(Entry::Function(func)) => func.clone(),
+                _ => return None,
+            };
 
-                if let Some(func) = self.analyze_func(func_name, block_func, &header) {
-                    self.functions.insert(func.name, func);
-                }
+            // Generate the function name
+            let func_name = if is_top_level {
+                block_func.name.kind
+            } else {
+                self.generate_inner_function_name(block_func.name.kind)
+            };
+
+            if let Some(func) = self.analyze_func(func_name, block_func, &header) {
+                self.functions.insert(func.name, func);
             }
+        }
 
-            let mut stmts = Vec::with_capacity(block.stmts.len());
-            for stmt in block.stmts {
-                if let Some(stmt) = self.analyze_stmt(func, stmt) {
-                    stmts.push(stmt);
-                }
-            }
-
-            let result_expr = self.analyze_expr(func, *block.result_expr)?;
-            Some(TypedBlock {
-                types: Vec::new(),
-                functions: Vec::new(),
-                stmts,
-                result_expr: box result_expr,
-            })
+        Some(TypedBlock {
+            types: Vec::new(),
+            functions: Vec::new(),
+            stmts,
+            result_expr: box result_expr,
         })
     }
 
@@ -1183,7 +1299,6 @@ impl<'a> Analyzer<'a> {
                     Some(ty) => {
                         let ty = analyze_type(&self.env, &ty)?;
                         let init_expr = self.analyze_expr_with_conv(func, *init_expr, &ty)?;
-
                         unify(&init_expr.span, &init_expr.ty, &ty);
                         (ty, init_expr)
                     }
@@ -1260,18 +1375,6 @@ impl<'a> Analyzer<'a> {
     }
 
     fn analyze(mut self, program: UntypedProgram) -> Option<TypedProgram> {
-        // Analyze implement function bodies
-        for imp in program.impls {
-            for func in imp.functions {
-                let env = &self.module_envs[&program.module_path];
-                let func_name = Self::generate_impl_function_name(imp.target.kind, func.name.kind);
-                let func_header = env.find_impl_func(imp.target.kind, func.name.kind).unwrap();
-                if let Some(func) = self.analyze_func(func_name, func, func_header) {
-                    self.functions.insert(func_name, func);
-                }
-            }
-        }
-
         // Create a function as the main block
         let main_func = Function {
             name: *reserved_id::MAIN_FUNC,
@@ -1281,10 +1384,27 @@ impl<'a> Analyzer<'a> {
             ty_params: Vec::new(),
         };
 
-        let block = match self.analyze_block(&main_func, program.main, true) {
-            Some(block) => block,
-            None => return None,
-        };
+        let block = pushed_scope!(self.env, {
+            let block = match self.analyze_block(&main_func, program.main, true) {
+                Some(block) => block,
+                None => return None,
+            };
+
+            // Analyze implement function bodies
+            for imp in program.impls {
+                for func in imp.functions {
+                    let env = &self.module_envs[&program.module_path];
+                    let func_name =
+                        Self::generate_impl_function_name(imp.target.kind, func.name.kind);
+                    let func_header = env.find_impl_func(imp.target.kind, func.name.kind).unwrap();
+                    if let Some(func) = self.analyze_func(func_name, func, func_header) {
+                        self.functions.insert(func_name, func);
+                    }
+                }
+            }
+
+            block
+        });
 
         self.functions.insert(
             main_func.name,
@@ -1454,8 +1574,11 @@ fn analyze_func_type(
 ) -> Option<Entry> {
     pushed_scope!(env, {
         // Define type parameters
+        let mut ty_params = Vec::with_capacity(func.ty_params.len());
         for param in &func.ty_params {
-            env.define_type(param.kind, ScopeType::Var(TypeVar::with_id(param.kind)));
+            let var = TypeVar::with_id(param.kind);
+            env.define_type(param.kind, ScopeType::Var(var));
+            ty_params.push((param.kind, var));
         }
 
         // Analyze parameter types
@@ -1475,12 +1598,6 @@ fn analyze_func_type(
             Some(return_ty) => return_ty,
             None => return None,
         };
-
-        let ty_params = func
-            .ty_params
-            .iter()
-            .map(|name| (name.kind, TypeVar::with_id(name.kind)))
-            .collect();
 
         Some(Entry::Function(Function {
             name: func.name.kind,

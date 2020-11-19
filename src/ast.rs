@@ -322,7 +322,7 @@ pub struct Typed<K, T> {
     pub is_mutable: bool, // when is_lvalue is true
     pub is_lvalue: bool,
     pub is_in_heap: bool,
-    pub convert_to: Option<T>,
+    pub converted_from: Option<T>,
 }
 
 impl<K, T> Typed<K, T> {
@@ -334,7 +334,7 @@ impl<K, T> Typed<K, T> {
             is_mutable: false,
             is_lvalue: false,
             is_in_heap: false,
-            convert_to: None,
+            converted_from: None,
         }
     }
 }
@@ -611,13 +611,13 @@ pub fn dump_expr<T: fmt::Display>(expr: &Typed<Expr<T>, T>, depth: usize) {
             println!("[{}] {}", size, meta(expr));
             dump_expr(init_expr, depth + 1);
         }
-        Expr::Field(expr, field) => {
+        Expr::Field(inner_expr, field) => {
             match field {
                 Field::Number(i) => println!(".{} {}", i, meta(expr)),
                 Field::Id(id) => println!(".{} {}", IdMap::name(*id), meta(expr)),
             };
 
-            dump_expr(&expr, depth + 1);
+            dump_expr(&inner_expr, depth + 1);
         }
         Expr::Subscript(expr, subscript) => {
             println!("subscript {}", meta(expr));
