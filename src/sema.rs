@@ -355,11 +355,16 @@ impl<'a> Analyzer<'a> {
     fn expand_name(&self, ty: Type) -> Type {
         match ty {
             Type::App(TypeCon::Named(path), args) => {
-                let env = &self.module_envs[&path.parent().unwrap()];
-                let ty = env
-                    .find_type(path.tail().unwrap().id)
-                    .cloned()
-                    .expect("the type is created as Named despite the fact that it is undefined");
+                let ty = if path.parent().unwrap() == self.module_path {
+                    self.env.find_type(path.tail().unwrap().id).cloned().expect(
+                        "the type is created as Named despite the fact that it is undefined",
+                    )
+                } else {
+                    let env = &self.module_envs[&path.parent().unwrap()];
+                    env.find_type(path.tail().unwrap().id).cloned().expect(
+                        "the type is created as Named despite the fact that it is undefined",
+                    )
+                };
 
                 match ty {
                     ScopeType::Def(tydef) => {
@@ -535,10 +540,9 @@ impl<'a> Analyzer<'a> {
                 (TExpr::Literal(Literal::UnsignedNumber(n)), Type::UInt)
             }
             UExpr::Literal(Literal::Float(n)) => (TExpr::Literal(Literal::Float(n)), Type::Float),
-            UExpr::Literal(Literal::String(s)) => (
-                TExpr::Literal(Literal::String(s)),
-                Type::App(TypeCon::Pointer(false), vec![Type::String]),
-            ),
+            UExpr::Literal(Literal::String(s)) => {
+                (TExpr::Literal(Literal::String(s)), Type::String)
+            }
             UExpr::Literal(Literal::Char(c)) => (TExpr::Literal(Literal::Char(c)), Type::Char),
             UExpr::Literal(Literal::Unit) => (TExpr::Literal(Literal::Unit), Type::Unit),
             UExpr::Literal(Literal::True) => (TExpr::Literal(Literal::True), Type::Bool),
