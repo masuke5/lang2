@@ -368,6 +368,12 @@ impl<'a> Analyzer<'a> {
         IdMap::new_id(&name)
     }
 
+    fn expand(&self, ty: Type) -> Type {
+        let ty = self.expand_name(ty);
+        let ty = expand_all(ty);
+        ty
+    }
+
     fn expand_name(&self, ty: Type) -> Type {
         match ty {
             Type::App(TypeCon::Named(path, ..), args) => {
@@ -591,9 +597,7 @@ impl<'a> Analyzer<'a> {
                 let ty = analyze_type(&self.env, &ast_ty)?;
                 let result_ty = ty.clone();
 
-                let ty = self.expand_name(ty);
-                let ty = expand_unique(ty);
-                let mut ty = subst(ty, &FxHashMap::default());
+                let mut ty = self.expand(ty);
 
                 // Get the struct field types
                 let mut field_types = match get_field_types(&ty) {
@@ -685,9 +689,7 @@ impl<'a> Analyzer<'a> {
                     Type::App(TypeCon::Pointer(..), types) => types[0].clone(),
                     ty => ty.clone(),
                 };
-                let ty = self.expand_name(ty);
-                let ty = expand_unique(ty);
-                let ty = subst(ty, &FxHashMap::default());
+                let ty = self.expand(ty);
 
                 let is_mutable = match &comp_expr.ty {
                     Type::App(TypeCon::Pointer(is_mutable), ..) => *is_mutable,
@@ -761,9 +763,7 @@ impl<'a> Analyzer<'a> {
                     Type::App(TypeCon::Pointer(..), types) => types[0].clone(),
                     ty => ty,
                 };
-                let array_ty = self.expand_name(array_ty);
-                let array_ty = expand_unique(array_ty);
-                let array_ty = subst(array_ty, &FxHashMap::default());
+                let array_ty = self.expand(array_ty);
 
                 // Check and get the element type
                 let element_ty = match array_ty {
@@ -875,9 +875,7 @@ impl<'a> Analyzer<'a> {
                 try_some!(func_expr, arg_expr);
 
                 // Get the return type and check the argument type
-                let func_ty = self.expand_name(func_expr.ty.clone());
-                let func_ty = expand_unique(func_ty);
-                let func_ty = subst(func_ty, &FxHashMap::default());
+                let func_ty = self.expand(func_expr.ty.clone());
 
                 let return_ty = match func_ty {
                     Type::Poly(params, box Type::App(TypeCon::Arrow, types)) => {
@@ -905,9 +903,7 @@ impl<'a> Analyzer<'a> {
             UExpr::Dereference(ptr_expr) => {
                 let ptr_expr = self.analyze_expr(func, *ptr_expr)?;
 
-                let ty = self.expand_name(ptr_expr.ty.clone());
-                let ty = expand_unique(ty);
-                let ty = subst(ty, &FxHashMap::default());
+                let ty = self.expand(ptr_expr.ty.clone());
                 let (ty, is_mutable) = match &ty {
                     Type::App(TypeCon::Pointer(is_mutable), types) => {
                         (types[0].clone(), *is_mutable)
@@ -963,9 +959,7 @@ impl<'a> Analyzer<'a> {
                         error!(&list_expr.span, "this expression is immutable");
                     }
 
-                    let list_ty = self.expand_name(list_expr.ty.clone());
-                    let list_ty = expand_unique(list_ty);
-                    let list_ty = subst(list_ty, &FxHashMap::default());
+                    let list_ty = self.expand(list_expr.ty.clone());
                     let element_ty = match list_ty {
                         Type::App(TypeCon::Array(..), types)
                         | Type::App(TypeCon::Slice(..), types) => types[0].clone(),
