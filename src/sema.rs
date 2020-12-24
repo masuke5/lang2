@@ -46,6 +46,8 @@ pub struct TypedProgram {
     pub module_path: SymbolPath,
     // The function that a key is reserved_id::MAIN_FUNC is main function
     pub functions: FxHashMap<Id, TypedFunction>,
+    // To keep the order of structure fields
+    pub struct_fields: FxHashMap<Unique, Vec<(Id, Type)>>,
 }
 
 pub fn dump_typed_func(func: &TypedFunction, depth: usize) {
@@ -88,6 +90,15 @@ pub fn dump_typed_program(program: &TypedProgram, depth: usize) {
 
     for func in program.functions.values() {
         dump_typed_func(func, depth);
+    }
+
+    for (uniq, fields) in &program.struct_fields {
+        print!("{}", "  ".repeat(depth));
+        println!("{} fields:", uniq);
+        for (name, ty) in fields {
+            print!("{}", "  ".repeat(depth + 1));
+            println!("{}: {}", IdMap::name(*name), ty);
+        }
     }
 }
 
@@ -329,6 +340,7 @@ struct Analyzer<'a> {
     module_path: SymbolPath,
     env: Environment,
     functions: FxHashMap<Id, TypedFunction>,
+    struct_fields: FxHashMap<Unique, Vec<(Id, Type)>>,
     uniq: usize,
 }
 
@@ -339,6 +351,7 @@ impl<'a> Analyzer<'a> {
             module_envs,
             module_path,
             functions: FxHashMap::default(),
+            struct_fields: FxHashMap::default(),
             uniq: 0,
         }
     }
@@ -1183,6 +1196,22 @@ impl<'a> Analyzer<'a> {
             generate_function_headers(&block, &self.module_path, &mut self.env);
         }
 
+        // Get defined structure fields
+        for (_, def) in self.env.types() {
+            if !self.struct_fields.contains_key(&def.uniq) && def.module == self.module_path {
+                match def.body.as_ref().unwrap() {
+                    TypeCon::Unique(
+                        box TypeCon::Fun(_, box Type::App(TypeCon::Struct(names), types)),
+                        ..,
+                    ) => {
+                        let fields = names.iter().copied().zip(types.iter().cloned()).collect();
+                        self.struct_fields.insert(def.uniq, fields);
+                    }
+                    _ => panic!(),
+                }
+            }
+        }
+
         let mut stmts = Vec::with_capacity(block.stmts.len());
         for stmt in block.stmts {
             if let Some(stmt) = self.analyze_stmt(func, stmt) {
@@ -1433,6 +1462,7 @@ impl<'a> Analyzer<'a> {
         Some(TypedProgram {
             module_path: self.module_path,
             functions: self.functions,
+            struct_fields: self.struct_fields,
         })
     }
 }
