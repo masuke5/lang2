@@ -142,6 +142,8 @@ struct TypeDef {
     name: Id,
     body: Option<TypeCon>,
     module: SymbolPath,
+    // Distinguish between type definitions in different scopes in the same module
+    uniq: Unique,
 }
 
 impl TypeDef {
@@ -150,6 +152,7 @@ impl TypeDef {
             name,
             body: None,
             module,
+            uniq: Unique::new(),
         }
     }
 
@@ -354,7 +357,7 @@ impl<'a> Analyzer<'a> {
 
     fn expand_name(&self, ty: Type) -> Type {
         match ty {
-            Type::App(TypeCon::Named(path), args) => {
+            Type::App(TypeCon::Named(path, ..), args) => {
                 let ty = if path.parent().unwrap() == self.module_path {
                     self.env.find_type(path.tail().unwrap().id).cloned().expect(
                         "the type is created as Named despite the fact that it is undefined",
@@ -628,7 +631,8 @@ impl<'a> Analyzer<'a> {
                 let ty_func = self.expand_name(result_ty.clone());
                 let mut args = Vec::new();
                 match ty_func {
-                    Type::App(TypeCon::Fun(params, ..), ..) => {
+                    Type::App(TypeCon::Fun(params, ..), ..)
+                    | Type::App(TypeCon::Unique(box TypeCon::Fun(params, ..), ..), ..) => {
                         args.reserve(params.len());
                         for param in params {
                             let arg_ty = var_map
@@ -1508,7 +1512,9 @@ fn analyze_type(env: &Environment, ty: &Spanned<AstType>) -> Option<Type> {
         AstType::Unit => Some(Type::Unit),
         AstType::String => Some(Type::String),
         AstType::Named(name) => match env.find_type(*name) {
-            Some(ScopeType::Def(def)) => Some(Type::App(TypeCon::Named(def.path()), Vec::new())),
+            Some(ScopeType::Def(def)) => {
+                Some(Type::App(TypeCon::Named(def.path(), def.uniq), Vec::new()))
+            }
             Some(ScopeType::Var(var)) => Some(Type::Var(*var)),
             None => {
                 error!(&ty.span, "type `{}` not found", IdMap::name(*name));
@@ -1543,7 +1549,7 @@ fn analyze_type(env: &Environment, ty: &Spanned<AstType>) -> Option<Type> {
         )),
         AstType::App(name, types) => {
             let tycon = match env.find_type(name.kind) {
-                Some(ScopeType::Def(def)) => TypeCon::Named(def.path()),
+                Some(ScopeType::Def(def)) => TypeCon::Named(def.path(), def.uniq),
                 Some(ScopeType::Var(var)) => {
                     error!(&name.span, "cannot instantiate type variable `{}`", var);
                     return None;
@@ -1629,7 +1635,10 @@ fn analyze_typedef(block: &UntypedBlock, env: &mut Environment) {
                 Some(ScopeType::Def(tydef)) => tydef,
                 _ => panic!(),
             };
-            tydef.body = Some(TypeCon::Fun(param_vars, box ty));
+            tydef.body = Some(TypeCon::Unique(
+                box TypeCon::Fun(param_vars, box ty),
+                Unique::new(),
+            ));
         }
     }
 }
