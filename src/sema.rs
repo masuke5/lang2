@@ -46,8 +46,7 @@ pub struct TypedProgram {
     pub module_path: SymbolPath,
     // The function that a key is reserved_id::MAIN_FUNC is main function
     pub functions: FxHashMap<Id, TypedFunction>,
-    // To keep the order of structure fields
-    pub struct_fields: FxHashMap<Unique, Vec<(Id, Type)>>,
+    pub all_types: FxHashMap<Unique, TypeCon>,
 }
 
 pub fn dump_typed_func(func: &TypedFunction, depth: usize) {
@@ -92,13 +91,9 @@ pub fn dump_typed_program(program: &TypedProgram, depth: usize) {
         dump_typed_func(func, depth);
     }
 
-    for (uniq, fields) in &program.struct_fields {
+    for (uniq, tycon) in &program.all_types {
         print!("{}", "  ".repeat(depth));
-        println!("{} fields:", uniq);
-        for (name, ty) in fields {
-            print!("{}", "  ".repeat(depth + 1));
-            println!("{}: {}", IdMap::name(*name), ty);
-        }
+        println!("Type {}: {}", uniq, tycon);
     }
 }
 
@@ -340,7 +335,7 @@ struct Analyzer<'a> {
     module_path: SymbolPath,
     env: Environment,
     functions: FxHashMap<Id, TypedFunction>,
-    struct_fields: FxHashMap<Unique, Vec<(Id, Type)>>,
+    all_types: FxHashMap<Unique, TypeCon>,
     uniq: usize,
 }
 
@@ -351,7 +346,7 @@ impl<'a> Analyzer<'a> {
             module_envs,
             module_path,
             functions: FxHashMap::default(),
-            struct_fields: FxHashMap::default(),
+            all_types: FxHashMap::default(),
             uniq: 0,
         }
     }
@@ -1192,14 +1187,10 @@ impl<'a> Analyzer<'a> {
 
         // Get defined structure fields
         for (_, def) in self.env.types() {
-            if !self.struct_fields.contains_key(&def.uniq) && def.module == self.module_path {
+            if !self.all_types.contains_key(&def.uniq) && def.module == self.module_path {
                 match def.body.as_ref().unwrap() {
-                    TypeCon::Unique(
-                        box TypeCon::Fun(_, box Type::App(TypeCon::Struct(names), types)),
-                        ..,
-                    ) => {
-                        let fields = names.iter().copied().zip(types.iter().cloned()).collect();
-                        self.struct_fields.insert(def.uniq, fields);
+                    TypeCon::Unique(tycon, uniq) => {
+                        self.all_types.insert(*uniq, (**tycon).clone());
                     }
                     _ => panic!(),
                 }
@@ -1456,7 +1447,7 @@ impl<'a> Analyzer<'a> {
         Some(TypedProgram {
             module_path: self.module_path,
             functions: self.functions,
-            struct_fields: self.struct_fields,
+            all_types: self.all_types,
         })
     }
 }
@@ -1661,7 +1652,7 @@ fn analyze_typedef(block: &UntypedBlock, env: &mut Environment) {
             };
             tydef.body = Some(TypeCon::Unique(
                 box TypeCon::Fun(param_vars, box ty),
-                Unique::new(),
+                tydef.uniq,
             ));
         }
     }
