@@ -97,13 +97,13 @@ impl Unique {
 
 impl fmt::Display for Unique {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unique({})", self.0)
+        write!(f, "u{}", self.0)
     }
 }
 
 impl fmt::Debug for Unique {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "Unique({})", self)
     }
 }
 
@@ -167,8 +167,8 @@ impl fmt::Display for Type {
                 write!(f, "{}", Type::App(*tycon.clone(), types.clone()))
             }
             #[cfg(not(debug_assertions))]
-            Self::App(TypeCon::Named(name), types) => {
-                write!(f, "{}", IdMap::name(*name))?;
+            Self::App(TypeCon::Named(name, ..), types) => {
+                write!(f, "{}", name)?;
                 if !types.is_empty() {
                     write!(f, "<")?;
                     write_iter!(f, types.iter())?;
@@ -212,7 +212,7 @@ pub enum TypeCon {
     Slice(bool),
     Fun(Vec<TypeVar>, Box<Type>),
     Unique(Box<TypeCon>, Unique),
-    Named(SymbolPath),
+    Named(SymbolPath, Unique),
 }
 
 impl fmt::Display for TypeCon {
@@ -231,10 +231,13 @@ impl fmt::Display for TypeCon {
             Self::Fun(params, body) => {
                 write!(f, "fun(")?;
                 write_iter!(f, params.iter().map(|a| format!("{}", a)))?;
-                write!(f, ") = {}", body)
+                write!(f, ") -> {}", body)
             }
             Self::Unique(tycon, uniq) => write!(f, "unique({}){{{}}}", tycon, uniq),
-            Self::Named(name) => write!(f, "{}", name),
+            #[cfg(debug_assertions)]
+            Self::Named(name, uniq) => write!(f, "{}[{}]", name, uniq),
+            #[cfg(not(debug_assertions))]
+            Self::Named(name, ..) => write!(f, "{}", name),
         }
     }
 }
@@ -284,6 +287,7 @@ pub fn subst(ty: Type, map: &FxHashMap<TypeVar, Type>) -> Type {
 pub fn unify(span: &Span, a: &Type, b: &Type) -> Option<()> {
     let result = unify_inner(span, a, b);
     if result.is_none() {
+        // TODO: Namedのuniqが違うときに分かりやすいエラーを出す
         error!(&span.clone(), "`{}` is not equivalent to `{}`", a, b);
     }
 
@@ -350,14 +354,14 @@ pub fn unify_inner(span: &Span, a: &Type, b: &Type) -> Option<()> {
     }
 }
 
-pub fn expand_unique(ty: Type) -> Type {
+pub fn expand_all(ty: Type) -> Type {
     match ty {
         Type::App(TypeCon::Fun(params, body), args) => {
             // { params_i -> args_i }
             let map: FxHashMap<TypeVar, Type> = params.into_iter().zip(args.into_iter()).collect();
-            expand_unique(subst(*body, &map))
+            expand_all(subst(*body, &map))
         }
-        Type::App(TypeCon::Unique(tycon, _), tys) => expand_unique(Type::App(*tycon, tys)),
+        Type::App(TypeCon::Unique(tycon, _), tys) => expand_all(Type::App(*tycon, tys)),
         ty => ty,
     }
 }

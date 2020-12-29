@@ -33,7 +33,7 @@ pub struct TypedParam {
 
 #[derive(Debug, Clone)]
 pub struct TypedFunction {
-    pub name: Id,
+    pub name: Spanned<Id>,
     pub params: Vec<TypedParam>,
     pub return_ty: Type,
     pub body: TypedExpr,
@@ -53,7 +53,7 @@ pub fn dump_typed_func(func: &TypedFunction, depth: usize) {
     // Print indent
     print!("{}", "  ".repeat(depth));
 
-    print!("{}", IdMap::name(func.name));
+    print!("{}", IdMap::name(func.name.kind));
 
     if func.has_escaped_variables {
         print!(" \x1b[32mhas escaped vars\x1b[0m");
@@ -786,7 +786,7 @@ impl<'a> Analyzer<'a> {
                     span: expr.span,
                     ty: element_ty,
                     is_mutable,
-                    is_lvalue,
+                    is_lvalue, // XXX: 常にtrueでもいいかもしれない（Rustはそう）
                     is_in_heap: false,
                     converted_from: None,
                 });
@@ -1164,7 +1164,7 @@ impl<'a> Analyzer<'a> {
             .collect();
 
         Some(TypedFunction {
-            name,
+            name: Spanned::new(name, func.name.span),
             params,
             body,
             return_ty: header.return_ty.clone(),
@@ -1207,6 +1207,7 @@ impl<'a> Analyzer<'a> {
         let result_expr = self.analyze_expr(func, *block.result_expr)?;
 
         // Analyze functions
+        let mut function_ids = Vec::with_capacity(block.functions.len());
         for block_func in block.functions {
             let header = match self.env.find_entry(block_func.name.kind) {
                 Some(Entry::Function(func)) => func.clone(),
@@ -1221,13 +1222,15 @@ impl<'a> Analyzer<'a> {
             };
 
             if let Some(func) = self.analyze_func(func_name, block_func, &header) {
-                self.functions.insert(func.name, func);
+                self.functions.insert(func.name.kind, func);
+                function_ids.push(func_name);
             }
         }
 
         Some(TypedBlock {
             types: Vec::new(),
             functions: Vec::new(),
+            function_ids,
             stmts,
             result_expr: box result_expr,
         })
@@ -1431,7 +1434,7 @@ impl<'a> Analyzer<'a> {
         self.functions.insert(
             main_func.name,
             TypedFunction {
-                name: main_func.name,
+                name: Spanned::new(main_func.name, Span::zero(*reserved_id::MAIN_FUNC)),
                 params: Vec::new(),
                 return_ty: Type::Unit,
                 body: Typed::new(

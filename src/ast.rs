@@ -409,6 +409,7 @@ pub struct AstFunction<T> {
 pub struct Block<T> {
     pub types: Vec<AstTypeDef>,
     pub functions: Vec<AstFunction<T>>,
+    pub function_ids: Vec<Id>, // for gen_bc
     pub stmts: Vec<Spanned<Stmt<T>>>,
     pub result_expr: Box<Typed<Expr<T>, T>>,
 }
@@ -545,6 +546,7 @@ pub fn dump_func<T: fmt::Display>(func: &AstFunction<T>, depth: usize) {
 
 pub fn dump_block<T: fmt::Display>(block: &Block<T>, depth: usize) {
     for ty in &block.types {
+        print!("{}", "  ".repeat(depth));
         println!(
             "type {}<{}> {}",
             IdMap::name(ty.name),
@@ -555,6 +557,14 @@ pub fn dump_block<T: fmt::Display>(block: &Block<T>, depth: usize) {
 
     for func in &block.functions {
         dump_func(func, depth);
+    }
+
+    if !block.function_ids.is_empty() {
+        print!("{}", "  ".repeat(depth));
+        println!(
+            "functions: {}",
+            format_iter(block.function_ids.iter().map(|id| IdMap::name(*id)))
+        );
     }
 
     for stmt in &block.stmts {

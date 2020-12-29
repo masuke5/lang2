@@ -70,6 +70,7 @@ impl BlockBuilder {
         let def = self.defs.pop().unwrap();
         Block {
             functions: def.functions,
+            function_ids: Vec::new(),
             types: def.types,
             stmts,
             result_expr: Box::new(result_expr),

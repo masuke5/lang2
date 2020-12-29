@@ -13,9 +13,19 @@ use thiserror::Error;
 #[allow(dead_code)]
 pub mod opcode {
     #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    pub struct Opcode(pub u8);
+    pub struct Opcode(u8);
 
     impl Opcode {
+        #[inline]
+        pub fn from(code: u8) -> Self {
+            Self(code)
+        }
+
+        #[inline]
+        pub fn code(self) -> u8 {
+            self.0
+        }
+
         #[inline]
         pub fn is_extended(self) -> bool {
             (self.0 >> 7) != 0
@@ -27,7 +37,7 @@ pub mod opcode {
         }
     }
 
-    pub const NOP: Opcode = Opcode(0x1);
+    pub const NOP: Opcode = Opcode(0x0);
     pub const INT: Opcode = Opcode(0x2);
     pub const TINY_INT: Opcode = Opcode(0x3);
     pub const FLOAT: Opcode = Opcode(0x4);
@@ -173,7 +183,10 @@ pub mod opcode {
     }
 }
 
+// 24-bit
 const MAX_ARG: u32 = 0b1111_1111_1111_1111_1111_1111;
+const MAX_ARG_IMAX: i32 = 0b111_1111_1111_1111_1111_1111;
+const MAX_ARG_IMIN: i32 = -0b1000_0000_0000_0000_0000_0000;
 
 static NEXT_LABEL: AtomicU32 = AtomicU32::new(0);
 
@@ -342,15 +355,15 @@ impl BytecodeBuilder {
         Ok((self.strings.len() - 1) as u32)
     }
 
-    pub fn define_function(&mut self, name: Id, param_count: u32) -> Result<(), BuilderError> {
+    pub fn define_function(&mut self, name: Id, func: Function) -> Result<(), BuilderError> {
         if self.functions.len() >= MAX_ARG as usize {
             return Err(BuilderError::TooMany("too many functions", MAX_ARG as u64));
         }
-        if param_count >= MAX_ARG {
+        if func.param_count >= MAX_ARG {
             return Err(BuilderError::TooMany("too many parameters", MAX_ARG as u64));
         }
 
-        self.functions.insert(name, Function::new(param_count));
+        self.functions.insert(name, func);
         Ok(())
     }
 
@@ -386,7 +399,12 @@ impl BytecodeBuilder {
         function_ids
     }
 
-    fn build(self, function_ids: &FxHashMap<SymbolPath, FxHashMap<Id, u32>>) -> Vec<u8> {
+    fn build(mut self, function_ids: &FxHashMap<SymbolPath, FxHashMap<Id, u32>>) -> Vec<u8> {
+        // Insert END for all functions
+        for func in self.functions.values_mut() {
+            func.push_noarg(opcode::END);
+        }
+
         // Allocate IDs for modules
         let modules = {
             let mut next_id = 0;
@@ -425,14 +443,26 @@ impl BytecodeBuilder {
 
                 if arg > 0xff {
                     insts.push((op.extended(), (arg >> 16) as u8));
-                    insts.push((opcode::Opcode((arg >> 8) as u8), arg as u8));
+                    insts.push((opcode::Opcode::from((arg >> 8) as u8), arg as u8));
                 } else {
                     insts.push((op, arg as u8));
                 }
             }
 
             fn push_i32(insts: &mut Vec<(opcode::Opcode, u8)>, op: opcode::Opcode, arg: i32) {
-                push_u32(insts, op, u32::from_le_bytes(arg.to_le_bytes()));
+                fn i2u(n: i8) -> u8 {
+                    u8::from_le_bytes(n.to_le_bytes())
+                }
+
+                assert!(arg >= MAX_ARG_IMIN && arg <= MAX_ARG_IMAX);
+
+                if arg < -0x80 && arg > 0x7f {
+                    let raw = u32::from_le_bytes(arg.to_le_bytes());
+                    insts.push((op.extended(), i2u((arg >> 16) as i8)));
+                    insts.push((opcode::Opcode::from((raw >> 8) as u8), raw as u8));
+                } else {
+                    insts.push((op, i2u(arg as i8)));
+                }
             }
 
             let mut insts = Vec::with_capacity(function.insts.len());
@@ -514,6 +544,8 @@ pub struct BytecodeModule {
     pub strings: Vec<String>,
 }
 
+pub const HEADER: &[u8; 4] = b"LB02";
+
 impl BytecodeModule {
     pub fn from_bytes(bytes: Vec<u8>, path: &str) -> Option<Self> {
         type LE = LittleEndian;
@@ -527,7 +559,7 @@ impl BytecodeModule {
         // Check header
         let mut buf = [0u8; 4];
         bc.read_exact(&mut buf).ok()?;
-        if &buf != b"L201" {
+        if &buf != HEADER {
             return None;
         }
 
@@ -631,7 +663,7 @@ impl BytecodeModule {
         }
 
         let mut bc = Cursor::new(Vec::new());
-        bc.write_all(b"L201").unwrap();
+        bc.write_all(HEADER).unwrap();
         align(&mut bc);
 
         // Write modules
@@ -686,14 +718,14 @@ impl BytecodeModule {
         // Write instructions
         for (id, insts) in insts {
             // Write pos
+            let pos = bc.position();
             bc.seek(SeekFrom::Start(func_pos[&id])).unwrap();
-            bc.write_u64::<LE>(bc.position()).unwrap();
+            bc.write_u64::<LE>(pos).unwrap();
 
             // Write instructions
             bc.seek(SeekFrom::End(0)).unwrap();
-            bc.write_u64::<LE>(insts.len() as u64).unwrap();
             for (op, arg) in insts {
-                bc.write_u8(op.0).unwrap();
+                bc.write_u8(op.code()).unwrap();
                 bc.write_u8(arg).unwrap();
             }
 
@@ -706,16 +738,22 @@ impl BytecodeModule {
     pub fn dump_inst(&self, bytes: &[u8], pos: usize) {
         use opcode::*;
 
-        let op = opcode::Opcode(bytes[pos]);
+        let op = opcode::Opcode::from(bytes[pos]);
         let arg: u32 = if op.is_extended() {
             let arg = ((bytes[pos + 1] as u32) << 16)
                 | ((bytes[pos + 2] as u32) << 8)
                 | bytes[pos + 3] as u32;
-            print!("{:<5} {:02x}{:06x}  {}* ", pos, op.0, arg, op.name());
+            print!("{:<5} {:02x}{:06x}  {}* ", pos, op.code(), arg, op.name());
             arg
         } else {
             let arg = bytes[pos + 1];
-            print!("{:<5} {:02x}{:02x}  {}  ", pos, op.0, arg, op.name());
+            print!(
+                "{:<5} {:02x}{:02x}      {}  ",
+                pos,
+                op.code(),
+                arg,
+                op.name()
+            );
             arg as u32
         };
 
@@ -725,11 +763,18 @@ impl BytecodeModule {
             op if (BINOP_IADD..=BINOP_XOR).contains(&op) => println!(),
             INT => println!("{} ({})", arg, self.integers[arg as usize]),
             FLOAT => println!("{} ({})", arg, self.floats[arg as usize]),
-            STRING => println!("{} ({})", arg, self.strings[arg as usize]),
+            STRING => println!(
+                "{} (\"{}\")",
+                arg,
+                utils::escape_string(&self.strings[arg as usize])
+            ),
             MODULE => println!("{} ({})", arg, self.modules[arg as usize].0),
             SELF_FUNC => println!("{} ({})", arg, self.functions[arg as usize].name),
             JUMP | JUMP_IF_TRUE | JUMP_IF_FALSE => {
                 let arg = if op.is_extended() {
+                    // Move sign
+                    let sign_mask = arg & (1 << 23);
+                    let arg = arg & !sign_mask | (sign_mask << 8);
                     i32::from_le_bytes(arg.to_le_bytes())
                 } else {
                     i8::from_le_bytes([arg as u8]) as i32
@@ -782,10 +827,10 @@ impl BytecodeModule {
             println!("Function {} ({})", func.name, func.id);
 
             let mut pos = func.pos;
-            while bytes[pos] != END.0 {
+            while bytes[pos] != END.code() {
                 self.dump_inst(bytes, pos);
 
-                let op = Opcode(bytes[pos]);
+                let op = Opcode::from(bytes[pos]);
                 if op.is_extended() {
                     pos += 4;
                 } else {

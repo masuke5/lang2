@@ -15,6 +15,7 @@ mod ast;
 mod bytecode;
 mod escape;
 mod gc;
+mod gen_bc;
 mod heapvar;
 pub mod id;
 mod lexer;
@@ -30,6 +31,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use ast::*;
+use bytecode::BytecodeModule;
 use id::Id;
 use lexer::Lexer;
 use parser::Parser;
@@ -147,6 +149,19 @@ impl ExecuteOption {
             for (path, program) in &typed_modules {
                 println!("Module {}", path);
                 sema::dump_typed_program(program, 0);
+            }
+        }
+
+        let builders = match gen_bc::gen_bytecodes(typed_modules) {
+            Some(builders) => builders,
+            None => return None,
+        };
+        let bc_modules = bytecode::build_bytecode(builders);
+
+        if self.mode == ExecuteMode::DumpInstruction {
+            for (name, bytes) in bc_modules {
+                let module = BytecodeModule::from_bytes(bytes.clone(), &name).unwrap();
+                module.dump_instructions(&bytes);
             }
         }
 
