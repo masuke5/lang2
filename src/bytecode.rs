@@ -12,7 +12,7 @@ use thiserror::Error;
 
 #[allow(dead_code)]
 pub mod opcode {
-    #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
     pub struct Opcode(u8);
 
     impl Opcode {
@@ -24,6 +24,11 @@ pub mod opcode {
         #[inline]
         pub fn code(self) -> u8 {
             self.0
+        }
+
+        #[inline]
+        pub fn kind(self) -> Opcode {
+            Self(self.0 & !(1 << 7))
         }
 
         #[inline]
@@ -109,7 +114,7 @@ pub mod opcode {
 
     impl Opcode {
         pub fn name(self) -> &'static str {
-            match self {
+            match self.kind() {
                 NOP => "NOP",
                 INT => "INT",
                 TINY_INT => "TINY_INT",
@@ -225,6 +230,7 @@ pub enum BuilderError {
 enum Inst {
     Function(SymbolPath, Id),
     Normal(Opcode, u32),
+    NormalI(Opcode, i32),
     Jump(Opcode, Label),
 }
 
@@ -285,6 +291,16 @@ impl Function {
         }
 
         self.insts.push(Inst::Normal(opcode, arg));
+        Ok(())
+    }
+
+    pub fn pushi<T: Into<i32>>(&mut self, opcode: Opcode, arg: T) -> Result<(), BuilderError> {
+        let arg = arg.into();
+        if arg < MAX_ARG_IMIN || arg > MAX_ARG_IMAX {
+            return Err(BuilderError::OutOfRange(MAX_ARG_IMAX as u64));
+        }
+
+        self.insts.push(Inst::NormalI(opcode, arg));
         Ok(())
     }
 
@@ -450,13 +466,9 @@ impl BytecodeBuilder {
             }
 
             fn push_i32(insts: &mut Vec<(opcode::Opcode, u8)>, op: opcode::Opcode, arg: i32) {
-                fn i2u(n: i8) -> u8 {
-                    u8::from_le_bytes(n.to_le_bytes())
-                }
-
                 assert!(arg >= MAX_ARG_IMIN && arg <= MAX_ARG_IMAX);
 
-                if arg < -0x80 && arg > 0x7f {
+                if arg < -0x80 || arg > 0x7f {
                     let raw = u32::from_le_bytes(arg.to_le_bytes());
                     insts.push((op.extended(), i2u((arg >> 16) as i8)));
                     insts.push((opcode::Opcode::from((raw >> 8) as u8), raw as u8));
@@ -466,7 +478,12 @@ impl BytecodeBuilder {
             }
 
             let mut insts = Vec::with_capacity(function.insts.len());
+            let mut inst_pos = Vec::with_capacity(function.insts.len());
+            let mut jumps = FxHashMap::default();
+
             for (i, inst) in function.insts.into_iter().enumerate() {
+                inst_pos.push(insts.len());
+
                 match inst {
                     Inst::Function(module_path, name) => {
                         if module_path != self.module_path {
@@ -481,18 +498,34 @@ impl BytecodeBuilder {
                         }
                     }
                     Inst::Jump(op, label) => {
-                        push_i32(
-                            &mut insts,
-                            op,
-                            (i as i32 - function.labels[&label] as i32) / 2,
-                        );
+                        jumps.insert(i, label);
+                        push_u32(&mut insts, op, 0);
+                        push_u32(&mut insts, opcode::NOP, 0);
                     }
                     Inst::Normal(op, arg) => {
                         push_u32(&mut insts, op, arg);
                     }
+                    Inst::NormalI(op, arg) => {
+                        push_i32(&mut insts, op, arg);
+                    }
                 }
             }
 
+            for (i, label) in &jumps {
+                let jump_pos = inst_pos[*i];
+                let label_pos = inst_pos[function.labels[&label]];
+                let arg = label_pos as i32 - jump_pos as i32;
+                if arg < -0x80 || arg > 0x7f {
+                    let raw = u32::from_le_bytes(arg.to_le_bytes());
+                    insts[jump_pos].0 = insts[jump_pos].0.extended();
+                    insts[jump_pos].1 = i2u((arg >> 16) as i8);
+                    insts[jump_pos + 1] = (opcode::Opcode::from((raw >> 8) as u8), raw as u8);
+                } else {
+                    insts[jump_pos].1 = i2u(arg as i8);
+                }
+            }
+
+            remove_nop(&mut insts);
             function_insts.insert(function_ids[&self.module_path][&name], insts);
         }
 
@@ -506,6 +539,90 @@ impl BytecodeBuilder {
         };
 
         module.to_bytes(function_insts)
+    }
+}
+
+fn i2u(n: i8) -> u8 {
+    u8::from_le_bytes(n.to_le_bytes())
+}
+
+fn signed_i24_bytes(n: i32) -> [u8; 3] {
+    let raw = u32::from_le_bytes(n.to_le_bytes());
+    let hi = i2u((n >> 16) as i8);
+    let mid = (raw >> 8) as u8;
+    let lo = raw as u8;
+    [hi, mid, lo]
+}
+
+fn remove_nop(insts: &mut Vec<(opcode::Opcode, u8)>) {
+    let mut nop_poses = Vec::new();
+    for i in 0..insts.len() {
+        let (op, _) = insts[i];
+        if op.kind() == opcode::NOP {
+            let nop_pos = i - nop_poses.len();
+            let mut j = 0;
+            while j < insts.len() {
+                if j == nop_pos {
+                    j += 1;
+                    continue;
+                }
+
+                let (op, arg) = insts[j];
+                if !matches!(
+                    op.kind(),
+                    opcode::JUMP | opcode::JUMP_IF_TRUE | opcode::JUMP_IF_FALSE
+                ) {
+                    if op.is_extended() {
+                        j += 2;
+                    } else {
+                        j += 1;
+                    }
+                    continue;
+                }
+
+                if op.is_extended() {
+                    let (hi, mid, lo) = (
+                        arg as i32,
+                        insts[j + 1].0.code() as i32,
+                        insts[j + 1].1 as i32,
+                    );
+                    let mut offset = ((hi << 16) | (mid << 8) | lo) << 8 >> 8;
+                    let dest = (j as i32 + offset) as usize;
+                    if (j < nop_pos && dest > nop_pos) || (j > nop_pos && dest < nop_pos) {
+                        if offset > 0 {
+                            offset -= 1;
+                        } else {
+                            offset += 1;
+                        }
+                    }
+
+                    let bytes = signed_i24_bytes(offset);
+                    insts[j].1 = bytes[0];
+                    insts[j + 1].0 = opcode::Opcode::from(bytes[1]);
+                    insts[j + 1].1 = bytes[2];
+
+                    j += 2;
+                } else {
+                    let mut offset = i8::from_le_bytes(arg.to_le_bytes()) as i32;
+                    let dest = (j as i32 + offset) as usize;
+                    if (j < nop_pos && dest > nop_pos) || (j > nop_pos && dest < nop_pos) {
+                        if offset > 0 {
+                            offset -= 1;
+                        } else {
+                            offset += 1;
+                        }
+                    }
+
+                    insts[j].1 = offset.to_le_bytes()[0];
+                    j += 1;
+                }
+            }
+            nop_poses.push(i);
+        }
+    }
+
+    for (i, pos) in nop_poses.into_iter().enumerate() {
+        insts.remove(pos - i);
     }
 }
 
@@ -757,11 +874,33 @@ impl BytecodeModule {
             arg as u32
         };
 
-        match op {
+        let arg_i = if op.is_extended() {
+            let is_negative = arg & (1 << 23);
+            if is_negative != 0 {
+                let arg = arg ^ (0b11111111 << 24);
+                i32::from_le_bytes(arg.to_le_bytes())
+            } else {
+                i32::from_le_bytes(arg.to_le_bytes())
+            }
+        } else {
+            i8::from_le_bytes([arg as u8]) as i32
+        };
+
+        match op.kind() {
             NOP | TRUE | FALSE | NULL | DEREF | OFFSET | INEG | FNEG | NOT | RETURN | CALL_REF
             | CALL_NATIVE => println!(),
             op if (BINOP_IADD..=BINOP_XOR).contains(&op) => println!(),
-            INT => println!("{} ({})", arg, self.integers[arg as usize]),
+            TINY_INT => println!("{}", arg_i),
+            INT => {
+                let n = self.integers[arg as usize];
+                println!(
+                    "{} (0x{:x}, u{}, s{})",
+                    arg,
+                    n,
+                    n,
+                    i64::from_le_bytes(n.to_le_bytes())
+                );
+            }
             FLOAT => println!("{} ({})", arg, self.floats[arg as usize]),
             STRING => println!(
                 "{} (\"{}\")",
@@ -771,15 +910,7 @@ impl BytecodeModule {
             MODULE => println!("{} ({})", arg, self.modules[arg as usize].0),
             SELF_FUNC => println!("{} ({})", arg, self.functions[arg as usize].name),
             JUMP | JUMP_IF_TRUE | JUMP_IF_FALSE => {
-                let arg = if op.is_extended() {
-                    // Move sign
-                    let sign_mask = arg & (1 << 23);
-                    let arg = arg & !sign_mask | (sign_mask << 8);
-                    i32::from_le_bytes(arg.to_le_bytes())
-                } else {
-                    i8::from_le_bytes([arg as u8]) as i32
-                };
-                println!("{} ({})", arg, pos as i64 + arg as i64 * 2);
+                println!("{} ({})", arg_i, pos as i64 + arg_i as i64 * 2);
             }
             _ => println!("{}", arg),
         }
@@ -838,5 +969,52 @@ impl BytecodeModule {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remove_nop() {
+        use opcode::*;
+
+        let mut insts = vec![
+            (INT, 0),
+            (JUMP, 0xff),
+            (INT, 2),
+            (INT, 3),
+            (INT, 4),
+            (JUMP, 10),
+            (NOP, 0),
+            (INT, 7),
+            (INT, 8),
+            (INT, 9),
+            (JUMP_IF_FALSE.extended(), 0xff),
+            (Opcode::from(0xff), 0xfa), // -6
+            (INT, 12),
+            (JUMP, 1),
+            (NOP, 0),
+            (INT, 15),
+        ];
+        let expected = vec![
+            (INT, 0),
+            (JUMP, 0xff),
+            (INT, 2),
+            (INT, 3),
+            (INT, 4),
+            (JUMP, 8),
+            (INT, 7),
+            (INT, 8),
+            (INT, 9),
+            (JUMP_IF_FALSE.extended(), 0xff),
+            (Opcode::from(0xff), 0xfb), // -5
+            (INT, 12),
+            (JUMP, 1),
+            (INT, 15),
+        ];
+        remove_nop(&mut insts);
+        assert_eq!(expected, insts);
     }
 }
