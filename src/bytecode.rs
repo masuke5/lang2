@@ -308,6 +308,10 @@ impl Function {
         self.insts.push(Inst::Jump(opcode, label));
     }
 
+    pub fn push_func(&mut self, module_path: &SymbolPath, name: Id) {
+        self.insts.push(Inst::Function(module_path.clone(), name));
+    }
+
     pub fn set_label_here(&mut self, label: Label) {
         self.labels.insert(label, self.insts.len());
     }
@@ -955,7 +959,7 @@ impl BytecodeModule {
         use opcode::*;
 
         for func in &self.functions {
-            println!("Function {} ({})", func.name, func.id);
+            println!("Function {} ({}):", func.name, func.id);
 
             let mut pos = func.pos;
             while bytes[pos] != END.code() {

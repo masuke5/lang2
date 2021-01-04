@@ -47,6 +47,7 @@ pub struct TypedProgram {
     // The function that a key is reserved_id::MAIN_FUNC is main function
     pub functions: FxHashMap<Id, TypedFunction>,
     pub all_types: FxHashMap<Unique, TypeCon>,
+    pub imported_modules: Vec<SymbolPath>,
 }
 
 pub fn dump_typed_func(func: &TypedFunction, depth: usize) {
@@ -337,6 +338,7 @@ struct Analyzer<'a> {
     functions: FxHashMap<Id, TypedFunction>,
     all_types: FxHashMap<Unique, TypeCon>,
     uniq: usize,
+    imported_modules: FxHashSet<SymbolPath>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -348,6 +350,7 @@ impl<'a> Analyzer<'a> {
             functions: FxHashMap::default(),
             all_types: FxHashMap::default(),
             uniq: 0,
+            imported_modules: FxHashSet::default(),
         }
     }
 
@@ -460,7 +463,7 @@ impl<'a> Analyzer<'a> {
         Some(ty)
     }
 
-    fn get_type_to_path(&self, span: &Span, path: &SymbolPath) -> Option<Type> {
+    fn get_symbol_to_path(&self, span: &Span, path: &SymbolPath) -> Option<(Type, ConcreteSymbol)> {
         assert!(path.is_absolute);
 
         // First consider path is a module
@@ -475,7 +478,9 @@ impl<'a> Analyzer<'a> {
             let func_name = path.tail().unwrap().id;
             if let Some(module_env) = self.module_envs.get(&module_path) {
                 if let Some(func) = module_env.find_impl_func(type_name, func_name) {
-                    return Some(func.generate_arrow_type());
+                    let name = Self::generate_impl_function_name(type_name, func.name);
+                    let symbol = ConcreteSymbol::Function(func.module.clone(), name);
+                    return Some((func.generate_arrow_type(), symbol));
                 }
             }
         }
@@ -492,7 +497,10 @@ impl<'a> Analyzer<'a> {
             }
 
             match module_env.find_entry(item_name.id) {
-                Some(Entry::Function(func)) => Some(func.generate_arrow_type()),
+                Some(Entry::Function(func)) => {
+                    let symbol = ConcreteSymbol::Function(func.module.clone(), func.name);
+                    Some((func.generate_arrow_type(), symbol))
+                }
                 Some(Entry::Variable(..)) => {
                     error!(&span, "external module variable");
                     None
@@ -513,7 +521,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn get_path_type(&self, span: &Span, path: &SymbolPath) -> Option<Type> {
+    fn get_path_symbol(&self, span: &Span, path: &SymbolPath) -> Option<(Type, ConcreteSymbol)> {
         // This is safe because the path has 2 segments at least
         let head = path.head().unwrap();
         let rest = path.pop_head().unwrap();
@@ -524,14 +532,18 @@ impl<'a> Analyzer<'a> {
 
             // In self module
             if let Some(func) = self.env.find_impl_func(head.id, tail.id) {
-                return Some(func.generate_arrow_type());
+                let name = Self::generate_impl_function_name(head.id, func.name);
+                let symbol = ConcreteSymbol::Function(func.module.clone(), name);
+                return Some((func.generate_arrow_type(), symbol));
             }
 
             // In external module
             if let Some(ScopeType::Def(tydef)) = self.env.find_type(head.id) {
                 if let Some(func) = self.module_envs[&tydef.module].find_impl_func(head.id, tail.id)
                 {
-                    return Some(func.generate_arrow_type());
+                    let name = Self::generate_impl_function_name(head.id, func.name);
+                    let symbol = ConcreteSymbol::Function(func.module.clone(), name);
+                    return Some((func.generate_arrow_type(), symbol));
                 }
             }
         }
@@ -539,13 +551,13 @@ impl<'a> Analyzer<'a> {
         match self.env.find_module(head.id) {
             Some(module_path) if !path.is_absolute => {
                 let absolute_path = module_path.clone().join(&rest);
-                self.get_type_to_path(&span, &absolute_path)
+                self.get_symbol_to_path(&span, &absolute_path)
             }
             _ => {
                 // Consider the path is absolute
                 let mut path = path.clone();
                 path.is_absolute = true;
-                self.get_type_to_path(&span, &path)
+                self.get_symbol_to_path(&span, &path)
             }
         }
     }
@@ -860,9 +872,10 @@ impl<'a> Analyzer<'a> {
                     }
                 }
             }
-            UExpr::Path(path) => {
-                let ty = self.get_path_type(&expr.span, &path)?;
-                (TExpr::Path(path), ty)
+            UExpr::Path(path, concrete_symbol) => {
+                assert!(concrete_symbol.is_none());
+                let (ty, concrete_symbol) = self.get_path_symbol(&expr.span, &path)?;
+                (TExpr::Path(path, Some(concrete_symbol)), ty)
             }
             UExpr::Call(func_expr, arg_expr) => {
                 let func_expr = self.analyze_expr(func, *func_expr);
@@ -1208,13 +1221,14 @@ impl<'a> Analyzer<'a> {
 
         // Analyze functions
         let mut function_ids = Vec::with_capacity(block.functions.len());
+        let mut function_names = Vec::with_capacity(block.functions.len());
         for block_func in block.functions {
             let header = match self.env.find_entry(block_func.name.kind) {
                 Some(Entry::Function(func)) => func.clone(),
                 _ => return None,
             };
 
-            // Generate the function name
+            // Generate the unique function name
             let func_name = if is_top_level {
                 block_func.name.kind
             } else {
@@ -1224,13 +1238,15 @@ impl<'a> Analyzer<'a> {
             if let Some(func) = self.analyze_func(func_name, block_func, &header) {
                 self.functions.insert(func.name.kind, func);
                 function_ids.push(func_name);
+                function_names.push(header.name);
             }
         }
 
         Some(TypedBlock {
             types: Vec::new(),
             functions: Vec::new(),
-            function_ids,
+            function_names,
+            function_unique_ids: function_ids,
             stmts,
             result_expr: box result_expr,
         })
@@ -1247,6 +1263,7 @@ impl<'a> Analyzer<'a> {
 
                 let joined_path = path.clone().append_id(name);
                 if self.module_envs.contains_key(&joined_path) {
+                    self.imported_modules.insert(joined_path.clone());
                     self.env.import_module(renamed, joined_path);
                     return;
                 }
@@ -1256,6 +1273,7 @@ impl<'a> Analyzer<'a> {
                     // Cannot import a function or type in self module
                     if *path != self.module_path {
                         if module_env.find_type(name).is_some() {
+                            self.imported_modules.insert(path.clone());
                             self.env.define_type(
                                 renamed,
                                 ScopeType::Def(TypeDef::new_header(name, path.clone())),
@@ -1263,6 +1281,7 @@ impl<'a> Analyzer<'a> {
                             return;
                         }
                         if let Some(entry @ Entry::Function(_)) = module_env.find_entry(name) {
+                            self.imported_modules.insert(path.clone());
                             self.env.define_entry(renamed, entry.clone());
                             return;
                         }
@@ -1290,6 +1309,8 @@ impl<'a> Analyzer<'a> {
                         return;
                     }
                 };
+
+                self.imported_modules.insert(path.clone());
 
                 for (name, tydef) in module_env.types() {
                     self.env.define_type(name, ScopeType::Def(tydef));
@@ -1410,7 +1431,7 @@ impl<'a> Analyzer<'a> {
         };
 
         let block = pushed_scope!(self.env, {
-            let block = match self.analyze_block(&main_func, program.main, true) {
+            let mut block = match self.analyze_block(&main_func, program.main, true) {
                 Some(block) => block,
                 None => return None,
             };
@@ -1424,6 +1445,7 @@ impl<'a> Analyzer<'a> {
                     let func_header = env.find_impl_func(imp.target.kind, func.name.kind).unwrap();
                     if let Some(func) = self.analyze_func(func_name, func, func_header) {
                         self.functions.insert(func_name, func);
+                        block.function_unique_ids.push(func_name);
                     }
                 }
             }
@@ -1451,6 +1473,7 @@ impl<'a> Analyzer<'a> {
             module_path: self.module_path,
             functions: self.functions,
             all_types: self.all_types,
+            imported_modules: self.imported_modules.into_iter().collect(),
         })
     }
 }

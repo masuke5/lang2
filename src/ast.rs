@@ -340,6 +340,11 @@ impl<K, T> Typed<K, T> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum ConcreteSymbol {
+    Function(SymbolPath, Id), // module path, function name
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr<T> {
     Literal(Literal),
     Tuple(Vec<Typed<Expr<T>, T>>),
@@ -353,7 +358,7 @@ pub enum Expr<T> {
     ),
     BinOp(BinOp, Box<Typed<Expr<T>, T>>, Box<Typed<Expr<T>, T>>),
     Variable(Id, bool),
-    Path(SymbolPath),
+    Path(SymbolPath, Option<ConcreteSymbol>),
     Call(Box<Typed<Expr<T>, T>>, Box<Typed<Expr<T>, T>>),
     Dereference(Box<Typed<Expr<T>, T>>),
     Address(Box<Typed<Expr<T>, T>>, bool),
@@ -409,7 +414,8 @@ pub struct AstFunction<T> {
 pub struct Block<T> {
     pub types: Vec<AstTypeDef>,
     pub functions: Vec<AstFunction<T>>,
-    pub function_ids: Vec<Id>, // for gen_bc
+    pub function_names: Vec<Id>,      // for gen_bc
+    pub function_unique_ids: Vec<Id>, // for gen_bc
     pub stmts: Vec<Spanned<Stmt<T>>>,
     pub result_expr: Box<Typed<Expr<T>, T>>,
 }
@@ -559,11 +565,11 @@ pub fn dump_block<T: fmt::Display>(block: &Block<T>, depth: usize) {
         dump_func(func, depth);
     }
 
-    if !block.function_ids.is_empty() {
+    if !block.function_unique_ids.is_empty() {
         print!("{}", "  ".repeat(depth));
         println!(
             "functions: {}",
-            format_iter(block.function_ids.iter().map(|id| IdMap::name(*id)))
+            format_iter(block.function_unique_ids.iter().map(|id| IdMap::name(*id)))
         );
     }
 
@@ -662,7 +668,7 @@ pub fn dump_expr<T: fmt::Display>(expr: &Typed<Expr<T>, T>, depth: usize) {
             dump_expr(func_expr, depth + 1);
             dump_expr(&arg, depth + 1);
         }
-        Expr::Path(path) => {
+        Expr::Path(path, _) => {
             println!("path {} {}", path, meta(expr));
         }
         Expr::Address(expr_, is_mutable) => {

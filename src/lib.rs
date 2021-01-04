@@ -150,6 +150,7 @@ impl ExecuteOption {
                 println!("Module {}", path);
                 sema::dump_typed_program(program, 0);
             }
+            return None;
         }
 
         let builders = match gen_bc::gen_bytecodes(typed_modules) {
@@ -161,8 +162,10 @@ impl ExecuteOption {
         if self.mode == ExecuteMode::DumpInstruction {
             for (name, bytes) in bc_modules {
                 let module = BytecodeModule::from_bytes(bytes.clone(), &name).unwrap();
+                println!("------------ Module {} ------------", name);
                 module.dump_instructions(&bytes);
             }
+            return None;
         }
 
         Some(())

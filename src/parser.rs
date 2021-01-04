@@ -70,7 +70,8 @@ impl BlockBuilder {
         let def = self.defs.pop().unwrap();
         Block {
             functions: def.functions,
-            function_ids: Vec::new(),
+            function_names: Vec::new(),
+            function_unique_ids: Vec::new(),
             types: def.types,
             stmts,
             result_expr: Box::new(result_expr),
@@ -354,7 +355,7 @@ impl Parser {
                     Some(SymbolPathSegment::new(ident)),
                     ident_span,
                 )?;
-                Some(new_expr(Expr::Path(path.kind), path.span))
+                Some(new_expr(Expr::Path(path.kind, None), path.span))
             }
             Token::Colon => {
                 self.next();
@@ -479,7 +480,7 @@ impl Parser {
                 self.next();
                 let mut path = self.parse_path()?;
                 path.kind.is_absolute = true;
-                Some(new_expr(Expr::Path(path.kind), path.span))
+                Some(new_expr(Expr::Path(path.kind, None), path.span))
             }
             Token::Keyword(Keyword::If) => self.parse_if_expr(),
             _ => {

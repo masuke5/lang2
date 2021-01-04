@@ -1,5 +1,6 @@
 use crate::ast::{
-    BinOp, Block as Block_, Expr as Expr_, Field, Literal, Stmt as Stmt_, SymbolPath, Typed,
+    BinOp, Block as Block_, ConcreteSymbol, Expr as Expr_, Field, Literal, Stmt as Stmt_,
+    SymbolPath, Typed,
 };
 use crate::bytecode::{opcode, BuilderError, BytecodeBuilder, Function, Label};
 use crate::error::{Error, ErrorList};
@@ -120,11 +121,17 @@ struct Variable {
     is_escaped: bool,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum Entry {
+    Variable(Variable),
+    Function(Id),
+}
+
 struct Generator<'a> {
     module: TypedProgram,
     builder: BytecodeBuilder,
     types: &'a AllTypes,
-    vars: HashMapWithScope<Id, Variable>,
+    entries: HashMapWithScope<Id, Entry>,
     current_level: u32,
     temp_var_num: usize,
 }
@@ -135,7 +142,7 @@ impl<'a> Generator<'a> {
             builder: BytecodeBuilder::new(&module.module_path),
             module,
             types,
-            vars: HashMapWithScope::new(),
+            entries: HashMapWithScope::new(),
             current_level: 0,
             temp_var_num: 0,
         }
@@ -202,7 +209,6 @@ impl<'a> Generator<'a> {
 
     fn gen_convertion(&mut self, _from: &Type, _to: &Type) {}
 
-    // TODO: support in_heap
     fn gen_expr(&mut self, func: &mut Function, expr: TypedExpr) -> Option<()> {
         match expr.kind {
             TExpr::Literal(Literal::Number(n)) => {
@@ -223,7 +229,7 @@ impl<'a> Generator<'a> {
                 try_b!(self.push_uint(func, ch as u64), &expr.span);
             }
             TExpr::Literal(Literal::Unit) => {
-                // XXX: もしかしたら何かプッシュしないといけないかも
+                try_b!(func.pushi(opcode::TINY_INT, 0), &expr.span);
             }
             TExpr::Literal(Literal::True) => {
                 func.push_noarg(opcode::TRUE);
@@ -338,13 +344,20 @@ impl<'a> Generator<'a> {
                 func.push_noarg(op);
             }
             TExpr::Variable(name, ..) => {
-                let var = self.vars.get(&name).unwrap().clone();
-                self.gen_var(func, &var, &expr.span);
+                let entry = self.entries.get(&name).unwrap().clone();
+                match entry {
+                    Entry::Variable(var) => self.gen_var(func, &var, &expr.span),
+                    Entry::Function(name) => {
+                        func.push_func(&self.module.module_path, name);
+                    }
+                }
             }
-            TExpr::Path(..) => {
-                // TODO: sema.rs側でモジュールと関数名を取得しておく
-                // let module_path, func_name = ?
-            }
+            TExpr::Path(_, concrete_symbol) => match concrete_symbol {
+                Some(ConcreteSymbol::Function(module_path, name)) => {
+                    func.push_func(&module_path, name);
+                }
+                _ => panic!(),
+            },
             TExpr::Call(func_expr, arg_expr) => {
                 let mut arg_exprs = vec![arg_expr];
                 let mut current_func_expr = func_expr;
@@ -375,7 +388,7 @@ impl<'a> Generator<'a> {
                         is_escaped: false,
                         level: self.current_level,
                     };
-                    self.vars.insert(name, var.clone());
+                    self.entries.insert(name, Entry::Variable(var.clone()));
                     self.gen_var(func, &var, &inner_expr.span);
                 }
             }
@@ -428,12 +441,16 @@ impl<'a> Generator<'a> {
     }
 
     fn gen_block(&mut self, func: &mut Function, block: TypedBlock) {
+        for name in block.function_names {
+            self.entries.insert(name, Entry::Function(name));
+        }
+
         for stmt in block.stmts {
             self.gen_stmt(func, stmt);
         }
         self.gen_expr_with_copy(func, *block.result_expr);
 
-        for func_name in block.function_ids {
+        for func_name in block.function_unique_ids {
             let func = self.module.functions.remove(&func_name).unwrap();
             let span = func.name.span.clone();
             if let Some(func) = self.gen_func(func) {
@@ -453,13 +470,13 @@ impl<'a> Generator<'a> {
                     try_b!(func.define_local_variable(), &stmt.span)?
                 };
 
-                self.vars.insert(
+                self.entries.insert(
                     name,
-                    Variable {
+                    Entry::Variable(Variable {
                         loc,
                         level: self.current_level,
                         is_escaped,
-                    },
+                    }),
                 );
             }
             TypedStmt::Expr(expr) => {
@@ -499,7 +516,7 @@ impl<'a> Generator<'a> {
     fn gen_func(&mut self, ast_func: TypedFunction) -> Option<Function> {
         let mut func = Function::new(ast_func.params.len() as u32);
 
-        self.vars.push_scope();
+        self.entries.push_scope();
 
         for param in &ast_func.params {
             let loc = if param.is_escaped {
@@ -507,20 +524,20 @@ impl<'a> Generator<'a> {
             } else {
                 try_b!(func.define_local_variable(), &ast_func.name.span)
             }?;
-            self.vars.insert(
+            self.entries.insert(
                 param.name,
-                Variable {
+                Entry::Variable(Variable {
                     loc,
                     is_escaped: param.is_escaped,
                     level: self.current_level,
-                },
+                }),
             );
         }
 
         self.gen_expr_with_copy(&mut func, ast_func.body);
         func.push_noarg(opcode::RETURN);
 
-        self.vars.pop_scope();
+        self.entries.pop_scope();
 
         Some(func)
     }
@@ -535,6 +552,11 @@ impl<'a> Generator<'a> {
         self.builder
             .define_function(*reserved_id::MAIN_FUNC, func)
             .unwrap();
+
+        for module in self.module.imported_modules {
+            // FIXME: Do not unwrap()
+            self.builder.import_module(&module).unwrap();
+        }
 
         Some(self.builder)
     }
